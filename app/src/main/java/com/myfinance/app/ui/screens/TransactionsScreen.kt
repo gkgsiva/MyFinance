@@ -1,7 +1,10 @@
 package com.myfinance.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +18,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -25,9 +31,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.core.TxnType
 import com.myfinance.core.formatInr
+import java.time.LocalDate
 import java.time.YearMonth
 
 @Composable
@@ -43,9 +54,23 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val txns by vm.filteredTransactions.collectAsState()
     val query by vm.query.collectAsState()
     val filter by vm.categoryFilter.collectAsState()
+    val advanced by vm.advancedFilter.collectAsState()
     val categories by vm.categories.collectAsState()
+    val options by vm.filterOptions.collectAsState()
+    val sync by vm.syncState.collectAsState()
     val colorOf = categories.associate { it.name to Color(it.color) }
     val fallback = MaterialTheme.colorScheme.outline
+
+    var showFilters by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { vm.exportStatement(it, excel = false) }
+    }
+    val xlsxLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ) { uri -> uri?.let { vm.exportStatement(it, excel = true) } }
+    val fileStem = "myfinance-statement-${LocalDate.now()}"
 
     val byDay = txns.groupBy { it.timestamp.toLocalDateTime().toLocalDate() }
 
@@ -56,19 +81,38 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = vm::previousMonth) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
+                if (advanced.hasDateRange) {
+                    Text(
+                        rangeLabel(advanced.fromMillis, advanced.toMillis),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    )
+                } else {
+                    IconButton(onClick = vm::previousMonth) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
+                    }
+                    Text(month.format(monthFormat), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    IconButton(onClick = vm::nextMonth, enabled = month < YearMonth.now()) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
+                    }
                 }
-                Text(month.format(monthFormat), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                IconButton(onClick = vm::nextMonth, enabled = month < YearMonth.now()) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
+                TextButton(onClick = { showFilters = true }) { Text(if (advanced.hasAdvanced) "Filters •" else "Filters") }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Export") }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Export to Excel") }, onClick = { menuOpen = false; xlsxLauncher.launch("$fileStem.xlsx") })
+                        DropdownMenuItem(text = { Text("Export to CSV") }, onClick = { menuOpen = false; csvLauncher.launch("$fileStem.csv") })
+                        if (advanced.hasAdvanced || query.isNotEmpty() || filter != null) {
+                            DropdownMenuItem(text = { Text("Clear all filters") }, onClick = { menuOpen = false; vm.clearFilters() })
+                        }
+                    }
                 }
             }
             OutlinedTextField(
                 value = query,
                 onValueChange = { vm.query.value = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                placeholder = { Text("Search merchant, note, account, person") },
+                placeholder = { Text("Search merchant, note, amount, person") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
@@ -100,10 +144,13 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
+            sync.message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
+            }
 
             if (txns.isEmpty()) {
                 Text(
-                    "Nothing here. Import SMS from the Overview tab or add an entry with +.",
+                    "Nothing here. Import SMS from the Overview tab, add an entry with +, or loosen the filters.",
                     modifier = Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -126,5 +173,15 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 }
             }
         }
+    }
+
+    if (showFilters) {
+        FilterDialog(
+            initial = advanced,
+            people = options.first,
+            accounts = options.second,
+            onDismiss = { showFilters = false },
+            onApply = { vm.advancedFilter.value = it; showFilters = false },
+        )
     }
 }

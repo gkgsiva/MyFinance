@@ -25,6 +25,8 @@ data class SharedTxn(
     val smsKey: String?,
     val reference: String?,
     val excluded: Boolean,
+    /** Payment mode name ([PaymentMode]); older exports do not have it. */
+    val mode: String? = null,
 )
 
 object Dedupe {
@@ -85,7 +87,7 @@ object Dedupe {
 object CsvCodec {
     val header = listOf(
         "uid", "date", "amount", "type", "merchant", "category", "account", "bank",
-        "note", "owner", "source", "sms_key", "reference", "excluded",
+        "note", "owner", "source", "sms_key", "reference", "excluded", "mode",
     )
 
     fun encode(rows: List<SharedTxn>): String = buildString {
@@ -98,7 +100,7 @@ object CsvCodec {
                     java.math.BigDecimal.valueOf(r.amountMinor, 2).toPlainString(),
                     r.type.name,
                     r.merchant, r.category, r.accountTail, r.bank, r.note, r.owner, r.source,
-                    r.smsKey, r.reference, r.excluded.toString(),
+                    r.smsKey, r.reference, r.excluded.toString(), r.mode,
                 ).joinToString(",") { quote(it) },
             )
         }
@@ -131,12 +133,19 @@ object CsvCodec {
                     smsKey = get("sms_key"),
                     reference = get("reference"),
                     excluded = get("excluded")?.toBooleanStrictOrNull() ?: false,
+                    mode = get("mode"),
                 )
             } catch (e: Exception) {
                 bad++
             }
         }
         return out to bad
+    }
+
+    /** Plain CSV of any table, for statements that open in Excel / Sheets. */
+    fun encodeTable(header: List<String>, rows: List<List<Any?>>): String = buildString {
+        appendLine(header.joinToString(",") { quote(it) })
+        for (r in rows) appendLine(r.joinToString(",") { v -> quote(if (v is java.math.BigDecimal) v.toPlainString() else v?.toString()) })
     }
 
     private fun quote(v: String?): String {

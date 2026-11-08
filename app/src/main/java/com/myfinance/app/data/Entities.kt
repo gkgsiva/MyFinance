@@ -3,6 +3,7 @@ package com.myfinance.app.data
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.myfinance.core.PaymentMode
 import com.myfinance.core.SharedTxn
 import com.myfinance.core.TxnLite
 import com.myfinance.core.TxnType
@@ -51,13 +52,21 @@ val TransactionEntity.accountLabel: String?
         else -> bank
     }
 
-fun TransactionEntity.toLite(defaultOwner: String?) =
-    TxnLite(amountMinor, type, category, merchant, accountLabel, timestamp, owner ?: defaultOwner)
+/** [mergedModes] holds the payment modes of rows merged from other phones, keyed by uid. */
+fun TransactionEntity.paymentMode(mergedModes: Map<String, String> = emptyMap()): PaymentMode =
+    PaymentMode.fromName(mergedModes[uid]) ?: PaymentMode.detect(rawSms, source == TxnSource.MANUAL, category)
 
-fun TransactionEntity.toShared(defaultOwner: String?) = SharedTxn(
+fun TransactionEntity.toLite(defaultOwner: String?, mergedModes: Map<String, String> = emptyMap()) =
+    TxnLite(
+        amountMinor, type, category, merchant, accountLabel, timestamp, owner ?: defaultOwner,
+        id = id, mode = paymentMode(mergedModes),
+    )
+
+fun TransactionEntity.toShared(defaultOwner: String?, mergedModes: Map<String, String> = emptyMap()) = SharedTxn(
     uid = uid, amountMinor = amountMinor, type = type, merchant = merchant, category = category,
     accountTail = accountTail, bank = bank, timestamp = timestamp, note = note, owner = owner ?: defaultOwner,
     source = source.name, smsKey = smsKey, reference = reference, excluded = excluded,
+    mode = paymentMode(mergedModes).name,
 )
 
 fun SharedTxn.toEntity() = TransactionEntity(

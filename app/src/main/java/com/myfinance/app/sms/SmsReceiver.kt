@@ -32,6 +32,7 @@ class SmsReceiver : BroadcastReceiver() {
                     // Use the receive time, which matches the inbox "date" column.
                     repo.ingestSms(sender, body, System.currentTimeMillis())
                 }
+                repo.onDataChanged()
             } finally {
                 pending.finish()
             }
