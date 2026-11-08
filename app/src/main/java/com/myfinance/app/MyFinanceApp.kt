@@ -7,8 +7,11 @@ import androidx.core.content.ContextCompat
 import com.myfinance.app.data.ExtrasDatabase
 import com.myfinance.app.data.FinanceDatabase
 import com.myfinance.app.data.FinanceRepository
+import com.myfinance.app.data.V12Database
+import com.myfinance.app.data.V12Repository
 import com.myfinance.app.notify.Notifier
 import com.myfinance.app.notify.ReminderWorker
+import com.myfinance.app.security.AppLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,11 +22,14 @@ class MyFinanceApp : Application() {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val repository: FinanceRepository by lazy {
-        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this))
+        // A restore chosen last time is swapped in before any database is opened.
+        V12Repository.applyPendingRestore(this)
+        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this), V12Database.create(this))
     }
 
     override fun onCreate() {
         super.onCreate()
+        AppLock.init(this)
         Notifier.createChannels(this)
         ReminderWorker.schedule(this)
         appScope.launch {

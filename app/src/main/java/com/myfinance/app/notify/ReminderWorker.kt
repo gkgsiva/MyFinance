@@ -15,6 +15,7 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
     override suspend fun doWork(): Result {
         val repo = (applicationContext as MyFinanceApp).repository
         runCatching { repo.checkReminders() }
+        runCatching { repo.v12.checkBillReminders() }
         runCatching { if (repo.syncUri.value != null && repo.autoSync.value) repo.syncNow() }
         repo.onDataChanged()
         return Result.success()

@@ -38,6 +38,30 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   merchants, payment mode split (UPI / card / cash / net banking), financial-year (April-March)
   totals, unusual spends, and a shareable monthly PDF statement.
 
+### New in 1.2 (Plan tab)
+
+- **Goals**: savings targets like "Vacation ₹1L by June", with progress, how much to save each month,
+  and whether you are on track.
+- **Net worth**: SIPs, mutual funds, FDs, RDs and share trades are read from SMS; add gold, property,
+  PPF and loans by hand. Bank balances and cash in hand are included.
+- **Bill reminders**: electricity, mobile, internet, insurance premiums, school fees, rent and more,
+  repeating monthly, quarterly or yearly, with a notification before the due date. A matching payment
+  SMS marks the bill paid.
+- **Split & settle**: split a payment equally with family or friends, see who owes whom with the
+  fewest payments, and record settlements.
+- **Receipt photos**: attach bill photos to any transaction (camera or gallery). They stay in the
+  app's private storage.
+- **Cash wallet**: ATM withdrawals add cash in hand; log cash spends to see where it went.
+- **Tax helper**: tag payments with 80C, 80CCD(1B), 80D, 80E, 80G or 24(b); suggestions for
+  insurance, PPF, ELSS, NPS, tuition and donations; yearly (April-March) totals against the limits.
+- **App lock**: PIN (stored only as a salted hash) and fingerprint, relocks after a minute away,
+  hides the app in recent apps.
+- **Encrypted backup & restore**: one file with everything, including receipt photos, encrypted with
+  AES-256-GCM using your password. Save it wherever you like (Drive, Downloads, pen drive) and
+  restore it on a new phone.
+- **Custom SMS rules**: "any SMS with SWIGGY goes to Food", with the option to rename, leave out of
+  totals, ignore, or tag a tax section; match on merchant, SMS text or sender, with a live preview.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:

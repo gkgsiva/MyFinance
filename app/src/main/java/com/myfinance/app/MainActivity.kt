@@ -4,16 +4,18 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -22,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +33,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import android.view.WindowManager
+import com.myfinance.app.security.AppLock
+import com.myfinance.app.ui.V12ViewModel
+import com.myfinance.app.ui.v12.BackupScreen
+import com.myfinance.app.ui.v12.BillsScreen
+import com.myfinance.app.ui.v12.CashScreen
+import com.myfinance.app.ui.v12.GoalsScreen
+import com.myfinance.app.ui.v12.LockScreen
+import com.myfinance.app.ui.v12.NetWorthScreen
+import com.myfinance.app.ui.v12.PlanScreen
+import com.myfinance.app.ui.v12.RulesScreen
+import com.myfinance.app.ui.v12.SecurityScreen
+import com.myfinance.app.ui.v12.SplitsScreen
+import com.myfinance.app.ui.v12.TaxScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -47,11 +65,37 @@ import com.myfinance.app.ui.screens.TransactionsScreen
 import com.myfinance.app.ui.screens.UpcomingScreen
 import com.myfinance.app.ui.theme.MyFinanceTheme
 
-class MainActivity : ComponentActivity() {
+/** A FragmentActivity so the fingerprint prompt can be shown. */
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MyFinanceTheme { MyFinanceRoot() } }
+        setContent {
+            MyFinanceTheme {
+                val lockOn by AppLock.enabled.collectAsState()
+                val locked by AppLock.locked.collectAsState()
+                val bio by AppLock.biometric.collectAsState()
+                // Keep the app's contents out of screenshots and the recent apps screen while the lock is on.
+                LaunchedEffect(lockOn) {
+                    if (lockOn) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+                Box(Modifier.fillMaxSize()) {
+                    MyFinanceRoot()
+                    if (lockOn && locked) LockScreen(bio)
+                }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AppLock.onForeground()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppLock.onBackground()
     }
 }
 
@@ -61,12 +105,14 @@ private val tabs = listOf(
     Tab("overview", "Overview", Icons.Filled.Home),
     Tab("transactions", "Transactions", Icons.AutoMirrored.Filled.List),
     Tab("reports", "Reports", Icons.Filled.Info),
+    Tab("plan", "Plan", Icons.Filled.DateRange),
     Tab("categories", "Manage", Icons.Filled.Star),
 )
 
 @Composable
 private fun MyFinanceRoot() {
     val vm: FinanceViewModel = viewModel()
+    val v12: V12ViewModel = viewModel()
     val nav = rememberNavController()
     val context = LocalContext.current
 
@@ -146,12 +192,25 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm) }
+            composable("plan") { PlanScreen(v12) { route -> nav.navigate(route) } }
+            val back = { nav.popBackStack(); Unit }
+            val openTxn = { id: Long -> nav.navigate("edit/$id") }
+            composable("goals") { GoalsScreen(v12, back) }
+            composable("networth") { NetWorthScreen(v12, back) }
+            composable("bills") { BillsScreen(v12, back) }
+            composable("splits") { SplitsScreen(v12, back) }
+            composable("cash") { CashScreen(v12, back, openTxn) }
+            composable("tax") { TaxScreen(v12, back, openTxn) }
+            composable("rules") { RulesScreen(v12, back) }
+            composable("security") { SecurityScreen(v12, back) }
+            composable("backup") { BackupScreen(v12, back) }
             composable(
                 "edit/{id}",
                 arguments = listOf(navArgument("id") { type = NavType.LongType }),
             ) { entry ->
                 EditTransactionScreen(
                     vm = vm,
+                    v12 = v12,
                     id = entry.arguments?.getLong("id") ?: 0L,
                     onDone = { nav.popBackStack() },
                 )
