@@ -36,6 +36,12 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import android.view.WindowManager
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import com.myfinance.app.security.AppLock
@@ -168,11 +174,53 @@ private fun MyFinanceRoot() {
         PackageManager.PERMISSION_GRANTED
 
     var smsGranted by remember { mutableStateOf(hasSmsPermission()) }
+    // Android blocks SMS access for apps installed from an APK ("restricted settings"), so the request
+    // can be refused without any prompt. When that happens, explain how to allow it in Settings.
+    var smsBlocked by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
-        smsGranted = result[Manifest.permission.READ_SMS] == true
-        if (smsGranted) vm.importInbox()
+        smsGranted = result[Manifest.permission.READ_SMS] == true || hasSmsPermission()
+        if (smsGranted) vm.importInbox() else smsBlocked = true
+    }
+    // Pick up a permission granted in Settings as soon as the user comes back.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && !smsGranted && hasSmsPermission()) {
+                smsGranted = true
+                smsBlocked = false
+                vm.importInbox()
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    if (smsBlocked) {
+        AlertDialog(
+            onDismissRequest = { smsBlocked = false },
+            title = { Text("Allow SMS access in Settings") },
+            text = {
+                Text(
+                    "Android blocks SMS access for apps installed from an APK until you allow it:\n\n" +
+                        "1. Tap Open settings below.\n" +
+                        "2. Tap the ⋮ menu (top right) and choose \"Allow restricted settings\". " +
+                        "Confirm with your PIN or fingerprint. If you don't see it, skip this step.\n" +
+                        "3. Tap Permissions > SMS > Allow.\n" +
+                        "4. Come back to MyFinance. Import starts by itself.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    smsBlocked = false
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }) { Text("Open settings") }
+            },
+            dismissButton = { TextButton(onClick = { smsBlocked = false }) { Text("Not now") } },
+        )
     }
     val requestSms = {
         val perms = mutableListOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)
