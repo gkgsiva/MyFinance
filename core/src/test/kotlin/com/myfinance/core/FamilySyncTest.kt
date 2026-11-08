@@ -78,4 +78,21 @@ class FamilySyncTest {
         assertEquals(0, bad)
         assertEquals(rows, decoded)
     }
+
+    @Test
+    fun recognisesOnlyMyFinanceExports() {
+        val csv = CsvCodec.encode(listOf(txn("a", owner = "Priya")))
+        kotlin.test.assertTrue(CsvCodec.isExport(csv))
+        kotlin.test.assertTrue(CsvCodec.isExport("\uFEFF" + csv))
+        kotlin.test.assertFalse(CsvCodec.isExport("name,phone\nRavi,98400\n"))
+        kotlin.test.assertFalse(CsvCodec.isExport(""))
+    }
+
+    @Test
+    fun sharedFileKeepsWhoItCameFrom() {
+        val csv = CsvCodec.encode(listOf(txn("a", owner = "Priya"), txn("b", ts = 1_700_200_000_000, owner = "Priya"), txn("c", ts = 1_700_300_000_000, owner = "Siva")))
+        val (rows, bad) = CsvCodec.decode(csv)
+        assertEquals(0, bad)
+        assertEquals(listOf("Priya", "Siva"), CsvCodec.owners(rows))
+    }
 }
