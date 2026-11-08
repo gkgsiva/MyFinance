@@ -1,6 +1,25 @@
 package com.myfinance.app.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import com.myfinance.app.ui.charts.ChartCard
+import com.myfinance.app.ui.charts.ChartLegend
+import com.myfinance.app.ui.charts.ChartSeries
+import com.myfinance.app.ui.charts.DonutChart
+import com.myfinance.app.ui.charts.GroupedBarChart
+import com.myfinance.app.ui.charts.Slice
+import com.myfinance.app.ui.charts.topSlices
+import com.myfinance.app.ui.theme.ChartPalette
+import com.myfinance.app.ui.theme.Coral
+import com.myfinance.app.ui.theme.HeroGradient
+import com.myfinance.app.ui.theme.IncomeGradient
+import com.myfinance.app.ui.theme.Pink
+import com.myfinance.app.ui.theme.SpendGradient
+import com.myfinance.app.ui.theme.Teal
+import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +34,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -71,6 +91,7 @@ fun OverviewScreen(
     val bills by vm.openBills.collectAsState()
     val recurring by vm.recurring.collectAsState()
     val balances by vm.balances.collectAsState()
+    val trend by vm.reports.collectAsState()
 
     val colorOf = categories.associate { it.name to Color(it.color) }
     val budgetOf = categories.associate { it.name to it.monthlyBudgetMinor }
@@ -144,20 +165,39 @@ fun OverviewScreen(
                 item { Text(err, color = MaterialTheme.colorScheme.error) }
             }
 
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard("Income", formatInr(summary.incomeMinor), IncomeGreen, Modifier.weight(1f))
-                    StatCard("Spent", formatInr(summary.expenseMinor), ExpenseRed, Modifier.weight(1f))
+            item { HeroCard(summary.incomeMinor, summary.expenseMinor, summary.netMinor, summary.savingsRatePercent) }
+
+            if (groups.isNotEmpty()) {
+                item {
+                    val slices = topSlices(
+                        groups.mapIndexed { i, g ->
+                            val c = if (groupBy == GroupBy.CATEGORY) colorOf[g.key] ?: ChartPalette[i % ChartPalette.size]
+                            else ChartPalette[i % ChartPalette.size]
+                            Slice(g.key, g.totalMinor, c)
+                        },
+                    )
+                    ChartCard("Spending mix", accent = Pink, subtitle = "By ${groupBy.label.lowercase()} this month") {
+                        DonutChart(slices, centerTitle = "Spent")
+                    }
                 }
             }
-            item {
-                val net = summary.netMinor
-                StatCard(
-                    "Net this month",
-                    formatInr(net) + (summary.savingsRatePercent?.let { "  ·  saved $it%" } ?: ""),
-                    if (net >= 0) IncomeGreen else ExpenseRed,
-                    Modifier.fillMaxWidth(),
-                )
+
+            if (trend.monthly.size > 1 && trend.monthly.any { it.incomeMinor > 0 || it.expenseMinor > 0 }) {
+                item {
+                    val last6 = trend.monthly.takeLast(6)
+                    val labels = last6.map { it.month.format(shortMonthFormat) }
+                    ChartCard("Income vs spend", accent = Teal, subtitle = "Last ${last6.size} months") {
+                        GroupedBarChart(
+                            listOf(
+                                ChartSeries("Income", last6.map { it.incomeMinor }, IncomeGreen),
+                                ChartSeries("Spent", last6.map { it.expenseMinor }, Coral),
+                            ),
+                            labels,
+                            height = 130,
+                        )
+                        ChartLegend(listOf("Income" to IncomeGreen, "Spent" to Coral))
+                    }
+                }
             }
 
             item {
@@ -186,9 +226,9 @@ fun OverviewScreen(
                 }
             }
 
-            items(groups, key = { "${groupBy.name}:${it.key}" }) { g ->
-                val color = if (groupBy == GroupBy.CATEGORY) colorOf[g.key] ?: MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.primary
+            itemsIndexed(groups, key = { _, g -> "${groupBy.name}:${g.key}" }) { i, g ->
+                val color = if (groupBy == GroupBy.CATEGORY) colorOf[g.key] ?: ChartPalette[i % ChartPalette.size]
+                else ChartPalette[i % ChartPalette.size]
                 val budget = if (groupBy == GroupBy.CATEGORY) budgetOf[g.key] else null
                 Column(
                     Modifier
@@ -207,8 +247,12 @@ fun OverviewScreen(
                     else g.totalMinor.toFloat() / maxGroup
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                         color = if (budget != null && g.totalMinor > budget) ExpenseRed else color,
+                        trackColor = color.copy(alpha = 0.18f),
+                        strokeCap = StrokeCap.Round,
+                        gapSize = 0.dp,
+                        drawStopIndicator = {},
                     )
                     if (budget != null && budget > 0) {
                         Text(
@@ -275,12 +319,52 @@ private fun ComingUpCard(
     }
 }
 
+private val shortMonthFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
+
+/** Colourful month header: net in big type, income and spend in two tinted chips. */
 @Composable
-private fun StatCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(16.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge, color = color, fontWeight = FontWeight.Bold)
+private fun HeroCard(incomeMinor: Long, expenseMinor: Long, netMinor: Long, savingsRate: Int?) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(HeroGradient)
+            .padding(20.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column {
+                Text("Net this month", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f))
+                Text(
+                    (if (netMinor < 0) "−" else "") + formatInr(kotlin.math.abs(netMinor)),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+                savingsRate?.let {
+                    Text(
+                        if (it >= 0) "You saved $it% of your income" else "You spent ${-it}% more than you earned",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HeroChip("Income", formatInr(incomeMinor), IncomeGradient, Modifier.weight(1f))
+                HeroChip("Spent", formatInr(expenseMinor), SpendGradient, Modifier.weight(1f))
+            }
         }
+    }
+}
+
+@Composable
+private fun HeroChip(label: String, value: String, brush: Brush, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(brush)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.9f))
+        Text(value, style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }

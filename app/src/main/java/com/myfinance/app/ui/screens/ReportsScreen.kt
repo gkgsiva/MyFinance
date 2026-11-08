@@ -3,6 +3,26 @@ package com.myfinance.app.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.geometry.CornerRadius
+import com.myfinance.app.ui.charts.ChartCard
+import com.myfinance.app.ui.charts.ChartLegend
+import com.myfinance.app.ui.charts.ChartSeries
+import com.myfinance.app.ui.charts.DonutChart
+import com.myfinance.app.ui.charts.GroupedBarChart
+import com.myfinance.app.ui.charts.HorizontalBars
+import com.myfinance.app.ui.charts.LineChart
+import com.myfinance.app.ui.charts.Slice
+import com.myfinance.app.ui.charts.compactInr
+import com.myfinance.app.ui.theme.Amber
+import com.myfinance.app.ui.theme.ChartPalette
+import com.myfinance.app.ui.theme.Coral
+import com.myfinance.app.ui.theme.Indigo
+import com.myfinance.app.ui.theme.Pink
+import com.myfinance.app.ui.theme.Sky
+import com.myfinance.app.ui.theme.Teal
+import com.myfinance.app.ui.theme.Violet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -51,17 +71,6 @@ import java.time.format.DateTimeFormatter
 private val shortMonth: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
 private val monthYear: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM yyyy")
 
-/** Compact rupees for chart labels: ₹950, ₹12k, ₹1.2L. */
-private fun compactInr(minor: Long): String {
-    val r = minor / 100
-    return when {
-        r >= 1_00_00_000 -> "₹%.1fCr".format(r / 1_00_00_000.0)
-        r >= 1_00_000 -> "₹%.1fL".format(r / 1_00_000.0)
-        r >= 1_000 -> "₹%.0fk".format(r / 1_000.0)
-        else -> "₹$r"
-    }
-}
-
 @Composable
 fun ReportsScreen(vm: FinanceViewModel) {
     val data by vm.reports.collectAsState()
@@ -103,7 +112,7 @@ fun ReportsScreen(vm: FinanceViewModel) {
 
         // 9. Shareable PDF
         item {
-            ReportCard("Monthly statement (PDF)") {
+            ReportCard("Monthly statement (PDF)", accent = Violet) {
                 Text(
                     "A statement of ${month.format(monthYear)} for the whole family: totals, categories, people, top merchants and every transaction.",
                     style = MaterialTheme.typography.bodySmall,
@@ -119,7 +128,7 @@ fun ReportsScreen(vm: FinanceViewModel) {
 
         // 1. Month-on-month trend
         item {
-            ReportCard("Month by month") {
+            ReportCard("Month by month", accent = Teal) {
                 val last = data.monthly.lastOrNull()
                 val prev = data.monthly.getOrNull(data.monthly.size - 2)
                 if (last != null) {
@@ -130,20 +139,31 @@ fun ReportsScreen(vm: FinanceViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                BarChart(
-                    values = data.monthly.map { it.expenseMinor },
-                    second = data.monthly.map { it.incomeMinor },
-                    labels = labels,
-                    color = ExpenseRed,
-                    secondColor = IncomeGreen,
+                GroupedBarChart(
+                    listOf(
+                        ChartSeries("Income", data.monthly.map { it.incomeMinor }, IncomeGreen),
+                        ChartSeries("Spent", data.monthly.map { it.expenseMinor }, Coral),
+                    ),
+                    labels,
                 )
-                Legend(listOf("Spent" to ExpenseRed, "Income" to IncomeGreen))
+                ChartLegend(listOf("Income" to IncomeGreen, "Spent" to Coral))
             }
         }
 
         // 5. Savings rate
         item {
-            ReportCard("Savings rate") {
+            ReportCard("Savings", accent = IncomeGreen) {
+                LineChart(
+                    listOf(ChartSeries("Saved", data.monthly.map { it.netMinor }, Indigo)),
+                    labels,
+                    height = 130,
+                    showZero = true,
+                )
+                Text(
+                    "Money left over each month (income minus spending), and the share of income you kept:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 data.monthly.reversed().forEach { m ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(m.month.format(monthYear), modifier = Modifier.width(84.dp), style = MaterialTheme.typography.bodySmall)
@@ -173,15 +193,24 @@ fun ReportsScreen(vm: FinanceViewModel) {
 
         // 2. Category trends
         item {
-            ReportCard("Category trends") {
+            ReportCard("Category trends", accent = Pink) {
                 if (data.categoryTrends.isEmpty()) Empty()
+                val top = data.categoryTrends.sortedByDescending { it.total }.take(5)
+                if (top.isNotEmpty()) {
+                    LineChart(
+                        top.mapIndexed { i, s -> ChartSeries(s.key, s.values, colorOf[s.key] ?: ChartPalette[i % ChartPalette.size]) },
+                        labels,
+                        fill = false,
+                    )
+                    FlowLegend(top.mapIndexed { i, s -> s.key to (colorOf[s.key] ?: ChartPalette[i % ChartPalette.size]) })
+                }
                 data.categoryTrends.take(8).forEach { s -> SeriesRow(s, colorOf[s.key] ?: primary, labels) }
             }
         }
 
         // 4. Per person
         item {
-            ReportCard("Spending by person") {
+            ReportCard("Spending by person", accent = Violet) {
                 if (data.perPerson.size <= 1) {
                     Text(
                         "Merge or sync the family's data (Manage tab) to compare people side by side.",
@@ -189,21 +218,47 @@ fun ReportsScreen(vm: FinanceViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                val palette = listOf(primary, Color(0xFFE76F51), Color(0xFF457B9D), Color(0xFFE9C46A), Color(0xFF6D597A))
-                data.perPerson.forEachIndexed { i, s -> SeriesRow(s, palette[i % palette.size], labels) }
+                val palette = ChartPalette
+                if (data.perPerson.size > 1) {
+                    DonutChart(
+                        data.perPerson.mapIndexed { i, s -> Slice(s.key, s.total, palette[i % palette.size]) },
+                        centerTitle = "Family",
+                    )
+                }
+                if (data.perPerson.isNotEmpty()) {
+                    HorizontalBars(data.perPerson.mapIndexed { i, s -> Slice(s.key, s.total, palette[i % palette.size]) })
+                }
+                if (data.perPerson.size > 1) {
+                    Text("Month by month", style = MaterialTheme.typography.labelLarge)
+                    LineChart(
+                        data.perPerson.mapIndexed { i, s -> ChartSeries(s.key, s.values, palette[i % palette.size]) },
+                        labels,
+                        fill = false,
+                        height = 130,
+                    )
+                }
             }
         }
 
         // 3. Top merchants
         item {
-            ReportCard("Top merchants") {
+            ReportCard("Top merchants", accent = Amber) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = !merchantsByCount, onClick = { merchantsByCount = false }, label = { Text("By amount") })
                     FilterChip(selected = merchantsByCount, onClick = { merchantsByCount = true }, label = { Text("By number of payments") })
                 }
                 val list = if (merchantsByCount) data.topByCount else data.topByAmount
                 if (list.isEmpty()) Empty()
-                list.forEachIndexed { i, m ->
+                if (list.isNotEmpty()) {
+                    HorizontalBars(
+                        list.take(5).mapIndexed { i, m ->
+                            Slice(m.merchant, if (merchantsByCount) m.count.toLong() else m.totalMinor, ChartPalette[i % ChartPalette.size])
+                        },
+                        valueText = { if (merchantsByCount) "${it.value}×" else formatInr(it.value) },
+                    )
+                }
+                list.drop(5).forEachIndexed { idx, m ->
+                    val i = idx + 5
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}.", modifier = Modifier.width(28.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(m.merchant, modifier = Modifier.weight(1f), maxLines = 1)
@@ -216,32 +271,20 @@ fun ReportsScreen(vm: FinanceViewModel) {
 
         // 6. Payment modes
         item {
-            ReportCard("How you pay") {
-                val total = data.modes.sumOf { it.totalMinor }.coerceAtLeast(1)
-                val modeColors = listOf(primary, Color(0xFFE76F51), Color(0xFFE9C46A), Color(0xFF457B9D), Color(0xFF8D99AE))
-                if (data.modes.isEmpty()) Empty()
-                Canvas(Modifier.fillMaxWidth().height(18.dp)) {
-                    var x = 0f
-                    data.modes.forEachIndexed { i, m ->
-                        val w = size.width * m.totalMinor / total
-                        drawRect(modeColors[i % modeColors.size], topLeft = Offset(x, 0f), size = Size(w, size.height))
-                        x += w
-                    }
-                }
-                data.modes.forEachIndexed { i, m ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ColorDot(modeColors[i % modeColors.size])
-                        Text(m.mode.label, modifier = Modifier.weight(1f))
-                        Text("${m.totalMinor * 100 / total}%", style = MaterialTheme.typography.bodySmall)
-                        Text(formatInr(m.totalMinor), fontWeight = FontWeight.SemiBold)
-                    }
+            ReportCard("How you pay", accent = Sky) {
+                val modeColors = listOf(Sky, Pink, Amber, Teal, Violet, Coral)
+                if (data.modes.isEmpty()) Empty() else {
+                    DonutChart(
+                        data.modes.mapIndexed { i, m -> Slice(m.mode.label, m.totalMinor, modeColors[i % modeColors.size]) },
+                        centerTitle = "Paid",
+                    )
                 }
             }
         }
 
         // 7. Financial year
         item {
-            ReportCard("Financial year (April to March)") {
+            ReportCard("Financial year (April to March)", accent = Indigo) {
                 if (data.financialYears.isEmpty()) Empty()
                 data.financialYears.forEach { fy ->
                     Text(fy.label, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
@@ -261,7 +304,7 @@ fun ReportsScreen(vm: FinanceViewModel) {
 
         // 8. Unusual spends
         item {
-            ReportCard("Unusual spends") {
+            ReportCard("Unusual spends", accent = Coral) {
                 if (data.unusual.isEmpty()) {
                     Text(
                         "Nothing unusual: no payment was more than 3× your typical amount for its category.",
@@ -289,23 +332,14 @@ fun ReportsScreen(vm: FinanceViewModel) {
 }
 
 @Composable
-private fun ReportCard(title: String, content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            content()
-        }
-    }
+private fun ReportCard(title: String, accent: Color = MaterialTheme.colorScheme.primary, content: @Composable () -> Unit) {
+    ChartCard(title, accent = accent) { content() }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Empty() {
-    Text("No data yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun Legend(items: List<Pair<String, Color>>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+private fun FlowLegend(items: List<Pair<String, Color>>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items.forEach { (label, color) ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 ColorDot(color, 10)
@@ -313,6 +347,11 @@ private fun Legend(items: List<Pair<String, Color>>) {
             }
         }
     }
+}
+
+@Composable
+private fun Empty() {
+    Text("No data yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** One category / person: name, total, change and a small bar per month. */
@@ -359,10 +398,10 @@ private fun BarChart(
             values.forEachIndexed { i, v ->
                 val h = size.height * v / max
                 val x = i * slot + slot * 0.15f
-                drawRect(color, topLeft = Offset(x, size.height - h), size = Size(barW, h))
+                drawRoundRect(color, topLeft = Offset(x, size.height - h), size = Size(barW, h), cornerRadius = CornerRadius(barW / 3, barW / 3))
                 second?.getOrNull(i)?.let { v2 ->
                     val h2 = size.height * v2 / max
-                    drawRect(secondColor, topLeft = Offset(x + barW, size.height - h2), size = Size(barW, h2))
+                    drawRoundRect(secondColor, topLeft = Offset(x + barW, size.height - h2), size = Size(barW, h2), cornerRadius = CornerRadius(barW / 3, barW / 3))
                 }
             }
         }
