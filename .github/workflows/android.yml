@@ -16,6 +16,15 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # services.gradle.org is occasionally slow or returns 5xx; retry the one-time wrapper download.
+      - name: Fetch Gradle
+        run: |
+          for i in 1 2 3 4 5; do
+            ./gradlew --version && exit 0
+            echo "Gradle download failed (attempt $i), retrying in $((i * 15))s"
+            sleep $((i * 15))
+          done
+          exit 1
       - name: Unit tests
         run: ./gradlew :core:test --stacktrace
       - name: Build debug APK
