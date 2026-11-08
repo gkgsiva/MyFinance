@@ -15,8 +15,21 @@ android {
         applicationId = "com.myfinance.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI run number keeps every build newer than the last, so a new APK installs over the old one.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "0.1.$build"
+    }
+
+    signingConfigs {
+        // A fixed key (instead of each machine's random debug key) so updates install over
+        // the existing app without uninstalling and losing data.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

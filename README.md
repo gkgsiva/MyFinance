@@ -22,9 +22,10 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:
 
-1. Open the latest run of **Build APK** under the repo's *Actions* tab and download the
-   `myfinance-debug-apk` artifact.
-2. Unzip it, copy the `.apk` to the phone and open it (allow "install unknown apps" when asked).
+1. Open the repo's **Releases** page and download the `.apk` from the latest release
+   (a new release is published on every merge to `main`).
+2. Open the `.apk` on the phone (allow "install unknown apps" when asked). New versions install
+   over the old one and keep your data.
 3. Open MyFinance, tap **Allow and import** and grant SMS permission.
 
 ## Project layout
