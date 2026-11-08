@@ -76,7 +76,7 @@ class NetWorthTest {
 }
 
 class BillRemindersTest {
-    private val bill = Bill("1", "Electricity", BillKind.ELECTRICITY, 2_000_00, LocalDate.of(2026, 11, 10), 1, 3, listOf("bescom"))
+    private val bill = BillReminder("1", "Electricity", ReminderKind.ELECTRICITY, 2_000_00, LocalDate.of(2026, 11, 10), 1, 3, listOf("bescom"))
 
     @Test fun states() {
         assertEquals(BillState.UPCOMING, BillReminders.status(bill, LocalDate.of(2026, 11, 1)).state)

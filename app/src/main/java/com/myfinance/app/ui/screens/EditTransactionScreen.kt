@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import com.myfinance.app.data.TransactionEntity
 import com.myfinance.app.data.TxnSource
 import com.myfinance.app.ui.FinanceViewModel
+import com.myfinance.app.ui.V12ViewModel
+import com.myfinance.app.ui.v12.TransactionExtras
 import com.myfinance.core.DefaultCategories
 import com.myfinance.core.TxnType
 import com.myfinance.core.parseAmountToMinor
@@ -63,7 +65,7 @@ import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditTransactionScreen(vm: FinanceViewModel, id: Long, onDone: () -> Unit) {
+fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onDone: () -> Unit) {
     val categories by vm.categories.collectAsState()
     var original by remember { mutableStateOf<TransactionEntity?>(null) }
     var loaded by remember { mutableStateOf(id == 0L) }
@@ -220,6 +222,12 @@ fun EditTransactionScreen(vm: FinanceViewModel, id: Long, onDone: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Save") }
+
+            original?.let { TransactionExtras(v12, it) } ?: Text(
+                "Save first to add receipt photos, a tax section or split this payment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             original?.rawSms?.let { sms ->
                 Card(Modifier.fillMaxWidth()) {

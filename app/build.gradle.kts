@@ -82,6 +82,9 @@ dependencies {
     ksp("androidx.room:room-compiler:$room")
 
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 
     testImplementation("junit:junit:4.13.2")
 }

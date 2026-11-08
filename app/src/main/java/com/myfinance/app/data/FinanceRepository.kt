@@ -35,7 +35,13 @@ class FinanceRepository(
     private val context: Context,
     private val db: FinanceDatabase,
     private val extrasDb: ExtrasDatabase,
+    v12Db: V12Database,
 ) {
+
+    /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
+    val v12 = V12Repository(context, v12Db) {
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db)
+    }
 
     private val extras get() = extrasDb.extras()
     private val prefs = context.getSharedPreferences("myfinance", Context.MODE_PRIVATE)
@@ -102,9 +108,14 @@ class FinanceRepository(
             )
         }
 
+        runCatching { v12.onSms(key, body, timestamp) }
+
         val parsed = SmsParser.parse(sender, body, timestamp) ?: return false
+        // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
+        val rule = v12.ruleFor(sender, body, parsed.merchant, parsed.type, parsed.amountMinor)
+        if (rule?.ignore == true) return false
         val cat = (categorizer ?: categorizer()).categorize(parsed.merchant, parsed.type, body)
-        val row = TransactionEntity(
+        val base = TransactionEntity(
             amountMinor = parsed.amountMinor,
             type = parsed.type,
             merchant = parsed.merchant,
@@ -118,7 +129,29 @@ class FinanceRepository(
             reference = parsed.reference,
             balanceMinor = parsed.balanceMinor,
         )
-        return db.transactions().insert(row) != -1L
+        val row = rule?.applyTo(base) ?: base
+        val added = db.transactions().insert(row) != -1L
+        if (added) runCatching { v12.onNewTransaction(row, rule) }
+        return added
+    }
+
+    /**
+     * Runs the custom rules over SMS transactions already stored (ones you have not edited by hand).
+     * Returns how many changed.
+     */
+    suspend fun applyRulesToExisting(): Int = withContext(Dispatchers.IO) {
+        v12.invalidateRules()
+        val changed = ArrayList<TransactionEntity>()
+        for (t in db.transactions().allOnce()) {
+            if (t.userEdited || t.source != TxnSource.SMS) continue
+            val r = v12.ruleFor(null, t.rawSms, t.merchant, t.type, t.amountMinor) ?: continue
+            val updated = r.applyTo(t).let { if (r.ignore) it.copy(excluded = true) else it }
+            r.taxSection?.let { v12.dao.upsertTaxTag(TaxTagEntity(t.uid, it.name)) }
+            if (updated != t) changed += updated
+        }
+        if (changed.isNotEmpty()) db.transactions().updateAll(changed)
+        onDataChanged()
+        changed.size
     }
 
     /**
