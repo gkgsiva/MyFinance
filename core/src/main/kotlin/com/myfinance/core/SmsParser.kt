@@ -95,8 +95,7 @@ object SmsParser {
 
         val type = detectType(text) ?: return null
 
-        val accountTail = (maskedRegex.find(text)?.groupValues?.get(1)
-            ?: accountRegex.find(text)?.groupValues?.get(1))
+        val accountTail = accountTail(text)
 
         return ParsedTransaction(
             amountMinor = amount,
@@ -109,6 +108,13 @@ object SmsParser {
             timestamp = timestamp,
         )
     }
+
+    /** Last digits of the account or card the message is about, e.g. "1234" from "A/c XX1234". */
+    fun accountTail(text: String): String? =
+        maskedRegex.find(text)?.groupValues?.get(1) ?: accountRegex.find(text)?.groupValues?.get(1)
+
+    /** Bank named by the sender id, or failing that by the message. */
+    fun bank(sender: String, text: String): String? = bankFromSender(sender) ?: bankFromBody(text)
 
     private fun findTransactionAmount(text: String): MatchResult? =
         amountRegex.findAll(text).firstOrNull { !isBalance(text, it) } ?: bareAmountRegex.find(text)

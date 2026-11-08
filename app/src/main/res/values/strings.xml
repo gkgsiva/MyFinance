@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MyFinance</string>
+    <string name="widget_description">This month\'s spending at a glance</string>
 </resources>

@@ -26,6 +26,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY timestamp")
     suspend fun allOnce(): List<TransactionEntity>
 
+    @Query("SELECT * FROM transactions WHERE timestamp BETWEEN :from AND :to ORDER BY timestamp")
+    suspend fun rangeOnce(from: Long, to: Long): List<TransactionEntity>
+
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun get(id: Long): TransactionEntity?
 
@@ -58,6 +61,9 @@ interface CategoryDao {
 
     @Query("SELECT name FROM categories")
     suspend fun names(): List<String>
+
+    @Query("SELECT * FROM categories")
+    suspend fun allOnce(): List<CategoryEntity>
 
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int

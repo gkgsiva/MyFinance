@@ -2,6 +2,7 @@ package com.myfinance.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -19,6 +21,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +42,9 @@ import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.screens.CategoriesScreen
 import com.myfinance.app.ui.screens.EditTransactionScreen
 import com.myfinance.app.ui.screens.OverviewScreen
+import com.myfinance.app.ui.screens.ReportsScreen
 import com.myfinance.app.ui.screens.TransactionsScreen
+import com.myfinance.app.ui.screens.UpcomingScreen
 import com.myfinance.app.ui.theme.MyFinanceTheme
 
 class MainActivity : ComponentActivity() {
@@ -55,6 +60,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab("overview", "Overview", Icons.Filled.Home),
     Tab("transactions", "Transactions", Icons.AutoMirrored.Filled.List),
+    Tab("reports", "Reports", Icons.Filled.Info),
     Tab("categories", "Manage", Icons.Filled.Star),
 )
 
@@ -75,7 +81,19 @@ private fun MyFinanceRoot() {
         if (smsGranted) vm.importInbox()
     }
     val requestSms = {
-        permissionLauncher.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS))
+        val perms = mutableListOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)
+        if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
+        permissionLauncher.launch(perms.toTypedArray())
+    }
+
+    // Budget alerts and bill reminders need notification permission on Android 13+.
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && smsGranted &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     val importOrAsk = { if (smsGranted) vm.importInbox() else requestSms() }
 
@@ -115,8 +133,11 @@ private fun MyFinanceRoot() {
                         nav.navigate("transactions") { launchSingleTop = true }
                     },
                     onAdd = { nav.navigate("edit/0") },
+                    onOpenUpcoming = { nav.navigate("upcoming") },
                 )
             }
+            composable("upcoming") { UpcomingScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("reports") { ReportsScreen(vm = vm) }
             composable("transactions") {
                 TransactionsScreen(
                     vm = vm,

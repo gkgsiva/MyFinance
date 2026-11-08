@@ -41,11 +41,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.myfinance.app.data.BillEntity
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.GroupBy
 import com.myfinance.app.ui.theme.ExpenseRed
 import com.myfinance.app.ui.theme.IncomeGreen
+import com.myfinance.core.BalanceReading
+import com.myfinance.core.Balances
+import com.myfinance.core.RecurringPayment
 import com.myfinance.core.formatInr
+import java.time.LocalDate
 import java.time.YearMonth
 
 @Composable
@@ -55,6 +60,7 @@ fun OverviewScreen(
     onImport: () -> Unit,
     onOpenGroup: (category: String?) -> Unit,
     onAdd: () -> Unit,
+    onOpenUpcoming: () -> Unit,
 ) {
     val month by vm.month.collectAsState()
     val summary by vm.summary.collectAsState()
@@ -62,6 +68,9 @@ fun OverviewScreen(
     val categories by vm.categories.collectAsState()
     val importState by vm.importState.collectAsState()
     val txns by vm.monthTransactions.collectAsState()
+    val bills by vm.openBills.collectAsState()
+    val recurring by vm.recurring.collectAsState()
+    val balances by vm.balances.collectAsState()
 
     val colorOf = categories.associate { it.name to Color(it.color) }
     val budgetOf = categories.associate { it.name to it.monthlyBudgetMinor }
@@ -152,6 +161,10 @@ fun OverviewScreen(
             }
 
             item {
+                ComingUpCard(bills, recurring, balances, onOpenUpcoming)
+            }
+
+            item {
                 Spacer(Modifier.height(4.dp))
                 Text("Where it went", style = MaterialTheme.typography.titleMedium)
                 Row(
@@ -208,6 +221,56 @@ fun OverviewScreen(
                 }
             }
             item { Box(Modifier.height(72.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ComingUpCard(
+    bills: List<BillEntity>,
+    recurring: List<RecurringPayment>,
+    balances: List<BalanceReading>,
+    onOpen: () -> Unit,
+) {
+    val today = LocalDate.now()
+    val soon = today.plusDays(30)
+    // Next few items: bills first, then recurring payments, by date.
+    val lines = (
+        bills.map { b -> val bill = b.toBill(); Triple(bill.dueDate, bill.title, bill.amountMinor) } +
+            recurring.filter { !it.nextDate.isAfter(soon) }.map { Triple(it.nextDate, it.merchant, it.amountMinor) }
+        ).sortedBy { it.first }.take(4)
+
+    Card(Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Coming up", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("See all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            }
+            if (lines.isEmpty()) {
+                Text(
+                    "No bills or regular payments due in the next 30 days.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            lines.forEach { (date, title, amount) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, modifier = Modifier.weight(1f), maxLines = 1)
+                    Text(
+                        relativeDay(date, today) + "  ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (date.isBefore(today)) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(formatInr(amount), fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (balances.any { !it.isCardLimit }) {
+                Text(
+                    "In your bank accounts: ${formatInr(Balances.totalBankMinor(balances))}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
     }
 }

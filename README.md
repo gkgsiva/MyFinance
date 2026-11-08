@@ -18,6 +18,26 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   to see the whole family's spending. Duplicates, such as a joint-account payment whose SMS
   reached two phones, or the same file merged twice, are skipped.
 
+### New in 1.1
+
+- **Credit card bills and EMIs**: card statement and EMI reminder SMS show what is due and when,
+  with a reminder notification 3 days before. Bills are marked paid automatically when the card
+  payment SMS arrives, or by hand.
+- **Recurring payments**: subscriptions, rent, SIPs and other repeating payments are found in your
+  history, with the next expected date and a reminder 2 days before.
+- **Budget alerts**: a notification when a category passes 80% of its monthly budget, and again at 100%.
+- **Account balances**: the latest balance per bank account (and card limit left) from SMS.
+- **Search and filters**: by date range, person, account, amount, type and payment mode; export the
+  filtered list to Excel (.xlsx) or CSV.
+- **Family sync with Google Drive**: every phone syncs with one shared CSV file in your Drive
+  (Manage tab). No Google sign-in or server: the app reads and writes that one file through the
+  Drive app's file picker, and duplicates are skipped as with a manual merge. Deletions on one
+  phone are not removed from the others.
+- **Home screen widget**: this month's spending, income and budget left.
+- **Reports tab**: month-by-month trend, savings rate, category trends, spending by person, top
+  merchants, payment mode split (UPI / card / cash / net banking), financial-year (April-March)
+  totals, unusual spends, and a shareable monthly PDF statement.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:

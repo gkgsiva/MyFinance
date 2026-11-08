@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,6 +44,7 @@ import com.myfinance.core.formatInr
 import com.myfinance.core.parseAmountToMinor
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 /** Family sharing plus category & budget management. */
 @Composable
@@ -63,6 +65,15 @@ fun CategoriesScreen(vm: FinanceViewModel) {
     }
     val mergeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::mergeFrom)
+    }
+    val syncUri by vm.syncUri.collectAsState()
+    val lastSync by vm.lastSync.collectAsState()
+    val autoSync by vm.autoSync.collectAsState()
+    val newSharedLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let(vm::linkSyncFile)
+    }
+    val openSharedLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::linkSyncFile)
     }
 
     LazyColumn(
@@ -109,12 +120,57 @@ fun CategoriesScreen(vm: FinanceViewModel) {
         }
 
         item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Family sync with Google Drive", style = MaterialTheme.typography.titleMedium)
+                    if (syncUri == null) {
+                        Text(
+                            "Keep one shared file in your Google Drive. Each phone syncs with it: it adds what the " +
+                                "others wrote and writes back its own transactions, skipping duplicates. The data " +
+                                "only goes to that file in your Drive.\n\n" +
+                                "On the first phone tap \"Create shared file\" and save it in Drive. Share the file " +
+                                "with the family in the Drive app, then on their phones tap \"Use existing file\" " +
+                                "and pick it (under \"Shared with me\", or add a shortcut to My Drive first).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(
+                                onClick = { newSharedLauncher.launch("myfinance-family.csv") },
+                                enabled = !sync.running,
+                            ) { Text("Create shared file") }
+                            FilledTonalButton(
+                                onClick = { openSharedLauncher.launch(arrayOf("*/*")) },
+                                enabled = !sync.running,
+                            ) { Text("Use existing file") }
+                        }
+                    } else {
+                        Text(
+                            lastSync?.let { "Last synced " + it.toLocalDateTime().format(DateTimeFormatter.ofPattern("d MMM, h:mm a")) }
+                                ?: "Not synced yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Sync automatically", modifier = Modifier.weight(1f))
+                            Switch(checked = autoSync, onCheckedChange = vm::setAutoSync)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(onClick = vm::syncNow, enabled = !sync.running) { Text("Sync now") }
+                            TextButton(onClick = vm::unlinkSyncFile, enabled = !sync.running) { Text("Stop syncing") }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
                 Text("Categories & budgets", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, contentDescription = "Add category") }
             }
             Text(
-                "Tap a category to set a monthly budget.",
+                "Tap a category to set a monthly budget. You get a notification at 80% and when it is used up.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

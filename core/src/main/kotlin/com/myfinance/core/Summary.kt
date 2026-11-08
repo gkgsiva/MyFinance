@@ -9,6 +9,9 @@ data class TxnLite(
     val account: String?,
     val timestamp: Long,
     val owner: String? = null,
+    /** Row id in the app database, so a report can point back at a transaction. */
+    val id: Long = 0,
+    val mode: PaymentMode = PaymentMode.OTHER,
 )
 
 data class GroupTotal(val key: String, val totalMinor: Long, val count: Int)
