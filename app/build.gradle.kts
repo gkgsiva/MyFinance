@@ -18,7 +18,7 @@ android {
         // CI run number keeps every build newer than the last, so a new APK installs over the old one.
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "0.1.$build"
+        versionName = System.getenv("APP_VERSION") ?: "0.0.$build"
     }
 
     signingConfigs {

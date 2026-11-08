@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 1.0 (creates tag v1.0 with the APK attached)"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  APP_VERSION: ${{ inputs.version || format('0.0.{0}', github.run_number) }}
 
 jobs:
   build:
@@ -33,19 +40,18 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "myfinance-0.1.${{ github.run_number }}.apk"
+        run: cp app/build/outputs/apk/debug/app-debug.apk "myfinance-${APP_VERSION}.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: myfinance-debug-apk
           path: myfinance-*.apk
-      # Every build of main (or a manual run) becomes a GitHub Release with the APK attached.
+      # Run this workflow manually (Actions > Build APK > Run workflow) with a version to publish a release.
       - name: Publish release
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.1.${{ github.run_number }}"
-          gh release create "$TAG" myfinance-*.apk \
+          gh release create "v${APP_VERSION}" myfinance-*.apk \
             --target "${{ github.sha }}" \
-            --title "MyFinance 0.1.${{ github.run_number }}" \
+            --title "MyFinance ${APP_VERSION}" \
             --notes "Install: download the .apk below on your phone and open it (allow installing unknown apps). It installs over an earlier version and keeps your data."
