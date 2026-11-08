@@ -142,6 +142,16 @@ object CsvCodec {
         return out to bad
     }
 
+    /** True when [text] starts with a MyFinance export header, so stray files opened from WhatsApp are refused. */
+    fun isExport(text: String): Boolean {
+        val firstLine = text.removePrefix("\uFEFF").lineSequence().firstOrNull() ?: return false
+        val cols = firstLine.split(',').map { it.trim().trim('"').lowercase() }
+        return listOf("uid", "date", "amount", "type").all { it in cols }
+    }
+
+    /** The distinct people named in an export, e.g. the family member who shared it. */
+    fun owners(rows: List<SharedTxn>): List<String> = rows.mapNotNull { it.owner?.trim()?.ifBlank { null } }.distinct().sorted()
+
     /** Plain CSV of any table, for statements that open in Excel / Sheets. */
     fun encodeTable(header: List<String>, rows: List<List<Any?>>): String = buildString {
         appendLine(header.joinToString(",") { quote(it) })

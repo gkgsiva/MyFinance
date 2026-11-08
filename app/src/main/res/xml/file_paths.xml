@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <files-path name="receipts" path="receipts/" />
+    <!-- Family export handed to WhatsApp / the share sheet. -->
+    <cache-path name="share" path="share/" />
 </paths>

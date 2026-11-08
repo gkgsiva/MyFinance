@@ -23,6 +23,28 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Open with MyFinance" on a family export received in WhatsApp or found in Files. -->
+            <intent-filter android:label="Merge into MyFinance">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/x-csv" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Sharing the file from WhatsApp (long-press > Share) straight to MyFinance. -->
+            <intent-filter android:label="Merge into MyFinance">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/x-csv" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <!-- Shares receipt photos with the camera and photo viewer only, never publicly. -->

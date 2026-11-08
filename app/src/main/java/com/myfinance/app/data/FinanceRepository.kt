@@ -238,7 +238,35 @@ class FinanceRepository(
         n
     }
 
-    data class MergeResult(val added: Int, val duplicates: Int, val unreadable: Int)
+    /**
+     * Writes the export to a private cache file and returns a content link to it, so it can be sent
+     * through WhatsApp (or any app in the share sheet) without saving it anywhere first.
+     */
+    suspend fun exportForShare(): Pair<Uri, Int> = withContext(Dispatchers.IO) {
+        val (csv, n) = exportCsv()
+        val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val who = ownerName.value.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "family" }
+        val file = java.io.File(dir, "myfinance-$who-${LocalDate.now()}.csv")
+        file.writeText(csv, Charsets.UTF_8)
+        androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file) to n
+    }
+
+    data class MergeResult(
+        val added: Int,
+        val duplicates: Int,
+        val unreadable: Int,
+        /** Whose entries the file held, e.g. "Priya". */
+        val from: List<String> = emptyList(),
+    )
+
+    /** Merges a file opened from WhatsApp or a file manager, refusing anything that is not a MyFinance export. */
+    suspend fun mergeShared(uri: Uri): MergeResult = withContext(Dispatchers.IO) {
+        val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+            ?: error("Could not open the file")
+        require(CsvCodec.isExport(text)) { "This is not a MyFinance export file." }
+        mergeText(text).also { onDataChanged() }
+    }
 
     /**
      * Merges another phone's export. Rows that already exist here, such as a joint-account payment
@@ -271,7 +299,8 @@ class FinanceRepository(
             }
         }
         if (modes.isNotEmpty()) extras.upsertModes(modes)
-        return MergeResult(added = added, duplicates = incoming.size - added, unreadable = bad)
+        val from = CsvCodec.owners(incoming).filter { it != me }
+        return MergeResult(added = added, duplicates = incoming.size - added, unreadable = bad, from = from)
     }
 
     private val _syncUri = MutableStateFlow(prefs.getString(KEY_SYNC_URI, null))

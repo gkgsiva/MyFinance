@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.myfinance.app.data.CategoryEntity
+import androidx.compose.ui.platform.LocalContext
+import com.myfinance.app.share.FamilyShare
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.core.formatInr
 import com.myfinance.core.parseAmountToMinor
@@ -59,6 +61,9 @@ fun CategoriesScreen(vm: FinanceViewModel) {
     var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<CategoryEntity?>(null) }
     var nameDraft by remember(owner) { mutableStateOf(owner) }
+    val context = LocalContext.current
+    // Shared files are labelled with this name on the main phone, so ask for a real one first.
+    val needsName = owner.isBlank() || owner == "Me"
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         uri?.let(vm::exportTo)
@@ -114,6 +119,18 @@ fun CategoriesScreen(vm: FinanceViewModel) {
                             enabled = !sync.running,
                         ) { Text("Merge a file") }
                     }
+                    Button(
+                        onClick = { vm.shareExport { uri -> FamilyShare.sendViaWhatsApp(context, uri) } },
+                        enabled = !sync.running && !needsName,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Share via WhatsApp") }
+                    Text(
+                        if (needsName) "Enter whose phone this is and tap Save to share via WhatsApp."
+                        else "Sends your transactions to the main phone in WhatsApp. There, tap the file and " +
+                            "open it with MyFinance to merge it, without duplicates.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     sync.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
             }

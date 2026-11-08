@@ -35,7 +35,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import android.view.WindowManager
+import android.content.Intent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import com.myfinance.app.security.AppLock
+import com.myfinance.app.share.FamilyShare
 import com.myfinance.app.ui.V12ViewModel
 import com.myfinance.app.ui.v12.BackupScreen
 import com.myfinance.app.ui.v12.BillsScreen
@@ -70,6 +74,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) FamilyShare.accept(intent)
         setContent {
             MyFinanceTheme {
                 val lockOn by AppLock.enabled.collectAsState()
@@ -82,10 +87,15 @@ class MainActivity : FragmentActivity() {
                 }
                 Box(Modifier.fillMaxSize()) {
                     MyFinanceRoot()
-                    if (lockOn && locked) LockScreen(bio)
+                    if (lockOn && locked) LockScreen(bio) else SharedFileImport()
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        FamilyShare.accept(intent)
     }
 
     override fun onStart() {
@@ -96,6 +106,44 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         AppLock.onBackground()
+    }
+}
+
+/** Asks before merging a file opened from WhatsApp, then shows what was added. */
+@Composable
+private fun SharedFileImport() {
+    val vm: FinanceViewModel = viewModel()
+    val incoming by FamilyShare.incoming.collectAsState()
+    val sync by vm.syncState.collectAsState()
+    var merging by remember { mutableStateOf(false) }
+
+    incoming?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { FamilyShare.clear() },
+            title = { Text("Merge shared file?") },
+            text = {
+                Text(
+                    "Add the transactions in this MyFinance file to this phone. Entries already here are " +
+                        "skipped, and each one stays labelled with the person who shared it.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    FamilyShare.clear()
+                    merging = true
+                    vm.mergeShared(uri)
+                }) { Text("Merge") }
+            },
+            dismissButton = { TextButton(onClick = { FamilyShare.clear() }) { Text("Cancel") } },
+        )
+    }
+    if (merging && !sync.running && sync.message != null) {
+        AlertDialog(
+            onDismissRequest = { merging = false },
+            title = { Text("Family file") },
+            text = { Text(sync.message.orEmpty()) },
+            confirmButton = { TextButton(onClick = { merging = false }) { Text("OK") } },
+        )
     }
 }
 

@@ -225,6 +225,16 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     fun mergeFrom(uri: Uri) = runSync { describe(repo.mergeFrom(uri), "Added") }
 
+    /** Prepares the export for sending, then hands the file link to [send] (which opens WhatsApp). */
+    fun shareExport(send: (Uri) -> Unit) = runSync {
+        val (uri, n) = repo.exportForShare()
+        withContext(Dispatchers.Main) { send(uri) }
+        "Shared $n transactions. On the main phone, open the file from WhatsApp with MyFinance to merge it."
+    }
+
+    /** Merges a file opened from WhatsApp ("Open with MyFinance") or shared to the app. */
+    fun mergeShared(uri: Uri) = runSync { describe(repo.mergeShared(uri), "Added") }
+
     /** Links the shared family file in Google Drive, then syncs straight away. */
     fun linkSyncFile(uri: Uri) {
         repo.linkSyncFile(uri)
@@ -242,6 +252,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun describe(r: FinanceRepository.MergeResult, verb: String) = buildString {
         append("$verb ${r.added} transactions")
+        if (r.from.isNotEmpty()) append(" from ${r.from.joinToString(", ")}")
         if (r.duplicates > 0) append(", skipped ${r.duplicates} already here")
         if (r.unreadable > 0) append(", ${r.unreadable} rows could not be read")
         append(".")
