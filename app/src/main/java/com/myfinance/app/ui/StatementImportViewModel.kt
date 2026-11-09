@@ -130,7 +130,8 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
                 result = added.fold(
                     { r ->
                         val upd = if (r.updated > 0) " ${r.updated} entries from SMS now use the statement's details." else ""
-                        "Added ${r.added} transactions from $files statement${if (files == 1) "" else "s"}$span.$upd Reports now include these years."
+                        val closed = if (r.skippedClosed > 0) " ${r.skippedClosed} lines in months you closed were left out; reopen the month under Plan > Monthly close to bring them in." else ""
+                        "Added ${r.added} transactions from $files statement${if (files == 1) "" else "s"}$span.$upd$closed Reports now include these years."
                     },
                     { e -> "Import failed: ${e.message}" },
                 ),

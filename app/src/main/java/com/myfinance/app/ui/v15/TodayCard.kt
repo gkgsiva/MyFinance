@@ -93,6 +93,12 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
             }
             if (today.upcoming.size > 6) Text("+${today.upcoming.size - 6} more", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { open("calendar") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Open the cash flow calendar") }
+            val inbox by vm.v16.inbox.collectAsState()
+            if (inbox.isNotEmpty()) {
+                TextButton(onClick = { open("review") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    Text("${inbox.size} thing${if (inbox.size == 1) "" else "s"} to review", color = Amber)
+                }
+            }
             Text("Add", style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = { open("edit/0") }, label = { Text("Spend (any date)") })
@@ -103,6 +109,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 AssistChip(onClick = { dialog = QuickAdd.EPF }, label = { Text("EPF") })
                 AssistChip(onClick = { open("lending") }, label = { Text("Lent / borrowed") })
                 AssistChip(onClick = { open("ask") }, label = { Text("Ask") })
+                AssistChip(onClick = { open("heavy") }, label = { Text("Heavy spends") })
             }
         }
     }

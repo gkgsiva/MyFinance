@@ -185,7 +185,7 @@ class V12Repository(
         private const val KEY_LAST_BACKUP = "v12_last_backup"
         private const val STAGING = "restore-pending"
         private val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
-        private val DB_FILES = setOf("myfinance.db", "myfinance-extras.db", V12Database.FILE, V13Database.FILE, V14Database.FILE, V15Database.FILE)
+        private val DB_FILES = setOf("myfinance.db", "myfinance-extras.db", V12Database.FILE, V13Database.FILE, V14Database.FILE, V15Database.FILE, V16Database.FILE)
 
         /** Called before any database is opened: moves a staged restore into place. */
         fun applyPendingRestore(context: Context) {

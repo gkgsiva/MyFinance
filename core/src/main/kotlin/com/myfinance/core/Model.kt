@@ -17,6 +17,9 @@ data class ParsedTransaction(
     val reference: String?,
     val balanceMinor: Long?,
     val timestamp: Long,
+    /** Set when the payment was in another currency; [amountMinor] is then the rupee estimate. */
+    val foreign: ForeignAmount? = null,
+    val fxRate: Double? = null,
 )
 
 /** Formats minor units as an Indian-rupee string, e.g. 123456 -> "₹1,234.56". */

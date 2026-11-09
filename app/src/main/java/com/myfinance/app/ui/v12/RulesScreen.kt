@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +47,12 @@ private fun describe(r: CustomRule): String = buildList {
 }.joinToString(", ")
 
 @Composable
-fun RulesScreen(vm: V12ViewModel, onBack: () -> Unit) {
+fun RulesScreen(
+    vm: V12ViewModel,
+    onBack: () -> Unit,
+    /** v1.6 rule tester: which past entries a rule would change. */
+    test: (suspend (CustomRule, List<CustomRule>) -> com.myfinance.core.RuleTestResult)? = null,
+) {
     val rules by vm.rules.collectAsState()
     var editing by remember { mutableStateOf<CustomRuleEntity?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -74,11 +80,13 @@ fun RulesScreen(vm: V12ViewModel, onBack: () -> Unit) {
         }
     }
 
-    if (adding || editing != null) RuleDialog(vm, editing?.toRule()) { adding = false; editing = null }
+    if (adding || editing != null) RuleDialog(vm, editing?.toRule(), test?.let { t -> val f: suspend (CustomRule) -> com.myfinance.core.RuleTestResult = { r -> t(r, rules.map { it.toRule() }) }; f }) { adding = false; editing = null }
 }
 
 @Composable
-private fun RuleDialog(vm: V12ViewModel, existing: CustomRule?, onClose: () -> Unit) {
+private fun RuleDialog(vm: V12ViewModel, existing: CustomRule?, test: (suspend (CustomRule) -> com.myfinance.core.RuleTestResult)?, onClose: () -> Unit) {
+    var testResult by remember { mutableStateOf<com.myfinance.core.RuleTestResult?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val categories by vm.categoryNames.collectAsState()
     var pattern by remember { mutableStateOf(existing?.pattern.orEmpty()) }
     var field by remember { mutableStateOf(existing?.field ?: RuleField.ANY) }
@@ -122,9 +130,46 @@ private fun RuleDialog(vm: V12ViewModel, existing: CustomRule?, onClose: () -> U
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(ignore, { ignore = it }); Text("Ignore these SMS completely") }
                 OutlinedTextField(priority, { v -> priority = v.filter { it.isDigit() }.take(3) }, label = { Text("Priority (lower runs first)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (!valid && pattern.isNotBlank()) Hint12(if (regex && runCatching { Regex(pattern) }.isFailure) "That pattern isn't valid." else "Choose at least one thing to do.")
+                if (test != null && valid) {
+                    androidx.compose.material3.OutlinedButton(onClick = { scope.launch { testResult = test(rule) } }) { Text("Test on past entries") }
+                }
             }
         },
         confirmButton = { TextButton(onClick = { vm.saveRule(rule); onClose() }, enabled = valid) { Text("Save") } },
         dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+    )
+
+    testResult?.let { r -> RuleTestDialog(r) { testResult = null } }
+}
+
+@Composable
+private fun RuleTestDialog(r: com.myfinance.core.RuleTestResult, onClose: () -> Unit) {
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("d MMM yy")
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("This rule would change ${r.changes.size}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Matches ${r.matched} past entries." +
+                        (if (r.locked > 0) " ${r.locked} you edited or typed in are left alone." else "") +
+                        (if (r.wonByOtherRule > 0) " ${r.wonByOtherRule} go to an earlier rule instead." else ""),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                r.changes.take(100).forEach { c ->
+                    val day = java.time.Instant.ofEpochMilli(c.row.timestamp).atZone(java.time.ZoneId.systemDefault()).format(fmt)
+                    val what = buildList {
+                        if (c.newCategory != null && c.newCategory != c.row.category) add("${c.row.category} → ${c.newCategory}")
+                        if (c.newMerchant != null && c.newMerchant != c.row.merchant) add("renamed ${c.newMerchant}")
+                        if (c.excluded) add("left out of totals")
+                        if (c.ignored) add("ignored")
+                    }.joinToString(", ")
+                    Text("$day · ${c.row.merchant ?: "?"} · ${com.myfinance.core.formatInr(c.row.amountMinor)}\n$what", style = MaterialTheme.typography.bodySmall)
+                }
+                if (r.changes.size > 100) Text("…and ${r.changes.size - 100} more", style = MaterialTheme.typography.bodySmall)
+                Hint12("Nothing changes until you save the rule and tap \"Apply rules to past SMS\".")
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("OK") } },
     )
 }

@@ -389,7 +389,15 @@ private fun MyFinanceRoot() {
             composable("splits") { SplitsScreen(v12, back) }
             composable("cash") { CashScreen(v12, back, openTxn) }
             composable("tax") { TaxScreen(v12, back, openTxn) }
-            composable("rules") { RulesScreen(v12, back) }
+            composable("rules") { RulesScreen(v12, back) { r, others -> vm.v16.testRule(r, others) } }
+            composable("review") { com.myfinance.app.ui.v16.ReviewInboxScreen(vm, back, openTxn) { route -> nav.navigate(route) } }
+            composable("family-upi") { com.myfinance.app.ui.v16.FamilyUpiScreen(vm, back, openTxn) }
+            composable("transfers") { com.myfinance.app.ui.v16.TransfersScreen(vm, back, openTxn) }
+            composable("month-close") { com.myfinance.app.ui.v16.MonthCloseScreen(vm, back) { route -> nav.navigate(route) } }
+            composable("health") { com.myfinance.app.ui.v16.HealthScreen(vm, back, openTxn) { route -> nav.navigate(route) } }
+            composable("export-all") { com.myfinance.app.ui.v16.ExportScreen(vm, back) }
+            composable("currency") { com.myfinance.app.ui.v16.CurrencyScreen(vm, back, openTxn) }
+            composable("heavy") { com.myfinance.app.ui.v16.HeavySpendsScreen(vm, back, openTxn) }
             composable("security") { SecurityScreen(v12, back) }
             composable("backup") { BackupScreen(v12, back) { com.myfinance.app.ui.v15.AutoBackupCard(vm) } }
             composable(

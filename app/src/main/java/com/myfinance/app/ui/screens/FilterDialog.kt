@@ -71,6 +71,9 @@ fun FilterDialog(
     var min by remember { mutableStateOf(initial.minAmountMinor?.let { BigDecimal.valueOf(it, 2).stripTrailingZeros().toPlainString() } ?: "") }
     var max by remember { mutableStateOf(initial.maxAmountMinor?.let { BigDecimal.valueOf(it, 2).stripTrailingZeros().toPlainString() } ?: "") }
     var pickDates by remember { mutableStateOf(false) }
+    var withPhoto by remember { mutableStateOf(initial.withPhoto) }
+    var noteText by remember { mutableStateOf(initial.noteText.takeIf { it != "*" }.orEmpty()) }
+    var anyNote by remember { mutableStateOf(initial.noteText == "*") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -109,6 +112,20 @@ fun FilterDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f),
                     )
                 }
+
+                Label("Notes and photos")
+                OutlinedTextField(
+                    value = noteText, onValueChange = { noteText = it; if (it.isNotBlank()) anyNote = false }, label = { Text("Note contains") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = anyNote, onCheckedChange = { anyNote = it; if (it) noteText = "" })
+                    Text("Only entries with a note")
+                }
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = withPhoto, onCheckedChange = { withPhoto = it })
+                    Text("Only entries with a bill photo")
+                }
             }
         },
         confirmButton = {
@@ -117,6 +134,7 @@ fun FilterDialog(
                     initial.copy(
                         fromMillis = from, toMillis = to, owner = owner, account = account, type = type, mode = mode,
                         minAmountMinor = parseAmountToMinor(min), maxAmountMinor = parseAmountToMinor(max),
+                        withPhoto = withPhoto, noteText = if (anyNote) "*" else noteText.trim(),
                     ),
                 )
             }) { Text("Apply") }

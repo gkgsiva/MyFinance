@@ -143,6 +143,12 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            com.myfinance.app.ui.v16.ForeignAmountRow(vm) { inr, fxNote ->
+                amount = BigDecimal.valueOf(inr, 2).stripTrailingZeros().toPlainString()
+                amountError = false
+                note = (com.myfinance.core.Fx.parseNote(note)?.let { note.replace(Regex("""[A-Z]{3} [0-9.]+ at ₹[0-9.]+"""), "").trim() } ?: note.trim())
+                    .let { if (it.isEmpty()) fxNote else "$it · $fxNote" }
+            }
 
             OutlinedTextField(
                 value = merchant,
@@ -217,6 +223,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 }
             }
             original?.let { o -> com.myfinance.app.ui.v14.RefundSwitch(vm, o.uid, o.amountMinor, o.type == TxnType.DEBIT) }
+            original?.let { o -> com.myfinance.app.ui.v16.SplitPaymentCard(vm, o) }
 
             Button(
                 onClick = {
