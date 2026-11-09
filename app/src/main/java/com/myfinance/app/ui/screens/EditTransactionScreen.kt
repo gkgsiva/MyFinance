@@ -206,6 +206,18 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 income = type == TxnType.CREDIT,
             )
 
+            // v1.4: a label that fits, from payments already labelled.
+            val suggestions by vm.v14.suggestions.collectAsState()
+            suggestions.firstOrNull { it.txnId == id && id != 0L }?.let { sug ->
+                if (extras.labels.none { it.equals(sug.label, ignoreCase = true) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Suggested: #${sug.label} (${sug.reason})", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { extras = extras.copy(labels = extras.labels + sug.label) }) { Text("Add") }
+                    }
+                }
+            }
+            original?.let { o -> com.myfinance.app.ui.v14.RefundSwitch(vm, o.uid, o.amountMinor, o.type == TxnType.DEBIT) }
+
             Button(
                 onClick = {
                     val minor = parseAmountToMinor(amount)

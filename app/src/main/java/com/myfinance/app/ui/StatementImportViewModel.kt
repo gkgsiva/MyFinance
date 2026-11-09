@@ -114,6 +114,13 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(importing = true) }
         viewModelScope.launch {
             val added = runCatching { repo.addImported(rows) }
+            // Card statements: keep the bill printed on them for the card bill check.
+            for (f in s.ready) {
+                val st = f.statement ?: continue
+                val total = st.billTotalMinor ?: continue
+                val due = st.billDueDate ?: continue
+                runCatching { repo.addStatementBill(f.bank ?: st.bank, f.accountTail ?: st.accountTail, total, st.billMinMinor, due) }
+            }
             existing = null
             val files = s.ready.size
             val from = s.ready.mapNotNull { it.summary.from }.minOrNull()

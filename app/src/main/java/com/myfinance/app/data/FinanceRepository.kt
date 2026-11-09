@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -41,15 +42,19 @@ class FinanceRepository(
     private val extrasDb: ExtrasDatabase,
     v12Db: V12Database,
     v13Db: V13Database,
+    v14Db: V14Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db)
     }
 
     /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
     val v13: V13Dao = v13Db.dao()
+
+    /** v1.4: label budgets, label suggestion answers, refunds awaited, loan rates, pinned reports. */
+    val v14: V14Dao = v14Db.dao()
 
     private val extras get() = extrasDb.extras()
     private val prefs = context.getSharedPreferences("myfinance", Context.MODE_PRIVATE)
@@ -404,7 +409,8 @@ class FinanceRepository(
     private suspend fun exportCsv(): Pair<String, Int> {
         val me = ownerName.value
         val modes = modeMap()
-        val rows = db.transactions().allOnce().map { it.toShared(me, modes) }
+        val labels = v13.allLabels().groupBy({ it.uid }, { it.label })
+        val rows = db.transactions().allOnce().map { it.toShared(me, modes).copy(labels = labels[it.uid].orEmpty().sorted()) }
         return CsvCodec.encode(rows) to rows.size
     }
 
@@ -482,6 +488,11 @@ class FinanceRepository(
             }
         }
         if (modes.isNotEmpty()) extras.upsertModes(modes)
+        // Labels travel with the rows (by uid), so each person's labels show in the family label view.
+        val localUids = db.transactions().allOnce().mapTo(HashSet()) { it.uid }
+        val incomingLabels = incoming.filter { it.labels.isNotEmpty() && it.uid in localUids && it.uid !in deletedUids }
+            .flatMap { t -> t.labels.map { TxnLabelEntity(t.uid, it) } }
+        if (incomingLabels.isNotEmpty()) v13.addLabels(incomingLabels)
         val from = CsvCodec.owners(incoming).filter { it != me }
         return MergeResult(added = added, duplicates = incoming.size - added, unreadable = bad, from = from)
     }
@@ -599,10 +610,21 @@ class FinanceRepository(
     /** Sends a notification the first time a category passes 80% and 100% of its budget each month. */
     suspend fun checkBudgets() {
         val month = monthCycle.value.current()
-        val budgets = db.categories().allOnce().mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap()
+        val categoryBudgets = db.categories().allOnce().mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap()
+        // Label budgets share the alerts, named "#Vegetables" so they never clash with a category.
+        val labelBudgets = v14.labelBudgets().associate { "#${it.label}" to it.monthlyMinor }
+        val budgets = categoryBudgets + labelBudgets
         if (budgets.isEmpty()) return
-        val spent = monthRows(month).filter { !it.excluded && it.type == TxnType.DEBIT }
-            .groupBy { it.category }.mapValues { (_, v) -> v.sumOf { it.amountMinor } }
+        val rows = monthRows(month).filter { !it.excluded }
+        val spent = HashMap<String, Long>()
+        rows.filter { it.type == TxnType.DEBIT }.groupBy { it.category }.forEach { (k, v) -> spent[k] = v.sumOf { it.amountMinor } }
+        if (labelBudgets.isNotEmpty()) {
+            val labels = v13.allLabels().groupBy({ it.uid }, { it.label })
+            for (t in rows) for (l in labels[t.uid].orEmpty().distinct()) {
+                // Refunds from the same label come off its spending.
+                spent.merge("#$l", if (t.type == TxnType.DEBIT) t.amountMinor else -t.amountMinor, Long::plus)
+            }
+        }
         val sent = prefs.getStringSet(KEY_BUDGET_SENT, emptySet()).orEmpty()
         val due = BudgetAlerts.due(spent, budgets, sent, month)
         if (due.isEmpty()) return
@@ -661,12 +683,96 @@ class FinanceRepository(
             newKeys += key
         }
 
+        runCatching { checkStatementReminder(today) }
+        runCatching { newKeys += checkRefunds(today, sent) }
+
         if (newKeys.isNotEmpty()) {
             // Forget keys older than ~2 months.
             val cutoff = today.minusDays(60)
             val kept = sent.filter { k -> k.substringAfterLast('|').let { d -> parseKeyDate(d)?.isAfter(cutoff) ?: false } }
             prefs.edit().putStringSet(KEY_REMINDERS_SENT, (kept + newKeys).toSet()).apply()
         }
+    }
+
+    // ---- v1.4: statement reminders, refunds, card statement bills ----
+
+    private val _statementReminderDay = MutableStateFlow(prefs.getInt(KEY_STMT_DAY, 5))
+
+    /** Day of the month for the "import your statements" nudge; 0 = off. */
+    val statementReminderDay: StateFlow<Int> = _statementReminderDay.asStateFlow()
+
+    fun setStatementReminderDay(day: Int) {
+        val d = day.coerceIn(0, 28)
+        prefs.edit().putInt(KEY_STMT_DAY, d).apply()
+        _statementReminderDay.value = d
+    }
+
+    private val _refundDays = MutableStateFlow(prefs.getInt(KEY_REFUND_DAYS, 10))
+
+    /** A refund not back after this many days is flagged. */
+    val refundOverdueDays: StateFlow<Int> = _refundDays.asStateFlow()
+
+    fun setRefundOverdueDays(days: Int) {
+        val d = days.coerceIn(1, 90)
+        prefs.edit().putInt(KEY_REFUND_DAYS, d).apply()
+        _refundDays.value = d
+    }
+
+    /** Accounts and cards whose latest imported statement is older than last month. */
+    suspend fun statementGaps(today: LocalDate = LocalDate.now()): List<com.myfinance.core.StatementGap> {
+        val me = ownerName.value
+        val rows = db.transactions().allOnce().filter { it.source == TxnSource.STATEMENT && it.owner == null }.map { it.toLite(me) }
+        return com.myfinance.core.StatementReminders.gaps(rows, today)
+    }
+
+    private suspend fun checkStatementReminder(today: LocalDate) {
+        val day = _statementReminderDay.value
+        val last = prefs.getString(KEY_STMT_SENT, null)?.let { runCatching { YearMonth.parse(it) }.getOrNull() }
+        if (!com.myfinance.core.StatementReminders.isDue(today, day, last)) return
+        val hasImported = db.transactions().allOnce().any { it.source == TxnSource.STATEMENT && it.owner == null }
+        if (!hasImported) return
+        val gaps = statementGaps(today)
+        prefs.edit().putString(KEY_STMT_SENT, YearMonth.from(today).toString()).apply()
+        if (gaps.isEmpty()) return
+        val (title, text) = com.myfinance.core.StatementReminders.message(gaps, today)
+        Notifier.reminder(context, "stmt|${YearMonth.from(today)}".hashCode(), title, text)
+    }
+
+    /** Notifies once for each refund that turns overdue. Returns the keys it sent. */
+    private suspend fun checkRefunds(today: LocalDate, sent: Set<String>): List<String> {
+        val watches = v14.observeRefunds().first()
+        if (watches.isEmpty()) return emptyList()
+        val me = ownerName.value
+        val all = db.transactions().allOnce()
+        val idOf = all.associate { it.uid to it.id }
+        val lite = all.filterNot { it.excluded }.map { it.toLite(me) }
+        val items = com.myfinance.core.Refunds.track(
+            watches.mapNotNull { w -> idOf[w.uid]?.let { com.myfinance.core.RefundWatch(it, w.expectedMinor, w.since, w.closed) } },
+            lite, today, _refundDays.value,
+        )
+        val out = ArrayList<String>()
+        for (i in items.filter { it.state == com.myfinance.core.RefundState.OVERDUE }) {
+            val key = "refund|${i.payment.id}|${today.toEpochDay()}"
+            if (sent.any { it.startsWith("refund|${i.payment.id}|") }) continue
+            Notifier.reminder(
+                context, key.hashCode(), "Refund from ${i.payment.merchant ?: "seller"} not received",
+                "${formatInr(i.pendingMinor)} still to come back after ${i.daysWaiting} days. Check the refund status with the seller.",
+            )
+            out += key
+        }
+        return out
+    }
+
+    /** Saves the bill printed on an imported credit card statement, for the card bill check. */
+    suspend fun addStatementBill(bank: String?, tail: String?, totalMinor: Long, minMinor: Long?, due: LocalDate) {
+        if (tail == null || totalMinor <= 0) return
+        extras.insertBill(
+            BillEntity(
+                smsKey = "STMTBILL|$tail|${due.toEpochDay()}", kind = com.myfinance.core.BillKind.CREDIT_CARD.name,
+                amountMinor = totalMinor, minDueMinor = minMinor, dueEpochDay = due.toEpochDay(), accountTail = tail, bank = bank,
+                receivedAt = due.minusDays(20).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            ),
+        )
     }
 
     private fun parseKeyDate(s: String): LocalDate? =
@@ -823,6 +929,9 @@ class FinanceRepository(
         private const val KEY_CYCLE_START = "month_start_day"
         private const val KEY_SALARY_FROM = "salary_next_month_from_day"
         private const val KEY_LAST_SCAN = "last_inbox_scan"
+        private const val KEY_STMT_DAY = "statement_reminder_day"
+        private const val KEY_STMT_SENT = "statement_reminder_sent"
+        private const val KEY_REFUND_DAYS = "refund_overdue_days"
 
         private val dayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM")
 

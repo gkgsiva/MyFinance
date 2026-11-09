@@ -60,6 +60,10 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         item {
             Tile("Auto debits & EMIs", "Next dates", "Loan EMIs, SIPs, insurance, NACH and autopay debits") { open("autodebits") }
         }
+        item { Tile("EMIs & loan payoff", "End dates", "When each EMI ends, interest paid, and what prepaying saves") { open("loans") } }
+        item { Tile("Card bill check", "Bills vs paid", "Each card statement against what you paid; flags gaps and late payments") { open("card-bills") } }
+        item { Tile("Refund tracker", "Waiting", "IRCTC, Amazon and other refunds still to come back") { open("refunds") } }
+        item { Tile("Year in review", "Share", "Your year on one page, ready for WhatsApp") { open("year-review") } }
         item {
             Tile("Bill reminders", if (bills.isEmpty()) "Add a bill" else "${bills.size} bills", if (dueSoon > 0) "$dueSoon due soon" else "Electricity, mobile, insurance, school fees") { open("bills") }
         }
