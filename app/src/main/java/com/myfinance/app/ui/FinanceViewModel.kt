@@ -621,7 +621,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val v14 = V14State(viewModelScope, repo, allTransactions, allLite, txnMeta, ownerName, autoDebitsWithHidden, ::explore, monthTransactions)
 
     /** v1.5: Ask, tax-time pack, vault, subscriptions, calendar, goal links, lending, auto-backup, Today card. */
-    val v15 = V15State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits, recurring)
+    val v15 = V15State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits, recurring, openBills)
 
     /** v1.6: review inbox, family UPI, transfers, splits, monthly close, health check, rule tester, export, currencies, heavy spends. */
     val v16 = V16State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits)

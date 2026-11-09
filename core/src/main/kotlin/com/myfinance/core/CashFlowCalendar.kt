@@ -23,6 +23,8 @@ data class FlowEvent(
     val txnId: Long? = null,
     /** Expected earlier but not seen yet. */
     val late: Boolean = false,
+    /** Where an expected item comes from: "bill:<id>" for a payment reminder, "auto:<key>" for an auto debit. */
+    val ref: String? = null,
 )
 
 data class CalendarDay(
@@ -100,6 +102,8 @@ object CashFlowCalendar {
         lending: List<LendStatus> = emptyList(),
         subscriptions: List<SubscriptionItem> = emptyList(),
         zone: ZoneId = ZoneId.systemDefault(),
+        /** Card bills read from statement SMS, still to be paid. */
+        cardBills: List<BillDue> = emptyList(),
     ): CashFlowMonth {
         val first = month.atDay(1)
         val last = month.atEndOfMonth()
@@ -136,12 +140,14 @@ object CashFlowCalendar {
                 }
                 val dates = occurrences(a.nextDate, a.everyMonths, month, today)
                 val ends = a.endDate
-                for (d in dates) if (ends == null || !d.isAfter(ends)) expected += FlowEvent(d, a.name, a.amountMinor, false, kindOf(a.kind), true)
+                for (d in dates) if (ends == null || !d.isAfter(ends)) expected += FlowEvent(d, a.name, a.amountMinor, false, kindOf(a.kind), true, ref = "auto:${a.key}")
             }
             for (b in bills) {
-                // "Only once" bills (every 0 months) fall on their one date.
-                val dates = if (b.everyMonths <= 0) listOf(b.nextDue).filter { YearMonth.from(it) == month && !it.isBefore(today) }
-                else occurrences(b.nextDue, b.everyMonths, month, today)
+                // Once, every few days or every few months; paid one-time reminders are gone.
+                val dates = BillReminders.dueDates(b, maxOf(first, today), last)
+                if (!b.done && b.nextDue.isBefore(today) && YearMonth.from(today) == month) {
+                    expected += FlowEvent(today, "${b.name} (was due ${b.nextDue.dayOfMonth} ${b.nextDue.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }})", b.amountMinor, false, FlowKind.BILL, true, late = true, ref = "bill:${b.id}")
+                }
                 for (d in dates) {
                     val kind = when (b.kind) {
                         ReminderKind.INSURANCE -> FlowKind.INSURANCE
@@ -149,7 +155,16 @@ object CashFlowCalendar {
                         ReminderKind.SUBSCRIPTION -> FlowKind.SUBSCRIPTION
                         else -> FlowKind.BILL
                     }
-                    expected += FlowEvent(d, b.name, b.amountMinor, false, kind, true)
+                    expected += FlowEvent(d, b.name, b.amountMinor, false, kind, true, ref = "bill:${b.id}")
+                }
+            }
+            for (c in cardBills.filter { it.kind == BillKind.CREDIT_CARD }) {
+                val title = listOfNotNull(c.bank, c.accountTail?.let { "••$it" }).joinToString(" ").ifEmpty { "Credit card" } + " card bill"
+                val ref = "card:${c.bank}|${c.accountTail}|${c.dueDate}"
+                if (c.dueDate.isBefore(today)) {
+                    if (YearMonth.from(today) == month) expected += FlowEvent(today, "$title (was due ${c.dueDate.dayOfMonth} ${c.dueDate.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }})", c.amountMinor, false, FlowKind.BILL, true, late = true, ref = ref)
+                } else if (YearMonth.from(c.dueDate) == month) {
+                    expected += FlowEvent(c.dueDate, title, c.amountMinor, false, FlowKind.BILL, true, ref = ref)
                 }
             }
             for (p in policies) {

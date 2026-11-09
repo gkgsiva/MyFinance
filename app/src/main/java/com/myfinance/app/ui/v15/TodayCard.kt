@@ -77,7 +77,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 else "Due this week: ${formatInr(today.upcomingOutMinor)}",
                 style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp),
             )
-            today.upcoming.take(6).forEach { e ->
+            today.upcoming.filter { !it.late }.take(6).forEach { e ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         if (e.date == now) "Today" else if (e.date == now.plusDays(1)) "Tomorrow" else e.date.format(dayName),
@@ -92,7 +92,24 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 }
             }
             if (today.upcoming.size > 6) Text("+${today.upcoming.size - 6} more", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { open("calendar") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Open the cash flow calendar") }
+            if (today.late.isNotEmpty()) {
+                Text(
+                    "Missed? " + today.late.joinToString(", ") { it.title.substringBefore(" (was due") },
+                    style = MaterialTheme.typography.bodySmall, color = ExpenseRed,
+                )
+            }
+            val pace by vm.v15.pace.collectAsState()
+            pace?.takeIf { it.state != com.myfinance.core.PaceState.ON_TRACK }?.let { p ->
+                Text(
+                    "${p.state.label}: ${p.spentPercent}% of the month's budget used by day ${p.day} of ${p.daysInPeriod}",
+                    style = MaterialTheme.typography.bodySmall, color = if (p.state == com.myfinance.core.PaceState.OVER) ExpenseRed else Amber,
+                )
+            }
+            Row {
+                TextButton(onClick = { open("payments-ahead") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("All payments ahead") }
+                Text("  ·  ", modifier = Modifier.align(Alignment.CenterVertically))
+                TextButton(onClick = { open("calendar") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Calendar") }
+            }
             val inbox by vm.v16.inbox.collectAsState()
             if (inbox.isNotEmpty()) {
                 TextButton(onClick = { open("review") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
@@ -117,7 +134,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
     dialog?.let { QuickAddDialog(vm, it) { dialog = null } }
 }
 
-private val repeatOptions = listOf(0 to "Only once", 1 to "Every month", 3 to "Every quarter", 6 to "Every 6 months", 12 to "Every year")
+private val repeatOptions = com.myfinance.core.reminderRepeats
 private val investKinds = listOf(AssetKind.FD, AssetKind.MUTUAL_FUND, AssetKind.STOCK, AssetKind.PPF, AssetKind.NPS, AssetKind.GOLD, AssetKind.RD, AssetKind.OTHER)
 
 /** Small forms for things that aren't a transaction: a payment due later, a past investment, a property, EPF. */

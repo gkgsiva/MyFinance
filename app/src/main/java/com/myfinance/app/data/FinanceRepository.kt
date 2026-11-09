@@ -170,6 +170,8 @@ class FinanceRepository(
         }
 
         runCatching { v12.onSms(key, body, timestamp) }
+        // Electricity, water, gas, broadband and property tax bills fill in their payment reminder.
+        runCatching { com.myfinance.core.UtilityBills.parse(sender, body, timestamp)?.let { v12.onUtilityBill(it) } }
 
         val parsed = SmsParser.parse(sender, body, timestamp, _fxRates.value) ?: return Ingest.NOT_A_TRANSACTION
         if (v13.isSmsDeleted(key) > 0) return Ingest.DELETED_BEFORE
@@ -681,11 +683,31 @@ class FinanceRepository(
             }
         }
         val sent = prefs.getStringSet(KEY_BUDGET_SENT, emptySet()).orEmpty()
+        // Spending pace: e.g. 70% of the month's budget gone by day 15. Once a month, for the total and each category.
+        val paceKeys = ArrayList<String>()
+        val cycle = monthCycle.value
+        val today = LocalDate.now()
+        val paces = buildList {
+            if (categoryBudgets.isNotEmpty()) add("Total" to com.myfinance.core.SpendPaces.of(rows.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }, categoryBudgets.values.sum(), today, cycle.start(month), cycle.end(month)))
+            categoryBudgets.forEach { (c, b) -> add(c to com.myfinance.core.SpendPaces.of(spent[c] ?: 0, b, today, cycle.start(month), cycle.end(month))) }
+        }
+        for ((name, p) in paces) {
+            if (p.state != com.myfinance.core.PaceState.AHEAD) continue
+            val key = "$month|pace|$name"
+            if (key in sent) continue
+            val what = if (name == "Total") "your monthly budget" else "the $name budget"
+            Notifier.reminder(
+                context, key.hashCode(), "Spending fast: ${p.spentPercent}% by day ${p.day}",
+                "You've used ${p.spentPercent}% of $what with ${p.daysInPeriod - p.day} days to go. At this pace: ${formatInr(p.projectedMinor)} of ${formatInr(p.budgetMinor)}.",
+            )
+            paceKeys += key
+        }
         val due = BudgetAlerts.due(spent, budgets, sent, month)
+        if (paceKeys.isNotEmpty()) prefs.edit().putStringSet(KEY_BUDGET_SENT, (sent + paceKeys).toSet()).apply()
         if (due.isEmpty()) return
         due.forEach { Notifier.budget(context, it) }
         // Keep only this month's keys so the set does not grow forever.
-        val keep = sent.filter { it.startsWith("$month|") } + due.flatMap { BudgetAlerts.keysToRecord(it) }
+        val keep = sent.filter { it.startsWith("$month|") } + paceKeys + due.flatMap { BudgetAlerts.keysToRecord(it) }
         prefs.edit().putStringSet(KEY_BUDGET_SENT, keep.toSet()).apply()
     }
 

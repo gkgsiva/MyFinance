@@ -46,6 +46,8 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { Text("Plan", style = MaterialTheme.typography.headlineSmall) }
+        item { Tile("Payments ahead", "Day · week · month", "Reminders, EMIs, auto debits, card bills and yearly dues; what was missed") { open("payments-ahead") } }
+        item { Tile("30-day forecast", "Balance", "Your bank balance over the next 30 days after salary, EMIs and bills") { open("forecast") } }
         item { Tile("Review inbox", "Check", "New payees, possible recurring payments, transfers and duplicates to confirm") { open("review") } }
         item { Tile("Heavy spends", "Over ₹…", "Every payment above an amount you set, in a period you choose") { open("heavy") } }
         item { Tile("Family UPI", "Per person", "What your family spent through your UPI, by person and month, with limits") { open("family-upi") } }
