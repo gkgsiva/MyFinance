@@ -94,11 +94,13 @@ fun OverviewScreen(
     val recurring by vm.recurring.collectAsState()
     val balances by vm.balances.collectAsState()
     val trend by vm.reports.collectAsState()
+    val labelGroups by vm.labelGroups.collectAsState()
 
     val colorOf = categories.associate { it.name to Color(it.color) }
     val budgetOf = categories.associate { it.name to it.monthlyBudgetMinor }
     val groups = when (groupBy) {
         GroupBy.CATEGORY -> summary.byCategory
+        GroupBy.LABEL -> labelGroups
         GroupBy.MERCHANT -> summary.byMerchant
         GroupBy.ACCOUNT -> summary.byAccount
         GroupBy.PERSON -> summary.byPerson
@@ -237,7 +239,15 @@ fun OverviewScreen(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = groupBy == GroupBy.CATEGORY) { onOpenGroup(g.key) }
+                        .clickable(enabled = groupBy == GroupBy.CATEGORY || (groupBy == GroupBy.LABEL && g.key != com.myfinance.core.Labels.NONE)) {
+                            if (groupBy == GroupBy.LABEL) {
+                                vm.labelFilter.value = g.key
+                                onOpenGroup(null)
+                            } else {
+                                vm.labelFilter.value = null
+                                onOpenGroup(g.key)
+                            }
+                        }
                         .padding(vertical = 4.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

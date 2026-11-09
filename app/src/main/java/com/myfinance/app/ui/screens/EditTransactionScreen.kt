@@ -82,6 +82,8 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
     var showDate by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var amountError by remember { mutableStateOf(false) }
+    var extras by remember { mutableStateOf(com.myfinance.app.ui.v13.ExtrasDraft()) }
+    val meta by vm.txnMeta.collectAsState()
 
     LaunchedEffect(id) {
         if (id != 0L) {
@@ -95,6 +97,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 note = t.note.orEmpty()
                 excluded = t.excluded
                 timestamp = t.timestamp
+                extras = extras.copy(labels = vm.labelsOf(t.uid), hidden = t.uid in meta.hiddenUids)
             }
             loaded = true
         }
@@ -194,6 +197,14 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 Switch(checked = excluded, onCheckedChange = { excluded = it })
             }
 
+            com.myfinance.app.ui.v13.TxnLabelsSection(
+                vm = vm,
+                draft = extras,
+                onChange = { extras = it },
+                originalMerchant = original?.merchant,
+                editedMerchant = merchant,
+            )
+
             Button(
                 onClick = {
                     val minor = parseAmountToMinor(amount)
@@ -205,18 +216,26 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                         amountMinor = minor, type = type, merchant = null, category = category,
                         accountTail = null, bank = null, timestamp = timestamp, source = TxnSource.MANUAL,
                     )
-                    vm.save(
-                        base.copy(
-                            amountMinor = minor,
-                            type = type,
-                            merchant = merchant.trim().ifEmpty { null },
-                            category = category,
-                            accountTail = account.ifEmpty { null },
-                            note = note.trim().ifEmpty { null },
-                            excluded = excluded,
-                            timestamp = timestamp,
-                        ),
-                        learnRule,
+                    val row = base.copy(
+                        amountMinor = minor,
+                        type = type,
+                        merchant = merchant.trim().ifEmpty { null },
+                        category = category,
+                        accountTail = account.ifEmpty { null },
+                        note = note.trim().ifEmpty { null },
+                        excluded = excluded,
+                        timestamp = timestamp,
+                    )
+                    val before = original
+                    val newName = row.merchant
+                    vm.saveWithExtras(
+                        txn = row,
+                        learnRule = learnRule,
+                        labels = extras.labels,
+                        hidden = extras.hidden,
+                        labelAll = extras.labelAll,
+                        // Rename from the payee's old name so all of their payments are found.
+                        renameFrom = before?.takeIf { extras.renameAll && newName != null && it.merchant != null && it.merchant != newName },
                     )
                     onDone()
                 },

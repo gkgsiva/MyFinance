@@ -42,7 +42,7 @@ fun ColorDot(color: Color, size: Int = 12) {
 }
 
 @Composable
-fun TransactionRow(txn: TransactionEntity, categoryColor: Color, onClick: () -> Unit) {
+fun TransactionRow(txn: TransactionEntity, categoryColor: Color, labels: List<String> = emptyList(), hidden: Boolean = false, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -66,6 +66,7 @@ fun TransactionRow(txn: TransactionEntity, categoryColor: Color, onClick: () -> 
                 txn.timestamp.toLocalDateTime().format(timeFormat),
                 when (txn.source) { TxnSource.MANUAL -> "manual"; TxnSource.STATEMENT -> "statement"; else -> null },
                 if (txn.excluded) "excluded" else null,
+                if (hidden) "hidden" else null,
             ).joinToString(" · ")
             Text(
                 details,
@@ -74,6 +75,15 @@ fun TransactionRow(txn: TransactionEntity, categoryColor: Color, onClick: () -> 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (labels.isNotEmpty()) {
+                Text(
+                    labels.joinToString("  ") { "#$it" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Text(
             (if (txn.type == TxnType.CREDIT) "+" else "−") + formatInr(txn.amountMinor),

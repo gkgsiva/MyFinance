@@ -160,9 +160,14 @@ class FinanceRepository(
             reference = parsed.reference,
             balanceMinor = parsed.balanceMinor,
         )
-        val row = rule?.applyTo(base) ?: base
+        // A name the user gave this payee ("Vegetable seller Ravi") replaces the raw UPI id / merchant text.
+        val nick = parsed.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
+        val row = (rule?.applyTo(base) ?: base).let { r -> if (nick != null && rule?.merchant == null) r.copy(merchant = nick) else r }
         val added = db.transactions().insert(row) != -1L
-        if (added) runCatching { v12.onNewTransaction(row, rule) }
+        if (added) {
+            runCatching { v12.onNewTransaction(row, rule) }
+            runCatching { applyLabelRules(row, parsed.merchant) }
+        }
         return if (added) Ingest.ADDED else Ingest.ALREADY_HERE
     }
 
@@ -298,6 +303,73 @@ class FinanceRepository(
         v13.removeTrash(t.uid)
         v13.removeKey(t.uid)
         return ok
+    }
+
+    // ---- Labels and hiding ----
+
+    /**
+     * Sets a transaction's labels and whether it is hidden from lists. When [forMerchant] is set, the labels
+     * are also added to every other transaction from the same merchant, and to new ones as they arrive.
+     */
+    suspend fun setLabels(txn: TransactionEntity, labels: List<String>, hidden: Boolean, forMerchant: Boolean) = withContext(Dispatchers.IO) {
+        val clean = labels.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        v13.clearLabels(txn.uid)
+        if (clean.isNotEmpty()) v13.addLabels(clean.map { TxnLabelEntity(txn.uid, it) })
+        if (hidden) v13.hideTxn(HiddenTxnEntity(txn.uid)) else v13.unhideTxn(txn.uid)
+        val merchant = txn.merchant
+        if (forMerchant && merchant != null && clean.isNotEmpty()) {
+            val key = Categorizer.merchantKey(merchant)
+            v13.addLabelRules(clean.map { LabelRuleEntity(key, it) })
+            val same = db.transactions().allOnce().filter { it.merchant != null && Categorizer.merchantKey(it.merchant) == key }
+            v13.addLabels(same.flatMap { t -> clean.map { TxnLabelEntity(t.uid, it) } })
+        }
+    }
+
+    private suspend fun applyLabelRules(row: TransactionEntity, rawMerchant: String? = null) {
+        val keys = listOfNotNull(row.merchant, rawMerchant).map { Categorizer.merchantKey(it) }.toSet()
+        if (keys.isEmpty()) return
+        val labels = v13.labelRules().filter { it.merchantKey in keys }.map { it.label }.distinct()
+        if (labels.isNotEmpty()) v13.addLabels(labels.map { TxnLabelEntity(row.uid, it) })
+    }
+
+    private suspend fun payeeName(merchant: String): String? {
+        val key = Categorizer.merchantKey(merchant)
+        return v13.payeeNames().firstOrNull { it.merchantKey == key }?.name
+    }
+
+    /**
+     * Gives the payee of [txn] a friendly name and uses it on every transaction from them, past and future.
+     * Returns how many transactions were renamed.
+     */
+    suspend fun renamePayee(txn: TransactionEntity, newName: String): Int = withContext(Dispatchers.IO) {
+        val name = newName.trim()
+        val old = txn.merchant ?: return@withContext 0
+        if (name.isEmpty()) return@withContext 0
+        val names = v13.payeeNames()
+        // The payee's original key, plus any raw keys already mapped to the name it has now.
+        val keys = (names.filter { it.name == old }.map { it.merchantKey } + Categorizer.merchantKey(old)).toSet()
+        v13.putPayeeNames(keys.map { PayeeNameEntity(it, name) })
+        val rows = db.transactions().allOnce().filter { it.merchant != null && Categorizer.merchantKey(it.merchant) in keys && it.merchant != name }
+        if (rows.isNotEmpty()) db.transactions().updateAll(rows.map { it.copy(merchant = name) })
+        onDataChanged()
+        rows.size
+    }
+
+    suspend fun labelsOf(uid: String): List<String> = v13.labelsOf(uid)
+
+    suspend fun renameLabel(from: String, to: String) = withContext(Dispatchers.IO) {
+        val t = to.trim()
+        if (t.isEmpty() || t == from) return@withContext
+        v13.renameLabel(from, t)
+        v13.deleteLabel(from) // rows that already had the new label
+        val rules = v13.labelRules().filter { it.label == from }
+        v13.deleteLabelRules(from)
+        v13.addLabelRules(rules.map { it.copy(label = t) })
+    }
+
+    suspend fun deleteLabel(label: String) = withContext(Dispatchers.IO) {
+        v13.deleteLabel(label)
+        v13.deleteLabelRules(label)
     }
 
     /** Removes it from the bin for good. It still won't come back on a rescan. */

@@ -74,14 +74,24 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Rescan messages** (Manage tab): re-read the SMS inbox for the last 1, 3, 6 or 12 months or all of
   it. Nothing is added twice, edited transactions keep your changes, and deleted ones stay deleted
   unless you tick "bring back".
+- **Labels**: tap a transaction to add labels like EMI, SIP, Food, Grocery or Vegetables (several per
+  transaction). Choose to label every payment to that payee, now and in future. Group by label on the
+  Overview, filter by label on Transactions, see "By label" in Reports, and rename or delete labels in Manage.
+- **Payee names**: rename a payee on any transaction (e.g. a UPI id to "Vegetable seller Ravi") and tick
+  the box to use that name for all their payments, past and future.
+- **Hide from lists**: hide a transaction or an auto debit / EMI. It disappears from lists and report
+  lists but still counts in every total. Transactions > ⋮ > Show hidden brings them back into view.
 - **Import bank and credit card statements** (Manage > Import statements): build a profile for past
   years from the statements your bank emails or lets you download. PDF (including password-protected
   PDFs), Excel (.xlsx and old .xls) and CSV work, for HDFC, SBI, ICICI, Axis, Kotak and most other
   Indian banks and cards. Pick many files at once, for example 3 years of monthly card bills; a PDF
-  password is tried on the other files too, and is never saved. The preview shows what is new;
-  transactions already added from SMS (same UPI reference, or same amount and account within 2 days)
-  and lines from statements imported before are skipped. Imported lines are categorised like SMS and
-  your custom rules apply. Reports now go back 3 or 5 years and the financial year card compares years.
+  password is tried on the other files too, and is never saved. Nothing is counted twice: a statement
+  line and the SMS for the same payment (same UPI reference, or same amount and account within 2 days)
+  become one entry, whichever arrives first, and the statement's details win because it is the
+  official record. Your category, labels, payee name and notes on that entry are kept.
+- **Accounts & cards** (Manage, or Reports): every bank account and card, consolidated or one at a
+  time, with totals per month, quarter, year or financial year. Tap an account to see its
+  transactions, or switch to All items. Reports go back 3 or 5 years and compare financial years.
 
 ## Install
 

@@ -109,6 +109,8 @@ private fun InfoBox(content: @Composable ColumnScope.() -> Unit) {
 fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
     val items by vm.autoDebits.collectAsState()
     val totals by vm.autoDebitTotals.collectAsState()
+    val hiddenKeys by vm.hiddenAutoDebitKeys.collectAsState()
+    val showHidden by vm.showHiddenAutoDebits.collectAsState()
     var editing by remember { mutableStateOf<AutoDebitPlan?>(null) }
     var selected by remember { mutableStateOf<AutoDebitItem?>(null) }
     val scope = rememberCoroutineScope()
@@ -137,7 +139,7 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                 )
             }
         }
-        items(mine, key = { it.key }) { i -> AutoDebitRow(i) { selected = i } }
+        items(mine, key = { it.key }) { i -> AutoDebitRow(i, i.key in hiddenKeys) { selected = i } }
 
         item { SectionTitle("Found in your SMS") }
         if (detected.isEmpty()) {
@@ -145,9 +147,13 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
         } else {
             item { Muted("Dates are worked out from past payments, so they can be off by a few days.") }
         }
-        items(detected, key = { it.key }) { i -> AutoDebitRow(i) { selected = i } }
+        items(detected, key = { it.key }) { i -> AutoDebitRow(i, i.key in hiddenKeys) { selected = i } }
         item {
-            TextButton(onClick = { vm.unhideAutoDebits() }) { Text("Show hidden items again") }
+            if (hiddenKeys.isNotEmpty()) {
+                TextButton(onClick = { vm.showHiddenAutoDebits.value = !showHidden }) {
+                    Text(if (showHidden) "Don't show the ${hiddenKeys.size} hidden" else "Show ${hiddenKeys.size} hidden (still counted in totals)")
+                }
+            }
         }
     }
 
@@ -164,6 +170,7 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                     item.remaining?.let { Text("$it instalments left, last one ${item.endDate?.format(monthFmt)}") }
                     item.account?.let { Text("Account: $it") }
                     if (item.occurrences > 0) Muted("Found ${item.occurrences} payments in your SMS.")
+                    Muted("Hide takes it off this list but keeps it in the totals above.")
                 }
             },
             confirmButton = {
@@ -181,9 +188,13 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
             },
             dismissButton = {
                 Row {
-                    when (item.source) {
-                        AutoDebitSource.MANUAL -> TextButton(onClick = { selected = null; item.planId?.let(vm::deleteAutoPlan) }) { Text("Delete") }
-                        else -> TextButton(onClick = { selected = null; vm.hideAutoDebit(item.key) }) { Text("Hide") }
+                    if (item.source == AutoDebitSource.MANUAL) {
+                        TextButton(onClick = { selected = null; item.planId?.let(vm::deleteAutoPlan) }) { Text("Delete") }
+                    }
+                    if (item.key in hiddenKeys) {
+                        TextButton(onClick = { selected = null; vm.unhideAutoDebit(item.key) }) { Text("Unhide") }
+                    } else {
+                        TextButton(onClick = { selected = null; vm.hideAutoDebit(item.key) }) { Text("Hide") }
                     }
                     TextButton(onClick = { selected = null }) { Text("Close") }
                 }
@@ -225,7 +236,7 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun AutoDebitRow(i: AutoDebitItem, onClick: () -> Unit) {
+private fun AutoDebitRow(i: AutoDebitItem, hidden: Boolean, onClick: () -> Unit) {
     val dateColor = when (i.state) {
         DueState.OVERDUE -> ExpenseRed
         DueState.DUE_TODAY, DueState.DUE_SOON -> MaterialTheme.colorScheme.primary
@@ -248,6 +259,7 @@ private fun AutoDebitRow(i: AutoDebitItem, onClick: () -> Unit) {
                     add(i.cadenceLabel)
                     i.remaining?.let { add("$it left") }
                     i.account?.let { add(it) }
+                    if (hidden) add("hidden")
                 }.joinToString(" · ")
                 Muted(extra)
             }
