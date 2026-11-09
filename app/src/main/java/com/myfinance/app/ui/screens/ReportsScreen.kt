@@ -280,21 +280,53 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}) {
         // Labels
         item {
             ReportCard("By label", accent = Teal) {
+                val spentLabels = data.byLabel.filter { it.spentMinor > 0 }
+                val incomeLabels = data.byLabel.filter { it.spentMinor == 0L && it.receivedMinor > 0 }
                 if (data.byLabel.isEmpty()) {
                     Text(
-                        "Add labels like EMI, SIP, Grocery or Vegetables to transactions (tap one to edit) to see them here.",
+                        "Add labels like EMI, SIP, Grocery, IRCTC or Salary to transactions (tap one to edit) to see them here.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                } else {
+                }
+                if (spentLabels.isNotEmpty()) {
+                    Text("Spending, net of refunds", style = MaterialTheme.typography.titleSmall)
                     HorizontalBars(
-                        data.byLabel.take(8).mapIndexed { i, g -> Slice(g.key, g.totalMinor, ChartPalette[i % ChartPalette.size]) },
+                        spentLabels.take(8).mapIndexed { i, g -> Slice(g.label, g.netMinor.coerceAtLeast(0), ChartPalette[i % ChartPalette.size]) },
                         valueText = { formatInr(it.value) },
                     )
-                    data.byLabel.drop(8).forEach { g ->
+                    spentLabels.filter { it.receivedMinor > 0 }.forEach { g ->
+                        Text(
+                            "${g.label}: spent ${formatInr(g.spentMinor)}, got back ${formatInr(g.receivedMinor)} (${g.credits} refunds), net ${formatInr(g.netMinor)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    spentLabels.drop(8).forEach { g ->
                         Row {
-                            Text(g.key, modifier = Modifier.weight(1f), maxLines = 1)
-                            Text(formatInr(g.totalMinor), fontWeight = FontWeight.SemiBold)
+                            Text(g.label, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text(formatInr(g.netMinor), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                if (incomeLabels.isNotEmpty()) {
+                    Text("Income", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    incomeLabels.forEach { g ->
+                        Row {
+                            Text(g.label, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text(formatInr(g.receivedMinor), fontWeight = FontWeight.SemiBold, color = IncomeGreen)
+                        }
+                    }
+                }
+                if (data.incomeLabelsByFy.isNotEmpty()) {
+                    Text("Income by label, per financial year", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    data.incomeLabelsByFy.forEach { (fy, rows) ->
+                        Text(fy, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+                        rows.filter { it.second > 0 }.forEach { (label, amt) ->
+                            Row {
+                                Text(label, modifier = Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.bodySmall)
+                                Text(formatInr(amt), style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }

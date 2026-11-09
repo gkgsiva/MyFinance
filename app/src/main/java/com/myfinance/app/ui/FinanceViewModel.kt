@@ -23,6 +23,7 @@ import com.myfinance.core.BalanceReading
 import com.myfinance.core.DebitRecord
 import com.myfinance.core.GroupTotal
 import com.myfinance.core.Labels
+import com.myfinance.core.LabelNet
 import com.myfinance.core.IncomeYear
 import com.myfinance.core.Insights
 import com.myfinance.core.Fact
@@ -82,7 +83,9 @@ data class ReportsData(
     val financialYears: List<FySummary> = emptyList(),
     val unusual: List<UnusualSpend> = emptyList(),
     /** Spending per label over the report window. */
-    val byLabel: List<GroupTotal> = emptyList(),
+    val byLabel: List<LabelNet> = emptyList(),
+    /** Income per label per year: year label -> (label, amount). */
+    val incomeLabelsByFy: List<Pair<String, List<Pair<String, Long>>>> = emptyList(),
 )
 
 enum class ExploreKind(val label: String) { LABEL("Label"), PAYEE("Payee"), CATEGORY("Category"), ACCOUNT("Account"), PERSON("Person") }
@@ -164,6 +167,11 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val labelChoices: StateFlow<List<String>> =
         txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten()) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, Labels.suggestions)
+
+    /** Choices for money received: income labels (Salary, Interest, Rent income…) first. */
+    val incomeLabelChoices: StateFlow<List<String>> =
+        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten(), income = true) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, Labels.incomeSuggestions)
 
     /** Labels in use, for the filter chips. */
     val usedLabels: StateFlow<List<String>> =
@@ -262,7 +270,13 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
                 modes = Reports.paymentModes(window),
                 financialYears = Reports.financialYears(txns, zone),
                 unusual = Reports.unusual(shown).take(20),
-                byLabel = Labels.spendByLabel(window, meta.labelsById, includeUnlabelled = false),
+                byLabel = Labels.netByLabel(window, meta.labelsById),
+                incomeLabelsByFy = txns.filter { it.type == TxnType.CREDIT && meta.labelsById[it.id] != null }
+                    .groupBy { com.myfinance.core.Dates.financialYearStart(com.myfinance.core.Dates.localDate(it.timestamp, zone)) }
+                    .toSortedMap(compareByDescending { it })
+                    .map { (fy, list) ->
+                        com.myfinance.core.TaxHelper.fyLabel(fy) to Labels.netByLabel(list, meta.labelsById).map { it.label to it.receivedMinor }
+                    },
             )
         }
             .flowOn(Dispatchers.Default)
@@ -546,13 +560,17 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     /** Transactions (not left out of totals) matching one label, payee, category, account or person. */
-    fun explore(kind: ExploreKind, value: String, type: TxnType): List<TransactionEntity> {
+    /**
+     * [type] null = both. For a payee, money received from the same seller under a slightly different name
+     * ("IRCTC REFUND" for "IRCTC") is included, so refunds net against what was spent.
+     */
+    fun explore(kind: ExploreKind, value: String, type: TxnType?): List<TransactionEntity> {
         val meta = txnMeta.value
         val me = ownerName.value
         return allTransactions.value.filter { t ->
-            !t.excluded && t.type == type && when (kind) {
+            !t.excluded && (type == null || t.type == type) && when (kind) {
                 ExploreKind.LABEL -> value in meta.labels(t)
-                ExploreKind.PAYEE -> t.merchant == value
+                ExploreKind.PAYEE -> t.merchant == value || (t.type == TxnType.CREDIT && t.merchant != null && Labels.sameSeller(value, t.merchant))
                 ExploreKind.CATEGORY -> t.category == value
                 ExploreKind.ACCOUNT -> t.accountLabel == value
                 ExploreKind.PERSON -> (t.owner ?: me) == value

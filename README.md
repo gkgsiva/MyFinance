@@ -102,6 +102,16 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   time, with totals per month, quarter, year or financial year. Tap an account to see its
   transactions, or switch to All items. Reports go back 3 or 5 years and compare financial years.
 
+### New in 1.3.1
+
+- **Income labels**: when labelling money received, Salary, Bonus, Rent income, Interest, Dividend,
+  Freelance, Refund and Cashback are offered first. Reports > By label lists income per label for each
+  financial year.
+- **Refunds net off**: a label or payee now shows what was spent, what came back (refunds,
+  cancellations, cashback) and the net. For example, IRCTC: tickets bought minus tickets refunded.
+  Labelling a payee also labels refunds from the same seller under a slightly different name
+  ("IRCTC REFUND", "Amazon Seller Services"), and Explore has a Net / Spent / Received switch.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:
