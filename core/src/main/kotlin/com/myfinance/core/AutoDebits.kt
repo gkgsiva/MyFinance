@@ -33,8 +33,8 @@ data class AutoDebitPlan(
     val account: String? = null,
 )
 
-/** One debit seen in the transaction history, with the SMS text it came from. */
-data class DebitRecord(val txn: TxnLite, val sms: String?)
+/** One debit seen in the transaction history, with the SMS text it came from and the user's labels. */
+data class DebitRecord(val txn: TxnLite, val sms: String?, val labels: List<String> = emptyList())
 
 enum class DueState { PAID, OVERDUE, DUE_TODAY, DUE_SOON, UPCOMING }
 
@@ -75,6 +75,33 @@ object AutoDebits {
     private val sip = Regex("""\bsip\b|mutual\s+fund|\bmf\b|systematic|\bnps\b|\bppf\b|\brd\b|recurring\s+deposit|zerodha|groww|coin\b|kuvera""", RegexOption.IGNORE_CASE)
     private val insurance = Regex("""insurance|\blic\b|premium|policy|hdfc\s+life|icici\s+pru|max\s+life|star\s+health|care\s+health""", RegexOption.IGNORE_CASE)
     private val subscription = Regex("""netflix|hotstar|spotify|prime|youtube|apple|google\s+(?:play|one)|zee5|sonyliv|jiocinema|subscription|airtel|jio|broadband|fibernet""", RegexOption.IGNORE_CASE)
+
+    private val familyUpi = Regex(
+        """upi\s*circle|\bdelegat|secondary\s+user|primary\s+user|family""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Keys in the hidden list that mean "this payee is not a recurring payment": the prefix plus [payeeKey]. */
+    const val NOT_RECURRING_PREFIX = "notrec:"
+
+    /**
+     * A payment a family member made through UPI Circle / family UPI on the user's account. Banks word these as
+     * an "autopay mandate", but they are everyday spends, not an auto debit. Also true when the user gave the
+     * payment a label with "family" in it.
+     */
+    fun isFamilyUpi(d: DebitRecord): Boolean =
+        (d.sms != null && familyUpi.containsMatchIn(d.sms)) || d.labels.any { familyUpi.containsMatchIn(it) }
+
+    /** The payee a detected row stands for, so "Not recurring" can be remembered for it; null for the user's own and bank rows. */
+    fun payeeKey(item: AutoDebitItem): String? = when {
+        item.key.startsWith("rec:") -> item.key.removePrefix("rec:").substringBefore('|')
+        item.key.startsWith("nach:") -> item.key.removePrefix("nach:")
+        else -> null
+    }
+
+    private fun debitPayee(d: DebitRecord): String =
+        d.txn.merchant?.let { Categorizer.merchantKey(it) }?.takeIf { it.isNotBlank() }
+            ?: "acct ${d.txn.account} ${d.txn.amountMinor / 100}"
 
     /** True when an SMS describes a mandate / NACH / standing instruction debit. */
     fun isMandate(text: String?): Boolean = text != null && mandate.containsMatchIn(text)
@@ -182,23 +209,34 @@ object AutoDebits {
 
     /**
      * Mandate debits (NACH, ECS, auto-pay, standing instructions) that [RecurringDetector] does not catch yet,
-     * e.g. a new EMI paid only once or twice. Assumed monthly; a single payment gives an estimated date.
+     * e.g. a new EMI paid only twice. An SMS saying "auto debit" once does not make a payment recurring: it
+     * has to have been paid at least twice, a similar amount, a month, quarter or year apart. Family UPI
+     * payments are left out.
      */
     fun mandateSeries(debits: List<DebitRecord>, today: LocalDate, zone: ZoneId = ZoneId.systemDefault()): List<AutoDebitItem> {
         val out = ArrayList<AutoDebitItem>()
-        val mandates = debits.filter { it.txn.type == TxnType.DEBIT && isMandate(it.sms) }
-        val groups = mandates.groupBy { d ->
-            d.txn.merchant?.let { Categorizer.merchantKey(it) }?.takeIf { it.isNotBlank() }
-                ?: "acct ${d.txn.account} ${d.txn.amountMinor / 100}"
-        }
-        for ((key, group) in groups) {
+        val mandates = debits.filter { it.txn.type == TxnType.DEBIT && isMandate(it.sms) && !isFamilyUpi(it) }
+        for ((key, group) in mandates.groupBy { debitPayee(it) }) {
             val sorted = group.sortedBy { it.txn.timestamp }
             val last = sorted.last()
             val lastDate = Dates.localDate(last.txn.timestamp, zone)
-            // Gone quiet for over two months: probably closed.
-            if (ChronoUnit.DAYS.between(lastDate, today) > 70) continue
-            var next = lastDate.plusMonths(1)
-            while (next.isBefore(today.minusDays(3))) next = next.plusMonths(1)
+            // Payments close to the latest amount, one per day.
+            val similar = sorted
+                .filter { kotlin.math.abs(it.txn.amountMinor - last.txn.amountMinor) * 5 <= last.txn.amountMinor }
+                .distinctBy { Dates.localDate(it.txn.timestamp, zone) }
+            if (similar.size < 2) continue
+            val dates = similar.map { Dates.localDate(it.txn.timestamp, zone) }
+            val gap = ChronoUnit.DAYS.between(dates[dates.size - 2], dates.last())
+            val everyMonths = when {
+                gap in 24L..38L -> 1
+                Cadence.QUARTERLY.fits(gap) -> 3
+                Cadence.YEARLY.fits(gap) -> 12
+                else -> continue
+            }
+            // Missed two cycles: probably closed.
+            if (ChronoUnit.DAYS.between(lastDate, today) > everyMonths * 30L * 2 + 10) continue
+            var next = lastDate.plusMonths(everyMonths.toLong())
+            while (next.isBefore(today.minusDays(3))) next = next.plusMonths(everyMonths.toLong())
             val days = ChronoUnit.DAYS.between(today, next)
             val kind = classify(last.txn.merchant, last.sms, last.txn.category).let { if (it == AutoDebitKind.OTHER) AutoDebitKind.AUTO_DEBIT else it }
             out += AutoDebitItem(
@@ -206,15 +244,15 @@ object AutoDebits {
                 name = last.txn.merchant ?: (kind.label + (last.txn.account?.let { " · $it" } ?: "")),
                 kind = kind,
                 amountMinor = last.txn.amountMinor,
-                cadenceLabel = "Monthly",
+                cadenceLabel = when (everyMonths) { 3 -> "Quarterly"; 12 -> "Yearly"; else -> "Monthly" },
                 nextDate = next,
                 daysLeft = days,
                 state = state(days),
                 source = AutoDebitSource.DETECTED,
                 lastPaid = lastDate,
-                occurrences = sorted.distinctBy { Dates.localDate(it.txn.timestamp, zone) }.size,
-                estimated = sorted.size < 2,
+                occurrences = similar.size,
                 account = last.txn.account,
+                everyMonths = everyMonths,
             )
         }
         return out
@@ -223,7 +261,8 @@ object AutoDebits {
     /**
      * Builds the full list: the user's own plans, EMI alerts from the bank, recurring payments and mandate
      * debits found in the SMS history. Detected rows that duplicate a plan or a bank alert are dropped, and
-     * so are [hidden] keys.
+     * so are [hidden] keys. Payees in [notRecurring] (see [payeeKey]) and payees whose latest payment was a
+     * family UPI payment are never listed as detected.
      */
     fun build(
         plans: List<AutoDebitPlan>,
@@ -233,6 +272,7 @@ object AutoDebits {
         hidden: Set<String>,
         today: LocalDate,
         zone: ZoneId = ZoneId.systemDefault(),
+        notRecurring: Set<String> = emptySet(),
     ): List<AutoDebitItem> {
         val planItems = plans.mapNotNull { planItem(it, debits, today, zone) }
 
@@ -284,7 +324,11 @@ object AutoDebits {
                 named || (sameAmount && near)
             }
         }
-        val detected = (recurringItems + mandateItems).filterNot { duplicatesFixed(it) }
+        val familyPayees = debits.groupBy { debitPayee(it) }
+            .filterValues { g -> g.maxByOrNull { it.txn.timestamp }?.let { isFamilyUpi(it) } == true }.keys
+        val detected = (recurringItems + mandateItems)
+            .filterNot { duplicatesFixed(it) }
+            .filterNot { d -> payeeKey(d).let { it != null && (it in notRecurring || it in familyPayees) } }
 
         return (fixed + detected).filter { it.key !in hidden }.sortedBy { it.nextDate }
     }

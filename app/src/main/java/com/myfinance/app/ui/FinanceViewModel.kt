@@ -446,9 +446,10 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** EMIs, auto debits, SIPs, insurance and subscriptions with their next expected date, soonest first. */
     private val autoDebitsWithHidden: StateFlow<Pair<List<AutoDebitItem>, Set<String>>> =
-        combine(autoPlans, allTransactions, recurring, openBills, hiddenAuto) { plans, all, rec, bills, hidden ->
+        combine(autoPlans, allTransactions, recurring, openBills, combine(hiddenAuto, txnMeta) { h, m -> h to m }) { plans, all, rec, bills, (hidden, meta) ->
             val me = ownerName.value
-            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms) }
+            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms, meta.labels(it)) }
+            val keys = hidden.mapTo(HashSet()) { it.key }
             AutoDebits.build(
                 plans = plans.map { it.toPlan() },
                 debits = debits,
@@ -456,7 +457,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
                 emiBills = bills.map { it.toBill() },
                 hidden = emptySet(),
                 today = LocalDate.now(),
-            ) to hidden.mapTo(HashSet()) { it.key }
+                notRecurring = keys.filter { it.startsWith(AutoDebits.NOT_RECURRING_PREFIX) }.mapTo(HashSet()) { it.removePrefix(AutoDebits.NOT_RECURRING_PREFIX) },
+            ) to keys
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<AutoDebitItem>() to emptySet())
@@ -484,6 +486,16 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun hideAutoDebit(key: String) = viewModelScope.launch { repo.v13.hide(HiddenAutoDebitEntity(key)) }
     fun unhideAutoDebits() = viewModelScope.launch { repo.v13.unhideAll() }
     fun unhideAutoDebit(key: String) = viewModelScope.launch { repo.v13.unhide(key) }
+
+    /** Takes a detected payee off the auto debit list and out of its totals, for good (undo under Settings > Hidden items). */
+    fun markNotRecurring(item: AutoDebitItem) = viewModelScope.launch {
+        AutoDebits.payeeKey(item)?.let { repo.v13.hide(HiddenAutoDebitEntity(AutoDebits.NOT_RECURRING_PREFIX + it)) }
+    }
+
+    /** Payees marked "Not recurring", as stored keys. */
+    val notRecurringKeys: StateFlow<List<String>> =
+        hiddenAuto.map { list -> list.map { it.key }.filter { it.startsWith(AutoDebits.NOT_RECURRING_PREFIX) }.sorted() }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // ---- Labels, hiding and payee names ----
 

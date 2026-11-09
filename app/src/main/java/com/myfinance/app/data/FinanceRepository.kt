@@ -605,9 +605,12 @@ class FinanceRepository(
         val debits = db.transactions().rangeOnce(recentFrom, System.currentTimeMillis())
             .filter { !it.excluded && it.type == TxnType.DEBIT }
             .map { com.myfinance.core.DebitRecord(it.toLite(me), it.rawSms) }
+        val notRecurring = v13.observeHidden().first().map { it.key }
+            .filter { it.startsWith(com.myfinance.core.AutoDebits.NOT_RECURRING_PREFIX) }
+            .mapTo(HashSet()) { it.removePrefix(com.myfinance.core.AutoDebits.NOT_RECURRING_PREFIX) }
         val autos = com.myfinance.core.AutoDebits.build(
             plans = v13.observePlans().first().map { it.toPlan() }, debits = debits, recurring = emptyList(), emiBills = emptyList(),
-            hidden = emptySet(), today = today,
+            hidden = emptySet(), today = today, notRecurring = notRecurring,
         ).filter { !it.nextDate.isBefore(today) }.map { Triple(it.name, it.amountMinor as Long?, it.nextDate) }
         val bills = v12.dao.bills().map { it.toBill() }.filter { !it.nextDue.isBefore(today) }.map { Triple(it.name, it.amountMinor, it.nextDue) }
         spent to (autos + bills).minByOrNull { it.third }
