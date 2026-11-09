@@ -32,6 +32,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun get(id: Long): TransactionEntity?
 
+    @Query("SELECT * FROM transactions WHERE smsKey = :key LIMIT 1")
+    suspend fun bySmsKey(key: String): TransactionEntity?
+
     @Query("SELECT * FROM transactions WHERE userEdited = 0 AND merchant IS NOT NULL")
     suspend fun uneditedWithMerchant(): List<TransactionEntity>
 

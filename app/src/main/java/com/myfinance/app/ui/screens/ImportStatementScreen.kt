@@ -93,8 +93,10 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
                             "Add past years from the statements your bank emails or lets you download from net banking: " +
                                 "PDF (password-protected is fine), Excel or CSV. Pick as many files as you like at once, " +
                                 "for example every monthly card bill for the last 3 years.\n\n" +
-                                "Transactions already in MyFinance from SMS, or from a statement you imported before, " +
-                                "are skipped. Nothing leaves your phone, and PDF passwords are not saved.",
+                                "Nothing is counted twice. A payment already added from SMS stays one entry and takes the " +
+                                "statement's details, since the statement is the official record (your category, labels " +
+                                "and notes are kept). Statements imported before are skipped. Nothing leaves your phone, " +
+                                "and PDF passwords are not saved.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -128,13 +130,20 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
             if (state.ready.isNotEmpty()) {
                 item {
                     val n = state.newCount
+                    val u = state.updateCount
                     Button(
                         onClick = vm::importAll,
-                        enabled = n > 0 && !state.busy,
+                        enabled = (n > 0 || u > 0) && !state.busy,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Text(if (n == 0) "Nothing new to import" else "Import $n new transactions")
+                        else Text(
+                            when {
+                                n == 0 && u == 0 -> "Nothing new to import"
+                                u == 0 -> "Import $n new transactions"
+                                else -> "Import $n new, update $u from SMS"
+                            },
+                        )
                     }
                 }
             }
@@ -227,7 +236,9 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
         return
     }
     Text(
-        "${f.candidates.size} transactions: ${s.newCount} new, ${s.duplicateCount} already in MyFinance",
+        "${f.candidates.size} transactions: ${s.newCount} new" +
+            (if (s.updateCount > 0) ", ${s.updateCount} already from SMS (they will use the statement's details)" else "") +
+            (if (s.duplicateCount > 0) ", ${s.duplicateCount} imported before" else ""),
         fontWeight = FontWeight.Medium,
     )
     if (s.newCount > 0) {
@@ -249,14 +260,14 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
                     Text(
                         listOfNotNull(c.row.date.format(stmtDayFormat), c.duplicateOf?.label).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (c.duplicateOf != null) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (c.duplicateOf != null && !c.updatesExisting) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Text(
                     (if (c.row.type == TxnType.CREDIT) "+" else "−") + formatInr(c.row.amountMinor),
                     style = MaterialTheme.typography.bodySmall,
                     color = when {
-                        c.duplicateOf != null -> MaterialTheme.colorScheme.outline
+                        c.duplicateOf != null && !c.updatesExisting -> MaterialTheme.colorScheme.outline
                         c.row.type == TxnType.CREDIT -> IncomeGreen
                         else -> ExpenseRed
                     },

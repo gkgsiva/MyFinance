@@ -46,6 +46,7 @@ data class StatementImportState(
 ) {
     val ready get() = files.filter { it.status == StatementFile.Status.READY }
     val newCount get() = ready.sumOf { it.summary.newCount }
+    val updateCount get() = ready.sumOf { it.summary.updateCount }
     val busy get() = importing || files.any { it.status == StatementFile.Status.READING }
 }
 
@@ -109,7 +110,7 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
     fun importAll() {
         val s = _state.value
         if (s.busy) return
-        val rows = s.ready.flatMap { f -> f.candidates.filter { it.duplicateOf == null } }
+        val rows = s.ready.flatMap { f -> f.candidates.filter { it.duplicateOf == null || it.updatesExisting } }
         _state.update { it.copy(importing = true) }
         viewModelScope.launch {
             val added = runCatching { repo.addImported(rows) }
@@ -120,7 +121,10 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
             val span = if (from != null && to != null) " covering ${from.format(dayFormat)} to ${to.format(dayFormat)}" else ""
             _state.value = StatementImportState(
                 result = added.fold(
-                    { n -> "Added $n transactions from $files statement${if (files == 1) "" else "s"}$span. Reports now include these years." },
+                    { r ->
+                        val upd = if (r.updated > 0) " ${r.updated} entries from SMS now use the statement's details." else ""
+                        "Added ${r.added} transactions from $files statement${if (files == 1) "" else "s"}$span.$upd Reports now include these years."
+                    },
                     { e -> "Import failed: ${e.message}" },
                 ),
             )
