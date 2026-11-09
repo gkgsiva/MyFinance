@@ -23,6 +23,9 @@ import com.myfinance.core.BalanceReading
 import com.myfinance.core.DebitRecord
 import com.myfinance.core.GroupTotal
 import com.myfinance.core.Labels
+import com.myfinance.core.IncomeYear
+import com.myfinance.core.Insights
+import com.myfinance.core.Fact
 import com.myfinance.core.TxnType
 import com.myfinance.core.BillParser
 import com.myfinance.core.FinanceSummary
@@ -81,6 +84,8 @@ data class ReportsData(
     /** Spending per label over the report window. */
     val byLabel: List<GroupTotal> = emptyList(),
 )
+
+enum class ExploreKind(val label: String) { LABEL("Label"), PAYEE("Payee"), CATEGORY("Category"), ACCOUNT("Account"), PERSON("Person") }
 
 /** Labels and the "hide from lists" flag, by transaction uid and by row id. */
 data class TxnMeta(
@@ -492,6 +497,67 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setHidden(txn: TransactionEntity, hidden: Boolean) = viewModelScope.launch {
         repo.setLabels(txn, repo.labelsOf(txn.uid), hidden, forMerchant = false)
+    }
+
+    /** Saved payee names: name -> the raw payee texts it replaces. */
+    val payeeNames: StateFlow<List<Pair<String, List<String>>>> =
+        repo.v13.observePayeeNames().map { list -> list.groupBy({ it.name }, { it.merchantKey }).toList() }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun renamePayeeName(old: String, new: String) = viewModelScope.launch { repo.renamePayeeName(old, new) }
+    fun forgetPayeeName(name: String) = viewModelScope.launch { repo.forgetPayeeName(name) }
+
+    /** Hidden auto debit / EMI rows with their names, for Settings > Hidden items. */
+    val hiddenAutoDebitItems: StateFlow<List<AutoDebitItem>> =
+        autoDebitsWithHidden.map { (all, hidden) -> all.filter { it.key in hidden } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Hidden transactions, newest first. */
+    val hiddenTransactions: StateFlow<List<TransactionEntity>> =
+        combine(allTransactions, txnMeta) { all, meta -> all.filter { it.uid in meta.hiddenUids } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun unhideTxn(uid: String) = viewModelScope.launch { repo.v13.unhideTxn(uid) }
+    fun unhideAllTxns() = viewModelScope.launch { hiddenTransactions.value.forEach { repo.v13.unhideTxn(it.uid) } }
+
+    // ---- Income over the years and the spending explorer ----
+
+    /** Income per calendar year (first) and per financial year (second). */
+    val incomeYears: StateFlow<Pair<List<IncomeYear>, List<IncomeYear>>> =
+        allLite.map { Insights.incomeByYear(it, financialYear = false) to Insights.incomeByYear(it, financialYear = true) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<IncomeYear>() to emptyList())
+
+    val salaryByMonth: StateFlow<List<Pair<YearMonth, Long>>> =
+        allLite.map { Insights.salaryByMonth(it) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** "Did you know" facts about the selected month: record months, jumps, top category, streaks. */
+    val facts: StateFlow<List<Fact>> =
+        combine(allLite, _month, txnMeta) { txns, m, meta -> Insights.facts(txns, meta.labelsById, m) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Payees by how often they appear, for the explorer's picker. */
+    val payeeOptions: StateFlow<List<String>> =
+        allTransactions.map { all -> all.mapNotNull { it.merchant }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Transactions (not left out of totals) matching one label, payee, category, account or person. */
+    fun explore(kind: ExploreKind, value: String, type: TxnType): List<TransactionEntity> {
+        val meta = txnMeta.value
+        val me = ownerName.value
+        return allTransactions.value.filter { t ->
+            !t.excluded && t.type == type && when (kind) {
+                ExploreKind.LABEL -> value in meta.labels(t)
+                ExploreKind.PAYEE -> t.merchant == value
+                ExploreKind.CATEGORY -> t.category == value
+                ExploreKind.ACCOUNT -> t.accountLabel == value
+                ExploreKind.PERSON -> (t.owner ?: me) == value
+            }
+        }
     }
 
     fun renameLabel(from: String, to: String) = viewModelScope.launch { repo.renameLabel(from, to) }

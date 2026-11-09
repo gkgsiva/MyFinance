@@ -91,7 +91,13 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) FamilyShare.accept(intent)
         setContent {
-            MyFinanceTheme {
+            val themeMode by com.myfinance.app.ui.theme.ThemePref.mode.collectAsState()
+            val dark = when (themeMode) {
+                com.myfinance.app.ui.theme.ThemeMode.LIGHT -> false
+                com.myfinance.app.ui.theme.ThemeMode.DARK -> true
+                com.myfinance.app.ui.theme.ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            MyFinanceTheme(dark = dark) {
                 val lockOn by AppLock.enabled.collectAsState()
                 val locked by AppLock.locked.collectAsState()
                 val bio by AppLock.biometric.collectAsState()
@@ -307,10 +313,26 @@ private fun MyFinanceRoot() {
             }
             composable("autodebits") { AutoDebitsScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable("trash") { TrashScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("settings") {
+                com.myfinance.app.ui.v13.SettingsScreen(vm = vm, v12 = v12, onBack = { nav.popBackStack() }) { route ->
+                    if (route in tabs.map { it.route }) {
+                        nav.navigate(route) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    } else nav.navigate(route)
+                }
+            }
+            composable("hidden") { com.myfinance.app.ui.v13.HiddenItemsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
+            composable("payees") { com.myfinance.app.ui.v13.PayeeNamesScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("labels") { com.myfinance.app.ui.v13.LabelsScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("month-settings") { com.myfinance.app.ui.v13.MonthSettingsScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable("rescan") {
                 RescanScreen(vm = vm, smsGranted = smsGranted, onAskPermission = requestSms, onBack = { nav.popBackStack() })
             }
-            composable("reports") { ReportsScreen(vm = vm) }
+            composable("reports") { ReportsScreen(vm = vm, onExplore = { nav.navigate("explore") }) }
+            composable("explore") { com.myfinance.app.ui.v13.ExploreScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("transactions") {
                 TransactionsScreen(
                     vm = vm,

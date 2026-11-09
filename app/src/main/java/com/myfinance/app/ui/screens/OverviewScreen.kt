@@ -210,6 +210,8 @@ fun OverviewScreen(
                 ComingUpCard(bills, recurring, balances, onOpenUpcoming)
             }
 
+            item { com.myfinance.app.ui.v13.FactsCard(vm, max = 3) }
+
             item {
                 Spacer(Modifier.height(4.dp))
                 Text("Where it went", style = MaterialTheme.typography.titleMedium)

@@ -31,6 +31,7 @@ class MyFinanceApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AppLock.init(this)
+        com.myfinance.app.ui.theme.ThemePref.init(this)
         Notifier.createChannels(this)
         ReminderWorker.schedule(this)
         appScope.launch {

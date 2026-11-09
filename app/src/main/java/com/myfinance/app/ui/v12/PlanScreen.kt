@@ -80,6 +80,7 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
             ) { open("tax") }
         }
         item { Text("Settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
+        item { Tile("All settings", "", "Hidden items, deleted, labels, payee names, rescan, theme and more") { open("settings") } }
         item { Tile("Custom SMS rules", "${rules.size} rules", "e.g. any SMS with SWIGGY goes to Food") { open("rules") } }
         item { Tile("App lock", if (lock) "On" else "Off", "Fingerprint or PIN to open the app") { open("security") } }
         item { Tile("Backup & restore", "Encrypted", "Move to a new phone without losing data") { open("backup") } }
