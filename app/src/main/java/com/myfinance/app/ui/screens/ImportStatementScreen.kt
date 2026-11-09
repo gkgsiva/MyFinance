@@ -60,7 +60,7 @@ private val statementTypes = arrayOf(
     "application/octet-stream",
 )
 
-private val dayFormat = DateTimeFormatter.ofPattern("d MMM yyyy")
+private val stmtDayFormat = DateTimeFormatter.ofPattern("d MMM yyyy")
 
 /** Pick bank / credit card statements (several years at once), unlock, preview and import. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -220,7 +220,7 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
     val from = s.from
     val to = s.to
     if (from != null && to != null) {
-        Text("${from.format(dayFormat)} to ${to.format(dayFormat)}", style = MaterialTheme.typography.bodySmall)
+        Text("${from.format(stmtDayFormat)} to ${to.format(stmtDayFormat)}", style = MaterialTheme.typography.bodySmall)
     }
     if (f.candidates.isEmpty()) {
         Text("Checking for duplicates…", style = MaterialTheme.typography.bodySmall)
@@ -247,7 +247,7 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
                 Column(Modifier.weight(1f)) {
                     Text(c.merchant ?: c.row.description, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                     Text(
-                        listOfNotNull(c.row.date.format(dayFormat), c.duplicateOf?.label).joinToString(" · "),
+                        listOfNotNull(c.row.date.format(stmtDayFormat), c.duplicateOf?.label).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (c.duplicateOf != null) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
