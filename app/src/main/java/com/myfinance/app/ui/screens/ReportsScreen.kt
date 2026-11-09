@@ -270,6 +270,30 @@ fun ReportsScreen(vm: FinanceViewModel) {
             }
         }
 
+        // Labels
+        item {
+            ReportCard("By label", accent = Teal) {
+                if (data.byLabel.isEmpty()) {
+                    Text(
+                        "Add labels like EMI, SIP, Grocery or Vegetables to transactions (tap one to edit) to see them here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    HorizontalBars(
+                        data.byLabel.take(8).mapIndexed { i, g -> Slice(g.key, g.totalMinor, ChartPalette[i % ChartPalette.size]) },
+                        valueText = { formatInr(it.value) },
+                    )
+                    data.byLabel.drop(8).forEach { g ->
+                        Row {
+                            Text(g.key, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text(formatInr(g.totalMinor), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
         // 6. Payment modes
         item {
             ReportCard("How you pay", accent = Sky) {

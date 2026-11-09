@@ -25,6 +25,7 @@ import java.time.LocalDate
  *  - deleted_keys: a record of every deleted row (uid and SMS key) kept even after the bin is emptied,
  *    so a rescan of the inbox or a family merge never brings it back.
  *  - auto_debits: EMIs and auto debits the user added or confirmed.
+ *  - txn_hidden, txn_labels, label_rules: per-transaction "hide from lists" and labels (by uid).
  */
 
 @Entity(tableName = "deleted_transactions")
@@ -106,7 +107,23 @@ data class AutoDebitEntity(
     }
 }
 
-/** Detected rows the user chose to hide from the auto debit list. */
+/** A transaction hidden from lists and reports. It still counts in every total. */
+@Entity(tableName = "txn_hidden")
+data class HiddenTxnEntity(@PrimaryKey val uid: String)
+
+/** A user label on a transaction, e.g. "EMI", "SIP", "Grocery". A transaction can have several. */
+@Entity(tableName = "txn_labels", primaryKeys = ["uid", "label"], indices = [Index("label")])
+data class TxnLabelEntity(val uid: String, val label: String)
+
+/** "Label every payment to this merchant", applied to new SMS too. */
+@Entity(tableName = "label_rules", primaryKeys = ["merchantKey", "label"])
+data class LabelRuleEntity(val merchantKey: String, val label: String)
+
+/** A friendly name for a payee, e.g. "ravi.k@okaxis" -> "Vegetable seller Ravi". Keyed by the merchant key. */
+@Entity(tableName = "payee_names")
+data class PayeeNameEntity(@PrimaryKey val merchantKey: String, val name: String)
+
+/** Rows (detected or the user's own) hidden from the auto debit list. They still count in its totals. */
 @Entity(tableName = "auto_debit_hidden")
 data class HiddenAutoDebitEntity(@PrimaryKey val key: String)
 
@@ -165,10 +182,58 @@ interface V13Dao {
 
     @Query("DELETE FROM auto_debit_hidden")
     suspend fun unhideAll()
+
+    @Query("DELETE FROM auto_debit_hidden WHERE `key` = :key")
+    suspend fun unhide(key: String)
+
+    @Query("SELECT * FROM txn_hidden")
+    fun observeHiddenTxns(): Flow<List<HiddenTxnEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun hideTxn(h: HiddenTxnEntity)
+
+    @Query("DELETE FROM txn_hidden WHERE uid = :uid")
+    suspend fun unhideTxn(uid: String)
+
+    @Query("SELECT * FROM txn_labels")
+    fun observeLabels(): Flow<List<TxnLabelEntity>>
+
+    @Query("SELECT label FROM txn_labels WHERE uid = :uid ORDER BY label")
+    suspend fun labelsOf(uid: String): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addLabels(l: List<TxnLabelEntity>)
+
+    @Query("DELETE FROM txn_labels WHERE uid = :uid")
+    suspend fun clearLabels(uid: String)
+
+    @Query("UPDATE OR IGNORE txn_labels SET label = :to WHERE label = :from")
+    suspend fun renameLabel(from: String, to: String)
+
+    @Query("DELETE FROM txn_labels WHERE label = :label")
+    suspend fun deleteLabel(label: String)
+
+    @Query("SELECT * FROM label_rules")
+    suspend fun labelRules(): List<LabelRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addLabelRules(r: List<LabelRuleEntity>)
+
+    @Query("DELETE FROM label_rules WHERE label = :label")
+    suspend fun deleteLabelRules(label: String)
+
+    @Query("SELECT * FROM payee_names")
+    suspend fun payeeNames(): List<PayeeNameEntity>
+
+    @Upsert
+    suspend fun putPayeeNames(n: List<PayeeNameEntity>)
 }
 
 @Database(
-    entities = [DeletedTxnEntity::class, DeletedKeyEntity::class, AutoDebitEntity::class, HiddenAutoDebitEntity::class],
+    entities = [
+        DeletedTxnEntity::class, DeletedKeyEntity::class, AutoDebitEntity::class, HiddenAutoDebitEntity::class,
+        HiddenTxnEntity::class, TxnLabelEntity::class, LabelRuleEntity::class, PayeeNameEntity::class,
+    ],
     version = 1,
     exportSchema = true,
 )

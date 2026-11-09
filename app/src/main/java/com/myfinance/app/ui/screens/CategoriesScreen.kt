@@ -105,6 +105,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                 }
             }
         }
+        item { com.myfinance.app.ui.v13.LabelsCard(vm) }
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
