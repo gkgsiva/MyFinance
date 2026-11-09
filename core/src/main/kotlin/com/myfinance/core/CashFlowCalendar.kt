@@ -189,7 +189,8 @@ object CashFlowCalendar {
             val kept = ArrayList<FlowEvent>()
             for (e in expected.sortedBy { it.date }) {
                 val dup = kept.any { k ->
-                    k.incoming == e.incoming && kotlin.math.abs(ChronoUnit.DAYS.between(k.date, e.date)) <= 3 &&
+                    // Two dates of the same reminder (a missed one and the next) are both kept.
+                    (k.ref == null || k.ref != e.ref) && k.incoming == e.incoming && kotlin.math.abs(ChronoUnit.DAYS.between(k.date, e.date)) <= 3 &&
                         (sameTitle(k.title, e.title) || (k.amountMinor != null && k.amountMinor == e.amountMinor && k.kind == e.kind))
                 }
                 if (!dup) kept += e
