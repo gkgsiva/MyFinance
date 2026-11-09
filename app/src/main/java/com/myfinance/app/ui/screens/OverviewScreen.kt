@@ -83,6 +83,8 @@ fun OverviewScreen(
     onOpenUpcoming: () -> Unit,
 ) {
     val month by vm.month.collectAsState()
+    val currentMonth by vm.currentMonth.collectAsState()
+    val cycle by vm.monthCycle.collectAsState()
     val summary by vm.summary.collectAsState()
     val groupBy by vm.groupBy.collectAsState()
     val categories by vm.categories.collectAsState()
@@ -118,12 +120,14 @@ fun OverviewScreen(
                     IconButton(onClick = vm::previousMonth) {
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
                     }
-                    Text(
-                        month.format(monthFormat),
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = vm::nextMonth, enabled = month < YearMonth.now()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(month.format(monthFormat), style = MaterialTheme.typography.titleLarge)
+                        // With a custom month (e.g. 25th to 24th) show which dates it covers.
+                        cycle.rangeLabel(month)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                     }
                     IconButton(onClick = onImport, enabled = !importState.running) {

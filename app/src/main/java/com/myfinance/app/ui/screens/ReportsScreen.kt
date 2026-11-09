@@ -75,6 +75,7 @@ private val monthYear: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM yyyy
 fun ReportsScreen(vm: FinanceViewModel) {
     val data by vm.reports.collectAsState()
     val month by vm.month.collectAsState()
+    val currentMonth by vm.currentMonth.collectAsState()
     val count by vm.reportMonths.collectAsState()
     val categories by vm.categories.collectAsState()
     val sync by vm.syncState.collectAsState()
@@ -99,7 +100,7 @@ fun ReportsScreen(vm: FinanceViewModel) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
                 }
                 Text("Up to ${month.format(monthYear)}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                IconButton(onClick = vm::nextMonth, enabled = month < YearMonth.now()) {
+                IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                 }
             }

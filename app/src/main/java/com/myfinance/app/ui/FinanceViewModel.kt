@@ -18,6 +18,7 @@ import com.myfinance.core.FinanceSummary
 import com.myfinance.core.FySummary
 import com.myfinance.core.MerchantStat
 import com.myfinance.core.ModeShare
+import com.myfinance.core.MonthCycle
 import com.myfinance.core.MonthTotals
 import com.myfinance.core.RecurringDetector
 import com.myfinance.core.RecurringPayment
@@ -66,8 +67,15 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = (app as MyFinanceApp).repository
 
-    private val _month = MutableStateFlow(YearMonth.now())
+    /** Which month a transaction counts towards; set under Manage > Month for budgets and reports. */
+    val monthCycle: StateFlow<MonthCycle> = repo.monthCycle
+
+    private val _month = MutableStateFlow(repo.monthCycle.value.current())
     val month: StateFlow<YearMonth> = _month.asStateFlow()
+
+    /** The budget month today is in: the latest one the month arrows can reach. */
+    val currentMonth: StateFlow<YearMonth> = monthCycle.map { it.current() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, repo.monthCycle.value.current())
 
     val query = MutableStateFlow("")
     val categoryFilter = MutableStateFlow<String?>(null)
@@ -115,12 +123,12 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** All transactions in the selected month, newest first. */
-    val monthTransactions: StateFlow<List<TransactionEntity>> = _month
-        .flatMapLatest { ym ->
+    val monthTransactions: StateFlow<List<TransactionEntity>> = combine(_month, monthCycle) { ym, cycle -> ym to cycle }
+        .flatMapLatest { (ym, cycle) ->
             val zone = ZoneId.systemDefault()
-            val from = ym.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val to = ym.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-            repo.transactionsBetween(from, to)
+            val range = cycle.loadRange(ym, zone)
+            repo.transactionsBetween(range.first, range.last)
+                .map { list -> list.filter { cycle.periodOf(it.timestamp, it.type, it.category, zone) == ym } }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -153,18 +161,17 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<String>() to emptyList())
 
     val reports: StateFlow<ReportsData> =
-        combine(allLite, _month, reportMonths) { txns, end, count ->
+        combine(allLite, _month, reportMonths, monthCycle) { txns, end, count, cycle ->
             val zone = ZoneId.systemDefault()
             val months = Reports.months(end, count)
-            val start = months.first().atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val stop = end.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val window = txns.filter { it.timestamp in start until stop }
+            val inWindow = months.toSet()
+            val window = txns.filter { cycle.periodOf(it, zone) in inWindow }
             val (byAmount, byCount) = Reports.topMerchants(window, 10)
             ReportsData(
                 months = months,
-                monthly = Reports.monthly(txns, end, count, zone),
-                categoryTrends = Reports.categoryTrends(txns, end, count, zone),
-                perPerson = Reports.perPerson(txns, end, count, zone),
+                monthly = Reports.monthly(txns, end, count, zone, cycle),
+                categoryTrends = Reports.categoryTrends(txns, end, count, zone, cycle),
+                perPerson = Reports.perPerson(txns, end, count, zone, cycle),
                 topByAmount = byAmount,
                 topByCount = byCount,
                 modes = Reports.paymentModes(window),
@@ -194,7 +201,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         repo.balances.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun previousMonth() { _month.value = _month.value.minusMonths(1) }
-    fun nextMonth() { if (_month.value < YearMonth.now()) _month.value = _month.value.plusMonths(1) }
+    fun nextMonth() { if (_month.value < currentMonth.value) _month.value = _month.value.plusMonths(1) }
+
+    /** Saves the month setting and jumps to the budget month today is in, so the screens line up. */
+    fun setMonthCycle(cycle: MonthCycle) {
+        repo.setMonthCycle(cycle)
+        _month.value = cycle.current()
+        viewModelScope.launch { repo.onDataChanged() }
+    }
 
     fun clearFilters() {
         query.value = ""

@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import com.myfinance.core.MonthCycle
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -54,6 +55,26 @@ class FinanceRepository(
         val n = name.trim().ifEmpty { "Me" }
         prefs.edit().putString("owner", n).apply()
         _ownerName.value = n
+    }
+
+    private val _monthCycle = MutableStateFlow(readMonthCycle())
+
+    /** Which month a transaction counts towards (custom start day, late salary for next month). */
+    val monthCycle: StateFlow<MonthCycle> = _monthCycle.asStateFlow()
+
+    private fun readMonthCycle(): MonthCycle = runCatching {
+        MonthCycle(
+            startDay = prefs.getInt(KEY_CYCLE_START, 1),
+            salaryFromDay = prefs.getInt(KEY_SALARY_FROM, 0).takeIf { it > 0 },
+        )
+    }.getOrDefault(MonthCycle.CALENDAR)
+
+    fun setMonthCycle(cycle: MonthCycle) {
+        prefs.edit()
+            .putInt(KEY_CYCLE_START, cycle.startDay)
+            .putInt(KEY_SALARY_FROM, cycle.salaryFromDay ?: 0)
+            .apply()
+        _monthCycle.value = cycle
     }
 
     val categories: Flow<List<CategoryEntity>> = db.categories().observeAll()
@@ -387,7 +408,7 @@ class FinanceRepository(
 
     data class MonthTotals(val incomeMinor: Long, val expenseMinor: Long)
 
-    suspend fun monthTotals(month: YearMonth = YearMonth.now()): MonthTotals {
+    suspend fun monthTotals(month: YearMonth = monthCycle.value.current()): MonthTotals {
         val list = monthRows(month).filterNot { it.excluded }
         return MonthTotals(
             incomeMinor = list.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor },
@@ -398,11 +419,13 @@ class FinanceRepository(
     /** Sum of all monthly category budgets (0 when none are set). */
     suspend fun totalBudget(): Long = db.categories().allOnce().sumOf { it.monthlyBudgetMinor ?: 0L }
 
+    /** Rows that count towards the budget month [month], using the month setting. */
     private suspend fun monthRows(month: YearMonth): List<TransactionEntity> {
         val zone = ZoneId.systemDefault()
-        val from = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val to = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-        return db.transactions().rangeOnce(from, to)
+        val cycle = monthCycle.value
+        val range = cycle.loadRange(month, zone)
+        return db.transactions().rangeOnce(range.first, range.last)
+            .filter { cycle.periodOf(it.timestamp, it.type, it.category, zone) == month }
     }
 
     /** Refreshes everything that depends on the totals: budget alerts and the home screen widget. */
@@ -413,7 +436,7 @@ class FinanceRepository(
 
     /** Sends a notification the first time a category passes 80% and 100% of its budget each month. */
     suspend fun checkBudgets() {
-        val month = YearMonth.now()
+        val month = monthCycle.value.current()
         val budgets = db.categories().allOnce().mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap()
         if (budgets.isEmpty()) return
         val spent = monthRows(month).filter { !it.excluded && it.type == TxnType.DEBIT }
@@ -523,6 +546,8 @@ class FinanceRepository(
         private const val KEY_BUDGET_SENT = "budget_alerts_sent"
         private const val KEY_REMINDERS_SENT = "reminders_sent"
         private const val KEY_BACKFILLED = "backfilled_v11"
+        private const val KEY_CYCLE_START = "month_start_day"
+        private const val KEY_SALARY_FROM = "salary_next_month_from_day"
 
         private val dayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM")
 

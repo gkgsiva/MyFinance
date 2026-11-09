@@ -54,8 +54,14 @@ object Reports {
     fun months(end: YearMonth, count: Int): List<YearMonth> = (count - 1 downTo 0).map { end.minusMonths(it.toLong()) }
 
     /** 1 and 5: income, spending and savings rate per month. */
-    fun monthly(txns: List<TxnLite>, end: YearMonth, count: Int = 12, zone: ZoneId = ZoneId.systemDefault()): List<MonthTotals> {
-        val byMonth = txns.groupBy { Dates.yearMonth(it.timestamp, zone) }
+    fun monthly(
+        txns: List<TxnLite>,
+        end: YearMonth,
+        count: Int = 12,
+        zone: ZoneId = ZoneId.systemDefault(),
+        cycle: MonthCycle = MonthCycle.CALENDAR,
+    ): List<MonthTotals> {
+        val byMonth = txns.groupBy { cycle.periodOf(it, zone) }
         return months(end, count).map { m ->
             val list = byMonth[m].orEmpty()
             MonthTotals(
@@ -76,6 +82,7 @@ object Reports {
         end: YearMonth,
         count: Int = 6,
         zone: ZoneId = ZoneId.systemDefault(),
+        cycle: MonthCycle = MonthCycle.CALENDAR,
         keyOf: (TxnLite) -> String?,
     ): List<Series> {
         val window = months(end, count)
@@ -83,18 +90,28 @@ object Reports {
         val sums = HashMap<String, LongArray>()
         for (t in txns) {
             if (t.type != TxnType.DEBIT) continue
-            val i = index[Dates.yearMonth(t.timestamp, zone)] ?: continue
+            val i = index[cycle.periodOf(t, zone)] ?: continue
             val key = keyOf(t)?.takeIf { it.isNotBlank() } ?: "Unknown"
             sums.getOrPut(key) { LongArray(count) }[i] += t.amountMinor
         }
         return sums.map { (k, v) -> Series(k, v.toList()) }.sortedByDescending { it.total }
     }
 
-    fun categoryTrends(txns: List<TxnLite>, end: YearMonth, count: Int = 6, zone: ZoneId = ZoneId.systemDefault()) =
-        seriesBy(txns, end, count, zone) { it.category }
+    fun categoryTrends(
+        txns: List<TxnLite>,
+        end: YearMonth,
+        count: Int = 6,
+        zone: ZoneId = ZoneId.systemDefault(),
+        cycle: MonthCycle = MonthCycle.CALENDAR,
+    ) = seriesBy(txns, end, count, zone, cycle) { it.category }
 
-    fun perPerson(txns: List<TxnLite>, end: YearMonth, count: Int = 6, zone: ZoneId = ZoneId.systemDefault()) =
-        seriesBy(txns, end, count, zone) { it.owner }
+    fun perPerson(
+        txns: List<TxnLite>,
+        end: YearMonth,
+        count: Int = 6,
+        zone: ZoneId = ZoneId.systemDefault(),
+        cycle: MonthCycle = MonthCycle.CALENDAR,
+    ) = seriesBy(txns, end, count, zone, cycle) { it.owner }
 
     /** 3: where the money goes, by amount and by number of payments. */
     fun topMerchants(txns: List<TxnLite>, limit: Int = 10): Pair<List<MerchantStat>, List<MerchantStat>> {
