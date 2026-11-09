@@ -62,8 +62,10 @@ object StatementImport {
         val tail = accountTail?.filter(Char::isDigit)?.takeLast(4)?.ifEmpty { null }
         val seen = HashMap<String, Int>()
         return statement.rows.map { r ->
+            // A card statement can list several cards (add-on card, RuPay card used for UPI): each line keeps its own.
+            val rowTail = r.cardTail?.takeIf { statement.kind == StatementKind.CARD } ?: tail
             val base = listOf(
-                tail ?: bank.orEmpty(), r.date.toString(), r.amountMinor.toString(), r.type.name,
+                rowTail ?: bank.orEmpty(), r.date.toString(), r.amountMinor.toString(), r.type.name,
                 r.description.lowercase().replace(Regex("""[^a-z0-9]+"""), ""),
             ).joinToString("|")
             // Two identical lines on one day (two ₹20 tea payments) are two transactions.
@@ -72,7 +74,7 @@ object StatementImport {
             val ts = r.date.atTime(r.time ?: NOON).atZone(zone).toInstant().toEpochMilli()
             ImportCandidate(
                 row = r, key = "STMT|$hash", uid = java.util.UUID.nameUUIDFromBytes("stmt|$hash".toByteArray()).toString(),
-                timestamp = ts, merchant = Narration.merchant(r.description), bank = bank, accountTail = tail,
+                timestamp = ts, merchant = Narration.merchant(r.description), bank = bank, accountTail = rowTail,
             )
         }
     }
