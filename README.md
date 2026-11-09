@@ -134,6 +134,22 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in 1.5
+
+- **Today card** on the Overview: today's spend and everything due in the next 7 days (EMIs, auto debits, bills, renewals, money lent), with quick add buttons.
+- **Quick adds**: a spend on any past date, income, a payment due on any future date (once or repeating), a past investment with its date, a property, and your EPF balance. EPFO passbook SMS keep EPF up to date.
+- **Ask in plain words** (Plan > Ask): "How much on Swiggy last year?", "Biggest payment in March", "Salary in 2025". Answered on the phone with built-in rules; nothing is sent anywhere.
+- **Tax-time pack** (Plan): salary, savings and FD interest, capital gains (short/long term), and deductions for one financial year, saved as Excel or shared as text.
+- **Insurance & warranty vault** (Plan): policies and warranties with renewal and end dates, photos, and reminders 30, 7 and 1 day before.
+- **Subscription audit** (Plan): price hikes, two services of the same kind, charges on two accounts, double charges, and what cancelling unused ones saves.
+- **Cash flow calendar** (Plan): a month of expected salary, EMIs, SIPs, bills and renewals next to what actually happened.
+- **Goal-linked savings**: link a SIP, FD, holding or label to a goal and see when it will be reached.
+- **Lent & borrowed** (Plan): who owes you and whom you owe, part repayments, due-date reminders and a WhatsApp reminder message.
+- **Auto-backup** (Backup & restore): an encrypted backup on a schedule to a file you choose, including Google Drive.
+- **Home screen**: long-press the icon for Add spend, Add income, Ask and Calendar; a new Today widget with a + button.
+
+New data is kept in its own database file (myfinance-v15.db), so upgrading keeps everything.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:
