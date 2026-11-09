@@ -84,6 +84,12 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Settings** (Manage > All settings, or Plan > All settings): everything in one place, including
   Hidden items (unhide transactions and EMIs), Recently deleted, Rescan messages, SMS rules, labels,
   payee names, month setting, app lock, backup, theme (light / dark / same as phone) and notifications.
+- **Explore spending** (Reports > Explore): pick a label, payee, category, account or person and see
+  what it cost (or brought in) by week, month or year over any dates, with every payment listed.
+- **Income over the years** (Reports): total income and salary per financial or calendar year, the
+  typical monthly salary and how much it changed from the year before, and a salary-by-month chart.
+- **Did you know?** (Overview and Reports): facts such as "Vegetables: highest month ever",
+  "Fuel up 120%", "Food tops this month", the biggest payment and saving streaks.
 - **Import bank and credit card statements** (Manage > Import statements): build a profile for past
   years from the statements your bank emails or lets you download. PDF (including password-protected
   PDFs), Excel (.xlsx and old .xls) and CSV work, for HDFC, SBI, ICICI, Axis, Kotak and most other

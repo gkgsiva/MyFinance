@@ -331,7 +331,8 @@ private fun MyFinanceRoot() {
             composable("rescan") {
                 RescanScreen(vm = vm, smsGranted = smsGranted, onAskPermission = requestSms, onBack = { nav.popBackStack() })
             }
-            composable("reports") { ReportsScreen(vm = vm) }
+            composable("reports") { ReportsScreen(vm = vm, onExplore = { nav.navigate("explore") }) }
+            composable("explore") { com.myfinance.app.ui.v13.ExploreScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("transactions") {
                 TransactionsScreen(
                     vm = vm,
