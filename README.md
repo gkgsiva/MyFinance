@@ -84,6 +84,17 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Settings** (Manage > All settings, or Plan > All settings): everything in one place, including
   Hidden items (unhide transactions and EMIs), Recently deleted, Rescan messages, SMS rules, labels,
   payee names, month setting, app lock, backup, theme (light / dark / same as phone) and notifications.
+- **Import bank and credit card statements** (Manage > Import statements): build a profile for past
+  years from the statements your bank emails or lets you download. PDF (including password-protected
+  PDFs), Excel (.xlsx and old .xls) and CSV work, for HDFC, SBI, ICICI, Axis, Kotak and most other
+  Indian banks and cards. Pick many files at once, for example 3 years of monthly card bills; a PDF
+  password is tried on the other files too, and is never saved. Nothing is counted twice: a statement
+  line and the SMS for the same payment (same UPI reference, or same amount and account within 2 days)
+  become one entry, whichever arrives first, and the statement's details win because it is the
+  official record. Your category, labels, payee name and notes on that entry are kept.
+- **Accounts & cards** (Manage, or Reports): every bank account and card, consolidated or one at a
+  time, with totals per month, quarter, year or financial year. Tap an account to see its
+  transactions, or switch to All items. Reports go back 3 or 5 years and compare financial years.
 
 ## Install
 

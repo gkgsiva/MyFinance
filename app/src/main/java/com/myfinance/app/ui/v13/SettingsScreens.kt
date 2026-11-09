@@ -63,6 +63,10 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Hidden items", if (hiddenCount == 0) "None" else "$hiddenCount", "Transactions and EMIs you hid. Unhide them here.") { open("hidden") } }
         item { SettingTile("Recently deleted", if (trash.isEmpty()) "Empty" else "${trash.size}", "Restore transactions deleted by mistake") { open("trash") } }
 
+        item { Group("Statements & accounts") }
+        item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
+        item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
+
         item { Group("Messages") }
         item { SettingTile("Rescan messages", "", "Read the SMS inbox again without making duplicates") { open("rescan") } }
         item { SettingTile("Custom SMS rules", "${rules.size}", "e.g. any SMS with SWIGGY goes to Food") { open("rules") } }
