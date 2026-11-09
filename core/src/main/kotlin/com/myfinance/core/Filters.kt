@@ -17,16 +17,21 @@ data class TxnFilter(
     val withPhoto: Boolean = false,
     /** Only entries whose note contains this text (any note when "*"). */
     val noteText: String = "",
+    /** Only entries whose nickname contains this text (any nickname when "*"). */
+    val nicknameText: String = "",
 ) {
     /** True when anything beyond the text box and category is set (shown as a badge on the filter button). */
     val hasAdvanced: Boolean
         get() = fromMillis != null || toMillis != null || owner != null || account != null ||
-            minAmountMinor != null || maxAmountMinor != null || type != null || mode != null || withPhoto || noteText.isNotBlank()
+            minAmountMinor != null || maxAmountMinor != null || type != null || mode != null || withPhoto || noteText.isNotBlank() || nicknameText.isNotBlank()
 
     val hasDateRange: Boolean get() = fromMillis != null || toMillis != null
 
-    fun matches(t: TxnLite, note: String? = null, hasPhoto: Boolean = false): Boolean {
+    fun matches(t: TxnLite, note: String? = null, hasPhoto: Boolean = false, nickname: String? = null): Boolean {
         if (withPhoto && !hasPhoto) return false
+        val nickNeedle = nicknameText.trim()
+        if (nickNeedle == "*" && nickname.isNullOrBlank()) return false
+        if (nickNeedle.isNotEmpty() && nickNeedle != "*" && nickname?.contains(nickNeedle, ignoreCase = true) != true) return false
         val noteNeedle = noteText.trim()
         if (noteNeedle == "*" && note.isNullOrBlank()) return false
         if (noteNeedle.isNotEmpty() && noteNeedle != "*" && note?.contains(noteNeedle, ignoreCase = true) != true) return false
@@ -42,7 +47,7 @@ data class TxnFilter(
         val needle = text.trim().lowercase()
         if (needle.isNotEmpty()) {
             val amountText = java.math.BigDecimal.valueOf(t.amountMinor, 2).stripTrailingZeros().toPlainString()
-            val hay = listOfNotNull(t.merchant, note, t.category, t.account, t.owner, amountText, formatInr(t.amountMinor))
+            val hay = listOfNotNull(t.merchant, nickname, note, t.category, t.account, t.owner, amountText, formatInr(t.amountMinor))
             if (hay.none { it.lowercase().contains(needle) }) return false
         }
         return true

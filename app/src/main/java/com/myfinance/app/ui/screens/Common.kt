@@ -42,7 +42,12 @@ fun ColorDot(color: Color, size: Int = 12) {
 }
 
 @Composable
-fun TransactionRow(txn: TransactionEntity, categoryColor: Color, labels: List<String> = emptyList(), hidden: Boolean = false, onClick: () -> Unit) {
+fun TransactionRow(
+    txn: TransactionEntity, categoryColor: Color, labels: List<String> = emptyList(), hidden: Boolean = false,
+    /** The user's own name for this payment; shown first, with the merchant name in the details. */
+    nickname: String? = null,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -54,12 +59,13 @@ fun TransactionRow(txn: TransactionEntity, categoryColor: Color, labels: List<St
         ColorDot(categoryColor, 14)
         Column(Modifier.weight(1f)) {
             Text(
-                txn.merchant ?: if (txn.type == TxnType.CREDIT) "Money received" else "Payment",
+                nickname ?: txn.merchant ?: if (txn.type == TxnType.CREDIT) "Money received" else "Payment",
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             val details = listOfNotNull(
+                nickname?.let { txn.merchant },
                 txn.category,
                 txn.owner,
                 txn.accountLabel,

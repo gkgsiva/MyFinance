@@ -60,6 +60,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val options by vm.filterOptions.collectAsState()
     val sync by vm.syncState.collectAsState()
     val meta by vm.txnMeta.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
     val usedLabels by vm.usedLabels.collectAsState()
     val labelFilter by vm.labelFilter.collectAsState()
     val showHidden by vm.showHidden.collectAsState()
@@ -191,7 +192,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                         HorizontalDivider()
                     }
                     items(list, key = { it.id }) { t ->
-                        TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), meta.hidden(t)) { onOpen(t.id) }
+                        TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), meta.hidden(t), nicks[t.uid.substringBefore('#')]) { onOpen(t.id) }
                     }
                 }
             }

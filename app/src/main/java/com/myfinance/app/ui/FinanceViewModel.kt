@@ -227,6 +227,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     private val photoUids: StateFlow<Set<String>> =
         repo.v12.receiptUids.map { it.toSet() }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
 
+    /** The user's nicknames for payments, by uid (split parts use their payment's). */
+    val nicknames: StateFlow<Map<String, String>> =
+        repo.nicknames.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    fun nicknameFor(t: TransactionEntity): String? = nicknames.value[t.uid.substringBefore('#')]
+
+    fun setNickname(uid: String, name: String?) = viewModelScope.launch { repo.setNickname(uid.substringBefore('#'), name) }
+
     /** The filter actually applied: the search box and category chip plus the advanced options. */
     val effectiveFilter: StateFlow<TxnFilter> =
         combine(query, categoryFilter, advancedFilter) { q, c, a -> a.copy(text = q, category = c) }
@@ -239,18 +247,20 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val filteredTransactions: StateFlow<List<TransactionEntity>> =
         combine(
             combine(monthTransactions, allTransactions, effectiveFilter) { m, a, f -> Triple(m, a, f) },
-            combine(mergedModes, ownerName, photoUids) { modes, me, photos -> Triple(modes, me, photos) },
+            combine(mergedModes, ownerName, combine(photoUids, nicknames) { p, n -> p to n }) { modes, me, pn -> Triple(modes, me, pn) },
             combine(txnMeta, labelFilter, showHidden) { meta, label, showH -> Triple(meta, label, showH) },
-        ) { (month, all, f), (modes, me, photos), (meta, label, showH) ->
+        ) { (month, all, f), (modes, me, pn), (meta, label, showH) ->
+            val (photos, nicks) = pn
             val source = if (f.hasDateRange) all else month
             source.filter { t ->
                 (showH || !meta.hidden(t)) &&
                     (label == null || label in meta.labels(t)) &&
                     t.toLite(me, modes).let { lite ->
                         val photo = t.uid.substringBefore('#') in photos
-                        f.matches(lite, t.note, photo) ||
+                        val nick = nicks[t.uid.substringBefore('#')]
+                        f.matches(lite, t.note, photo, nick) ||
                             // The search box also finds labels.
-                            (f.text.isNotBlank() && meta.labels(t).any { it.contains(f.text.trim(), ignoreCase = true) } && f.copy(text = "").matches(lite, t.note, photo))
+                            (f.text.isNotBlank() && meta.labels(t).any { it.contains(f.text.trim(), ignoreCase = true) } && f.copy(text = "").matches(lite, t.note, photo, nick))
                     }
             }
         }

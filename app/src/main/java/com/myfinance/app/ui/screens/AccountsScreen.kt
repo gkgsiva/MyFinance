@@ -66,6 +66,7 @@ fun AccountsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> U
     val me by vm.ownerName.collectAsState()
     val categories by vm.categories.collectAsState()
     val meta by vm.txnMeta.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
     val colorOf = categories.associate { it.name to Color(it.color) }
     val fallback = MaterialTheme.colorScheme.outline
 
@@ -140,7 +141,7 @@ fun AccountsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> U
                     }
                     val ids = g.accounts.flatMap { it.ids }
                     val rows = ids.filter { it !in meta.hiddenIds }.mapNotNull { data.byId[it] }.sortedByDescending { it.timestamp }
-                    items(rows, key = { "t${g.start}-${it.id}" }) { t -> TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t)) { onOpen(t.id) } }
+                    items(rows, key = { "t${g.start}-${it.id}" }) { t -> TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), nickname = nicks[t.uid.substringBefore('#')]) { onOpen(t.id) } }
                 }
             } else {
                 data.groups.forEach { g ->
@@ -172,7 +173,7 @@ fun AccountsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> U
                                     }
                                     if (open) {
                                         a.ids.filter { it !in meta.hiddenIds }.mapNotNull { data.byId[it] }.forEach { t ->
-                                            TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t)) { onOpen(t.id) }
+                                            TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), nickname = nicks[t.uid.substringBefore('#')]) { onOpen(t.id) }
                                         }
                                     }
                                 }

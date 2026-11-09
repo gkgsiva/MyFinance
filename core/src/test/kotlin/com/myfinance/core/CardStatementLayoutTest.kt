@@ -105,3 +105,23 @@ class CardStatementLayoutTest {
         assertNull(st.billDueDate)
     }
 }
+
+class NicknameFilterTest {
+    private val t = TxnLite(4_000, TxnType.DEBIT, "Food", "Bottle L Ab Technologi", null, 0)
+
+    @Test
+    fun searchFindsNickname() {
+        assertEquals(true, TxnFilter(text = "office water").matches(t, nickname = "Office water"))
+        assertEquals(false, TxnFilter(text = "office water").matches(t))
+        assertEquals(true, TxnFilter(text = "bottle").matches(t, nickname = "Office water"))
+    }
+
+    @Test
+    fun nicknameField() {
+        assertEquals(true, TxnFilter(nicknameText = "water").matches(t, nickname = "Office water"))
+        assertEquals(false, TxnFilter(nicknameText = "water").matches(t, nickname = "Milk"))
+        assertEquals(true, TxnFilter(nicknameText = "*").matches(t, nickname = "Milk"))
+        assertEquals(false, TxnFilter(nicknameText = "*").matches(t))
+        assertEquals(true, TxnFilter(nicknameText = "*").hasAdvanced)
+    }
+}

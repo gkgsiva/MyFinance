@@ -74,6 +74,8 @@ fun FilterDialog(
     var withPhoto by remember { mutableStateOf(initial.withPhoto) }
     var noteText by remember { mutableStateOf(initial.noteText.takeIf { it != "*" }.orEmpty()) }
     var anyNote by remember { mutableStateOf(initial.noteText == "*") }
+    var nickText by remember { mutableStateOf(initial.nicknameText.takeIf { it != "*" }.orEmpty()) }
+    var anyNick by remember { mutableStateOf(initial.nicknameText == "*") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -113,6 +115,16 @@ fun FilterDialog(
                     )
                 }
 
+                Label("Nickname")
+                OutlinedTextField(
+                    value = nickText, onValueChange = { nickText = it; if (it.isNotBlank()) anyNick = false }, label = { Text("Nickname contains") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = anyNick, onCheckedChange = { anyNick = it; if (it) nickText = "" })
+                    Text("Only entries with a nickname")
+                }
+
                 Label("Notes and photos")
                 OutlinedTextField(
                     value = noteText, onValueChange = { noteText = it; if (it.isNotBlank()) anyNote = false }, label = { Text("Note contains") }, singleLine = true,
@@ -135,6 +147,7 @@ fun FilterDialog(
                         fromMillis = from, toMillis = to, owner = owner, account = account, type = type, mode = mode,
                         minAmountMinor = parseAmountToMinor(min), maxAmountMinor = parseAmountToMinor(max),
                         withPhoto = withPhoto, noteText = if (anyNote) "*" else noteText.trim(),
+                        nicknameText = if (anyNick) "*" else nickText.trim(),
                     ),
                 )
             }) { Text("Apply") }

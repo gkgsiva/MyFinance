@@ -45,11 +45,12 @@ class FinanceRepository(
     v14Db: V14Database,
     v15Db: V15Database,
     v16Db: V16Database,
+    v17Db: V17Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db, V16Database.FILE to v16Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db, V16Database.FILE to v16Db, V17Database.FILE to v17Db)
     }
 
     /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
@@ -63,6 +64,9 @@ class FinanceRepository(
 
     /** v1.6: split parts, family UPI people and limits, closed months, review answers. */
     val v16: V16Dao = v16Db.dao()
+
+    /** v1.7: nicknames for payments, kept apart from the merchant name. */
+    val v17: V17Dao = v17Db.dao()
 
     /** Rupees per unit of other currencies, for foreign spends. Starts from [com.myfinance.core.Fx.defaultRates]. */
     private val _fxRates = MutableStateFlow(com.myfinance.core.Fx.defaultRates + com.myfinance.core.Fx.parseRates(
@@ -198,7 +202,7 @@ class FinanceRepository(
         val nick = parsed.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
         val row = (rule?.applyTo(base) ?: base).let { r -> if (nick != null && rule?.merchant == null) r.copy(merchant = nick) else r }
         // Already imported from a bank / card statement: link the SMS to that line, never a second entry.
-        if (runCatching { linkToStatementLine(row) }.getOrDefault(false)) return Ingest.ALREADY_HERE
+        if (runCatching { linkToStatementLine(row, nick) }.getOrDefault(false)) return Ingest.ALREADY_HERE
         val added = db.transactions().insert(row) != -1L
         if (added) {
             runCatching { v12.onNewTransaction(row, rule) }
@@ -398,6 +402,17 @@ class FinanceRepository(
     }
 
     suspend fun labelsOf(uid: String): List<String> = v13.labelsOf(uid)
+
+    /** Nicknames by transaction uid. */
+    val nicknames: Flow<Map<String, String>> = v17.observeNicknames().map { l -> l.associate { it.txnUid to it.name } }
+
+    suspend fun nicknameOf(uid: String): String? = withContext(Dispatchers.IO) { runCatching { v17.nicknameOf(uid) }.getOrNull() }
+
+    /** Sets (or with a blank name, clears) the user's own name for one payment. */
+    suspend fun setNickname(uid: String, name: String?) = withContext(Dispatchers.IO) {
+        val n = name?.trim().orEmpty()
+        if (n.isEmpty()) v17.clearNickname(uid) else v17.putNickname(NicknameEntity(uid, n))
+    }
 
     /** Renames a payee name everywhere: the saved name for new SMS and every transaction already using it. */
     suspend fun renamePayeeName(old: String, new: String) = withContext(Dispatchers.IO) {
@@ -903,7 +918,8 @@ class FinanceRepository(
      * Stores the statement lines the user chose to import. New lines are categorised like SMS (custom
      * rules, payee names and label rules apply). A line that is the same payment as a stored SMS or
      * typed entry updates that entry instead: the statement is the official record, so its amount,
-     * date and details win, while the user's category, labels, notes and payee name are kept.
+     * date, merchant name and details win, while the user's category, labels and notes are kept. A name
+     * the user gave (a payee name or an edited merchant) moves to the payment's nickname.
      */
     suspend fun addImported(rows: List<ImportCandidate>): ImportResult = withContext(Dispatchers.IO) {
         val cat = categorizer()
@@ -921,11 +937,16 @@ class FinanceRepository(
             val nick = c.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
             if (c.updatesExisting) {
                 val t = db.transactions().get(c.matchedId!!) ?: continue
-                val keepName = t.userEdited || t.merchant in nicknames
+                val official = c.merchant ?: t.merchant
+                // The statement's merchant replaces the SMS one; the user's own name for it becomes the nickname.
+                val userName = t.merchant?.takeIf { (t.userEdited || it in nicknames) && it != official }
+                runCatching {
+                    if (v17.nicknameOf(t.uid) == null) (userName ?: nick?.takeIf { it != official })?.let { v17.putNickname(NicknameEntity(t.uid, it)) }
+                }
                 db.transactions().update(
                     t.copy(
                         amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
-                        merchant = if (keepName) t.merchant else nick ?: c.merchant ?: t.merchant,
+                        merchant = official,
                         accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
                         reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                         source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
@@ -943,9 +964,11 @@ class FinanceRepository(
                 accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
                 smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
             )
-            val row = (rule?.applyTo(base) ?: base).let { x -> if (nick != null && rule?.merchant == null) x.copy(merchant = nick) else x }
+            // The statement's merchant name stays; a payee name the user gave becomes the nickname.
+            val row = rule?.applyTo(base) ?: base
             if (db.transactions().insert(row) != -1L) {
                 added++
+                if (nick != null && rule?.merchant == null && nick != row.merchant) runCatching { v17.putNickname(NicknameEntity(row.uid, nick)) }
                 runCatching { v12.onNewTransaction(row, rule) }
                 runCatching { applyLabelRules(row, c.merchant) }
             }
@@ -959,7 +982,7 @@ class FinanceRepository(
      * SMS to that statement line and keeps the statement's details, instead of adding it twice.
      * Returns true when it found the line.
      */
-    private suspend fun linkToStatementLine(sms: TransactionEntity): Boolean {
+    private suspend fun linkToStatementLine(sms: TransactionEntity, nick: String? = null): Boolean {
         if (db.transactions().bySmsKey(sms.smsKey ?: return false) != null) return false
         val window = 3 * 24 * 60 * 60 * 1000L
         val lines = db.transactions().rangeOnce(sms.timestamp - window, sms.timestamp + window)
@@ -977,6 +1000,8 @@ class FinanceRepository(
                 bank = line.bank ?: sms.bank,
             ),
         )
+        // The statement keeps its merchant name; the user's payee name for the SMS becomes the nickname.
+        if (nick != null && nick != line.merchant) runCatching { if (v17.nicknameOf(line.uid) == null) v17.putNickname(NicknameEntity(line.uid, nick)) }
         return true
     }
 

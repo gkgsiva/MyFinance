@@ -73,6 +73,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
     var amount by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(if (startAsIncome) TxnType.CREDIT else TxnType.DEBIT) }
     var merchant by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
     var category by remember { mutableStateOf(if (startAsIncome) DefaultCategories.INCOME else DefaultCategories.OTHER) }
     var account by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
@@ -92,6 +93,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 amount = BigDecimal.valueOf(t.amountMinor, 2).stripTrailingZeros().toPlainString()
                 type = t.type
                 merchant = t.merchant.orEmpty()
+                nickname = vm.nicknameFor(t).orEmpty()
                 category = t.category
                 account = t.accountTail.orEmpty()
                 note = t.note.orEmpty()
@@ -154,6 +156,15 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 value = merchant,
                 onValueChange = { merchant = it },
                 label = { Text(if (type == TxnType.CREDIT) "From" else "Paid to / merchant") },
+                supportingText = if (original?.source == TxnSource.STATEMENT) ({ Text("Name as printed on the statement") }) else null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = nickname,
+                onValueChange = { nickname = it },
+                label = { Text("Nickname (your own name for it)") },
+                supportingText = { Text("Shown in lists and found by search. A statement never changes it.") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -248,6 +259,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                     )
                     val before = original
                     val newName = row.merchant
+                    if (nickname.trim() != (before?.let { vm.nicknameFor(it) }).orEmpty()) vm.setNickname(row.uid, nickname)
                     vm.saveWithExtras(
                         txn = row,
                         learnRule = learnRule,
