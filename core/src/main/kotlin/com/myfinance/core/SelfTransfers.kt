@@ -46,8 +46,24 @@ object SelfTransfers {
     )
     private val selfWords = Regex("""\bself\b|own\s+a/?c|\bneft\b|\bimps\b|\brtgs\b|\bupi\b|transfer|trf|\bft\b|sweep""", RegexOption.IGNORE_CASE)
 
-    fun isCardPayment(r: CheckRow): Boolean =
-        listOfNotNull(r.merchant, r.text).any { cardPayment.containsMatchIn(it) }
+    /** A purchase made with the card (shop, online, UPI on a RuPay credit card), not a payment of its bill. */
+    private val cardSpend = Regex(
+        """\b(spent|used|purchase|txn|transaction|debited|upi)\b.{0,80}\bcredit\s*card|credit\s*card.{0,80}\b(spent|used|purchase|txn|transaction|debited|upi)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** Words that only a bill payment uses, even when the SMS also says "debited". */
+    private val billWords = Regex(
+        """payment\s+(?:of\s+.{0,20})?received|paid\s+towards|\btowards\b|bill\s*(?:payment|paid|pay)|card\s*bill|cc\s*(?:bill|payment)|\bcred\b|billdesk|payment\s+(?:to|for)\s+.{0,30}credit\s*card|card\s*payment""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun isCardPayment(r: CheckRow): Boolean {
+        val texts = listOfNotNull(r.merchant, r.text)
+        if (texts.none { cardPayment.containsMatchIn(it) }) return false
+        // "INR 324 spent on Credit Card XX7002 via UPI": spending on the card, not paying its bill.
+        val spend = texts.any { cardSpend.containsMatchIn(it) }
+        return !spend || texts.any { billWords.containsMatchIn(it) }
+    }
 
     /**
      * Pairs each debit with a credit of the same amount into a different account within 3 days (closest first),
