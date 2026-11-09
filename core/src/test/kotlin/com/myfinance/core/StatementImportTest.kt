@@ -244,8 +244,8 @@ class StatementImportTest {
     private fun row(day: Int, amount: Long, desc: String = "UPI-SHOP", type: TxnType = TxnType.DEBIT, ref: String? = null) =
         StatementRow(LocalDate.of(2024, 4, day), null, desc, amount, type, null, ref)
 
-    private fun sms(day: Int, amount: Long, tail: String? = "1234", ref: String? = null, hour: Int = 20) = ExistingTxn(
-        amount, TxnType.DEBIT, LocalDate.of(2024, 4, day).atTime(hour, 0).atZone(zone).toInstant().toEpochMilli(), tail, ref, "HDFCBK|x$day$amount",
+    private fun sms(day: Int, amount: Long, tail: String? = "1234", ref: String? = null, hour: Int = 20, id: Long = day * 1000L + amount) = ExistingTxn(
+        amount, TxnType.DEBIT, LocalDate.of(2024, 4, day).atTime(hour, 0).atZone(zone).toInstant().toEpochMilli(), tail, ref, "HDFCBK|x$day$amount", id,
     )
 
     @Test
@@ -254,6 +254,19 @@ class StatementImportTest {
         // Only one ₹500 SMS on the 1st: one statement line matches it, the other is new.
         val marked = StatementImport.markDuplicates(c, listOf(sms(1, 50_000), sms(4, 12_000)), zone = zone)
         assertEquals(listOf(DuplicateReason.MATCHED, null, DuplicateReason.MATCHED), marked.map { it.duplicateOf })
+        // The statement is the official record: matched SMS rows are updated, not left as they are.
+        assertEquals(listOf(51_000L, null, 16_000L), marked.map { it.matchedId })
+        val sum = StatementImport.summary(marked)
+        assertEquals(listOf(1, 2, 0), listOf(sum.newCount, sum.updateCount, sum.duplicateCount))
+    }
+
+    @Test
+    fun lineMatchingAnotherStatementsLineIsSkippedNotUpdated() {
+        val c = StatementImport.candidates(stmt(row(1, 50_000)), zone = zone)
+        val other = sms(1, 50_000).copy(key = "STMT|other", fromStatement = true)
+        val marked = StatementImport.markDuplicates(c, listOf(other), zone = zone).single()
+        assertEquals(DuplicateReason.SAME_STATEMENT, marked.duplicateOf)
+        assertEquals(false, marked.updatesExisting)
     }
 
     @Test
@@ -273,12 +286,33 @@ class StatementImportTest {
     @Test
     fun importingTheSameOrAnOverlappingStatementAddsNothing() {
         val first = StatementImport.candidates(stmt(row(1, 100), row(2, 200), row(2, 200)), zone = zone)
-        val stored = first.map { ExistingTxn(it.row.amountMinor, it.row.type, it.timestamp, it.accountTail, it.row.reference, it.key) }
+        val stored = first.mapIndexed { i, it -> ExistingTxn(it.row.amountMinor, it.row.type, it.timestamp, it.accountTail, it.row.reference, it.key, i + 1L, fromStatement = true) }
         val again = StatementImport.candidates(stmt(row(2, 200), row(2, 200), row(5, 300)).let { it.copy(rows = listOf(row(1, 100)) + it.rows) }, zone = zone)
         val marked = StatementImport.markDuplicates(again, stored, zone = zone)
         assertEquals(listOf(DuplicateReason.SAME_STATEMENT, DuplicateReason.SAME_STATEMENT, DuplicateReason.SAME_STATEMENT, null), marked.map { it.duplicateOf })
         // Same lines give the same ids on every phone.
         assertEquals(first.map { it.uid }, again.take(3).map { it.uid })
         assertEquals(LocalDate.of(2024, 4, 1), Dates.localDate(first[0].timestamp, zone))
+    }
+
+    @Test
+    fun smsArrivingAfterTheStatementFindsItsLine() {
+        val lines = StatementImport.candidates(stmt(row(1, 50_000), row(1, 50_000), row(3, 9_900, ref = "412345678901")), zone = zone)
+            .map { ExistingTxn(it.row.amountMinor, it.row.type, it.timestamp, it.accountTail, it.row.reference, it.key) }
+        assertEquals(0, StatementImport.lineForSms(sms(1, 50_000), lines, zone = zone))
+        // Once line 0 is linked to that SMS it is no longer offered, so a second ₹500 SMS takes line 1.
+        assertEquals(1, StatementImport.lineForSms(sms(2, 50_000), lines.drop(1), zone = zone)?.plus(1))
+        assertEquals(2, StatementImport.lineForSms(sms(9, 9_900, tail = null, ref = "412345678901"), lines, zone = zone))
+        assertNull(StatementImport.lineForSms(sms(1, 50_000, tail = "9999"), lines, zone = zone))
+        assertNull(StatementImport.lineForSms(sms(6, 50_000), lines, zone = zone))
+    }
+
+    @Test
+    fun familyMergeTreatsStatementLineAndSmsAsOne() {
+        val line = SharedTxn("u1", 50_000, TxnType.DEBIT, "Swiggy", "Food & Dining", "1234", "HDFC Bank",
+            LocalDate.of(2024, 4, 1).atTime(12, 0).atZone(zone).toInstant().toEpochMilli(), null, "Siva", "STATEMENT", "STMT|abc", null, false)
+        val smsRow = line.copy(uid = "u2", source = "SMS", smsKey = "HDFCBK|x", timestamp = line.timestamp + 9 * 3_600_000L, owner = "Wife")
+        assertEquals(0, Dedupe.newOnly(listOf(line), listOf(smsRow)).size)
+        assertEquals(1, Dedupe.newOnly(listOf(line), listOf(smsRow.copy(accountTail = "9999"))).size)
     }
 }

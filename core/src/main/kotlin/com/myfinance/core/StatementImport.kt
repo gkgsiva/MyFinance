@@ -16,14 +16,22 @@ data class ImportCandidate(
     val merchant: String?,
     val bank: String?,
     val accountTail: String?,
-    /** Why it is skipped: null when new. */
+    /** Why it is not a new row: null when new. */
     val duplicateOf: DuplicateReason? = null,
-)
+    /**
+     * The stored row (an SMS or a typed entry) this line is the same transaction as. Statements are
+     * the official record, so importing updates that row with the statement's details.
+     */
+    val matchedId: Long? = null,
+) {
+    /** True when importing changes a stored SMS / manual row to the statement's details. */
+    val updatesExisting: Boolean get() = matchedId != null && duplicateOf != DuplicateReason.SAME_STATEMENT
+}
 
 enum class DuplicateReason(val label: String) {
     SAME_STATEMENT("already imported"),
-    REFERENCE("same reference as an SMS"),
-    MATCHED("matches an SMS or entry"),
+    REFERENCE("same as an SMS (reference), statement details used"),
+    MATCHED("same as an SMS, statement details used"),
 }
 
 /** What is already stored, in the shape the matcher needs. */
@@ -34,6 +42,10 @@ data class ExistingTxn(
     val accountTail: String?,
     val reference: String?,
     val key: String?,
+    /** Row id; 0 for rows not stored yet (other files in the same batch). */
+    val id: Long = 0,
+    /** Already a statement line, so another statement's matching line is simply skipped. */
+    val fromStatement: Boolean = false,
 )
 
 object StatementImport {
@@ -91,7 +103,7 @@ object StatementImport {
                 val hit = byAmount[c.row.amountMinor to c.row.type]?.firstOrNull { i ->
                     !used[i] && existing[i].reference?.let { it == ref || (ref.length >= 10 && it.endsWith(ref)) || (it.length >= 10 && ref.endsWith(it)) } == true
                 }
-                if (hit != null) { used[hit] = true; return@map c.copy(duplicateOf = DuplicateReason.REFERENCE) }
+                if (hit != null) { used[hit] = true; return@map linked(c, existing[hit], DuplicateReason.REFERENCE) }
             }
             c
         }.toMutableList()
@@ -115,19 +127,61 @@ object StatementImport {
             if (taken[ci] || used[i]) continue
             taken[ci] = true
             used[i] = true
-            result[ci] = result[ci].copy(duplicateOf = DuplicateReason.MATCHED)
+            result[ci] = linked(result[ci], existing[i], DuplicateReason.MATCHED)
         }
         return result
     }
 
+    /** A match with a stored SMS / entry is an update; with another statement's line or this batch, a skip. */
+    private fun linked(c: ImportCandidate, e: ExistingTxn, reason: DuplicateReason) =
+        if (e.id > 0 && !e.fromStatement) c.copy(duplicateOf = reason, matchedId = e.id)
+        else c.copy(duplicateOf = DuplicateReason.SAME_STATEMENT)
+
+    /**
+     * The other direction: an SMS arriving (or found by a rescan) after its statement was imported.
+     * Returns the index in [lines] (statement lines not yet linked to an SMS) of the line it is the
+     * same transaction as, or null when it is new: same reference, or same amount and direction on
+     * a compatible account within [windowDays] days, closest first.
+     */
+    fun lineForSms(sms: ExistingTxn, lines: List<ExistingTxn>, windowDays: Long = 2, zone: ZoneId = ZoneId.systemDefault()): Int? {
+        fun tail(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.ifEmpty { null }
+        val st = tail(sms.accountTail)
+        val ref = sms.reference?.takeIf { it.length >= 6 }
+        val same = lines.indices.filter { lines[it].amountMinor == sms.amountMinor && lines[it].type == sms.type }
+        if (ref != null) {
+            same.firstOrNull { i -> lines[i].reference?.let { it == ref || (it.length >= 10 && ref.endsWith(it)) || (ref.length >= 10 && it.endsWith(ref)) } == true }
+                ?.let { return it }
+        }
+        val day = Dates.localDate(sms.timestamp, zone).toEpochDay()
+        return same.filter { i ->
+            val lt = tail(lines[i].accountTail)
+            !(st != null && lt != null && st != lt) && abs(Dates.localDate(lines[i].timestamp, zone).toEpochDay() - day) <= windowDays
+        }.minWithOrNull(
+            compareBy<Int> { abs(Dates.localDate(lines[it].timestamp, zone).toEpochDay() - day) }
+                .thenBy { if (tail(lines[it].accountTail) == st && st != null) 0 else 1 },
+        )
+    }
+
     /** Totals for the preview. */
-    data class Summary(val newCount: Int, val duplicateCount: Int, val spentMinor: Long, val receivedMinor: Long, val from: LocalDate?, val to: LocalDate?)
+    data class Summary(
+        val newCount: Int,
+        /** SMS / typed entries that will take the statement's details. */
+        val updateCount: Int,
+        /** Lines already imported from a statement. */
+        val duplicateCount: Int,
+        val spentMinor: Long,
+        val receivedMinor: Long,
+        val from: LocalDate?,
+        val to: LocalDate?,
+    )
 
     fun summary(list: List<ImportCandidate>): Summary {
         val fresh = list.filter { it.duplicateOf == null }
+        val updates = list.count { it.updatesExisting }
         return Summary(
             newCount = fresh.size,
-            duplicateCount = list.size - fresh.size,
+            updateCount = updates,
+            duplicateCount = list.size - fresh.size - updates,
             spentMinor = fresh.filter { it.row.type == TxnType.DEBIT }.sumOf { it.row.amountMinor },
             receivedMinor = fresh.filter { it.row.type == TxnType.CREDIT }.sumOf { it.row.amountMinor },
             from = list.minOfOrNull { it.row.date },
