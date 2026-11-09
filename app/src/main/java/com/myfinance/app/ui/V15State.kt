@@ -77,6 +77,8 @@ data class TodayData(
     val payments: Int = 0,
     val upcoming: List<FlowEvent> = emptyList(),
     val upcomingOutMinor: Long = 0,
+    /** Expected earlier, no payment seen yet. */
+    val late: List<FlowEvent> = emptyList(),
 )
 
 /**
@@ -95,6 +97,8 @@ class V15State(
     private val ownerName: StateFlow<String>,
     private val autoDebits: StateFlow<List<AutoDebitItem>>,
     private val recurring: StateFlow<List<RecurringPayment>>,
+    /** Card and EMI bills from bank SMS, still to be paid. */
+    private val openBills: StateFlow<List<com.myfinance.app.data.BillEntity>> = MutableStateFlow(emptyList()),
 ) {
     private val dao = repo.v15
     private val v12 = repo.v12
@@ -274,18 +278,74 @@ class V15State(
         val policies: List<Policy>,
         val lending: List<LendStatus>,
         val subs: List<com.myfinance.core.SubscriptionItem>,
+        val cards: List<com.myfinance.core.BillDue> = emptyList(),
     )
 
-    private val expected = combine(autoDebits, v12.bills, policies, lending, subscriptions) { a, b, p, l, s ->
-        Expected(a, b.map { it.toBill() }, p.map { it.policy }, l.statuses, s?.items.orEmpty().filter { !it.notUsed })
+    private val expected = combine(
+        combine(autoDebits, openBills) { a, c -> a to c },
+        v12.bills, policies, lending, subscriptions,
+    ) { (a, cards), b, p, l, s ->
+        Expected(a, b.map { it.toBill() }, p.map { it.policy }, l.statuses, s?.items.orEmpty().filter { !it.notUsed }, cards.map { it.toBill() })
     }
 
     private fun month(ym: YearMonth, txns: List<TxnLite>, e: Expected) = CashFlowCalendar.build(
-        ym, LocalDate.now(), txns, e.auto, e.bills, e.policies, e.lending, e.subs, zone,
+        ym, LocalDate.now(), txns, e.auto, e.bills, e.policies, e.lending, e.subs, zone, cardBills = e.cards,
     )
 
     val calendar: StateFlow<CashFlowMonth?> = combine(calendarMonth, allLite, expected) { ym, txns, e -> month(ym, txns, e) }
         .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+
+    // ---- Payments ahead: any range of days ----
+
+    /** The days shown on the Payments ahead screen, inclusive. */
+    val aheadRange = MutableStateFlow(LocalDate.now() to LocalDate.now().plusDays(6))
+
+    val ahead: StateFlow<List<com.myfinance.core.CalendarDay>> = combine(aheadRange, allLite, expected) { (from, to), txns, e ->
+        val last = YearMonth.from(to)
+        generateSequence(YearMonth.from(from)) { it.plusMonths(1) }.takeWhile { !it.isAfter(last) }.take(24).toList()
+            .flatMap { month(it, txns, e).days }
+            .filter { !it.date.isBefore(from) && !it.date.isAfter(to) }
+    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+
+    /** Marks a payment reminder ("bill:<id>") paid: a repeating one moves to its next date, a one-time one is done. */
+    fun markReminderPaid(ref: String) = work {
+        val id = ref.removePrefix("bill:")
+        val b = v12.dao.bills().firstOrNull { it.id == id } ?: return@work null
+        v12.markBillPaid(b)
+        if (b.everyMonths == 0) "${b.name} marked paid" else "${b.name} paid; next one ${com.myfinance.core.BillReminders.markPaid(b.toBill()).nextDue.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))}"
+    }
+
+    fun deleteReminder(ref: String) = work { v12.dao.deleteBill(ref.removePrefix("bill:")); "Reminder deleted" }
+
+    // ---- Missed payments, 30-day forecast, spending pace, annual dues ----
+
+    /** Expected payments whose date has passed with no payment seen. */
+    val missed: StateFlow<List<com.myfinance.core.FlowEvent>> by lazy {
+        today.map { it.late }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    }
+
+    val forecast: StateFlow<com.myfinance.core.BalanceForecast?> = combine(allLite, expected, repo.balances) { txns, e, bal ->
+        val now = LocalDate.now()
+        val end = now.plusDays(29)
+        val days = generateSequence(YearMonth.from(now)) { it.plusMonths(1) }.takeWhile { !it.isAfter(YearMonth.from(end)) }.toList()
+            .flatMap { month(it, txns, e).days }.filter { !it.date.isBefore(now) && !it.date.isAfter(end) }
+        val flows = days.flatMap { d -> d.events.filter { it.expected }.map { com.myfinance.core.ExpectedFlow(d.date, it.title, (it.amountMinor ?: 0) * if (it.incoming) 1 else -1) } }
+        val start = com.myfinance.core.Balances.totalBankMinor(bal)
+        com.myfinance.core.BalanceForecasts.build(start, now, 30, flows, com.myfinance.core.BalanceForecasts.dailySpend(txns, now, zone))
+    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+
+    /** This budget month's spending against the total of category budgets; null without budgets. */
+    val pace: StateFlow<com.myfinance.core.SpendPace?> = combine(allLite, repo.monthCycle, repo.categories) { txns, cycle, cats ->
+        val budget = cats.sumOf { it.monthlyBudgetMinor ?: 0L }
+        if (budget <= 0) return@combine null
+        val month = cycle.current()
+        val spent = txns.filter { it.type == TxnType.DEBIT && cycle.periodOf(it, zone) == month }.sumOf { it.amountMinor }
+        com.myfinance.core.SpendPaces.of(spent, budget, LocalDate.now(), cycle.start(month), cycle.end(month))
+    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+
+    val annualDues: StateFlow<List<com.myfinance.core.AnnualDue>> = expected.map { e ->
+        com.myfinance.core.AnnualDues.list(e.bills, e.policies, LocalDate.now())
+    }.stateIn(scope, SharingStarted.Lazily, emptyList())
 
     // ---- Today card ----
 
@@ -305,6 +365,7 @@ class V15State(
             payments = todays.count { it.type == TxnType.DEBIT },
             upcoming = upcoming,
             upcomingOutMinor = upcoming.filter { !it.incoming }.sumOf { it.amountMinor ?: 0 },
+            late = upcoming.filter { it.late },
         )
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, TodayData())
 

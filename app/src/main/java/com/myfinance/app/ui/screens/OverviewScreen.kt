@@ -115,13 +115,15 @@ fun OverviewScreen(
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
+            // The current month adds through a menu (spend, income, payment due, ...); past months add a spend.
+            if (month == currentMonth) com.myfinance.app.ui.v15.QuickAddFab(vm, open)
+            else FloatingActionButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
         },
     ) { inner ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(inner),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -214,8 +216,10 @@ fun OverviewScreen(
                 }
             }
 
-            item {
-                ComingUpCard(bills, recurring, balances, onOpenUpcoming)
+            // This month's Today card already lists what is due; keep only the bank balance line here.
+            val showDue = month != currentMonth
+            if (showDue || balances.any { !it.isCardLimit }) item {
+                ComingUpCard(bills, recurring, balances, onOpenUpcoming, showDue)
             }
 
             item { com.myfinance.app.ui.v13.FactsCard(vm, max = 3) }
@@ -318,6 +322,7 @@ private fun ComingUpCard(
     recurring: List<RecurringPayment>,
     balances: List<BalanceReading>,
     onOpen: () -> Unit,
+    showDue: Boolean = true,
 ) {
     val today = LocalDate.now()
     val soon = today.plusDays(30)
@@ -329,18 +334,18 @@ private fun ComingUpCard(
 
     Card(Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showDue) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Coming up", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text("See all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             }
-            if (lines.isEmpty()) {
+            if (showDue && lines.isEmpty()) {
                 Text(
                     "No bills or regular payments due in the next 30 days.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            lines.forEach { (date, title, amount) ->
+            if (showDue) lines.forEach { (date, title, amount) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, modifier = Modifier.weight(1f), maxLines = 1)
                     Text(

@@ -84,6 +84,36 @@ class V12Repository(
 
     // ---- Bill reminders ----
 
+    /**
+     * A utility bill SMS (electricity, water, gas, broadband, property tax): fills in the amount and due date of
+     * the matching payment reminder, or adds one. Old SMS (a rescan) never move a reminder back.
+     */
+    suspend fun onUtilityBill(u: com.myfinance.core.UtilityBill, today: LocalDate = LocalDate.now()) {
+        val all = dao.bills()
+        val match = com.myfinance.core.UtilityBills.matchReminder(u, all.map { it.toBill() })
+        if (match != null) {
+            val e = all.first { it.id == match.id }
+            val current = LocalDate.ofEpochDay(e.nextDueEpochDay)
+            if (u.dueDate.isBefore(current.minusDays(10))) return
+            if (u.dueDate == current && e.amountMinor == u.amountMinor) return
+            val words = e.matchWords.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            dao.upsertBill(
+                e.copy(
+                    amountMinor = u.amountMinor, nextDueEpochDay = u.dueDate.toEpochDay(),
+                    lastPaidAt = if (u.dueDate.isAfter(current)) null else e.lastPaidAt,
+                    matchWords = (words + u.key).distinctBy { it.lowercase() }.joinToString(", "),
+                ),
+            )
+        } else if (!u.dueDate.isBefore(today)) {
+            dao.upsertBill(
+                BillReminderEntity(
+                    name = "${u.provider} bill", kind = u.kind.name, amountMinor = u.amountMinor, nextDueEpochDay = u.dueDate.toEpochDay(),
+                    everyMonths = if (u.kind.usuallyYearly) 12 else 1, remindDaysBefore = 3, matchWords = u.key,
+                ),
+            )
+        }
+    }
+
     suspend fun markBillPaid(b: BillReminderEntity) =
         dao.upsertBill(b.copy(nextDueEpochDay = BillReminders.markPaid(b.toBill()).nextDue.toEpochDay(), lastPaidAt = System.currentTimeMillis()))
 
@@ -91,17 +121,29 @@ class V12Repository(
     suspend fun checkBillReminders(today: LocalDate = LocalDate.now()) {
         val sent = prefs.getStringSet(KEY_BILL_SENT, emptySet()).orEmpty()
         val fresh = ArrayList<String>()
-        for (s in BillReminders.needingAttention(dao.bills().map { it.toBill() }, today)) {
+        val all = dao.bills().map { it.toBill() }
+        // Yearly dues (insurance, property tax, vehicle renewal) get a heads-up a month before.
+        for (b in BillReminders.headsUp(all, today)) {
+            val key = "${b.id}|${b.nextDue}|early"
+            if (key in sent) continue
+            val days = java.time.temporal.ChronoUnit.DAYS.between(today, b.nextDue)
+            val amount = b.amountMinor?.let { " ${formatInr(it)}" }.orEmpty()
+            Notifier.reminder(context, key.hashCode(), "${b.name} due in $days days", "Heads-up: yearly payment$amount due on ${b.nextDue.format(DAY)}. Time to set the money aside.")
+            fresh += key
+        }
+        for (s in BillReminders.needingAttention(all, today)) {
             val stage = if (s.state == BillState.DUE_SOON) "soon" else "due"
             val key = "${s.bill.id}|${s.bill.nextDue}|$stage"
             if (key in sent) continue
             val amount = s.bill.amountMinor?.let { " of ${formatInr(it)}" }.orEmpty()
             val title = when (s.state) {
-                BillState.OVERDUE -> "${s.bill.name} is overdue"
+                BillState.OVERDUE -> "Missed? ${s.bill.name} was due ${s.bill.nextDue.format(DAY)}"
                 BillState.DUE_TODAY -> "${s.bill.name} is due today"
                 else -> "${s.bill.name} due in ${s.daysLeft} days"
             }
-            Notifier.reminder(context, key.hashCode(), title, "Payment$amount due on ${s.bill.nextDue.format(DAY)}.")
+            val text = if (s.state == BillState.OVERDUE) "No payment$amount seen yet. If you paid another way, mark it paid in Payments ahead."
+                else "Payment$amount due on ${s.bill.nextDue.format(DAY)}."
+            Notifier.reminder(context, key.hashCode(), title, text)
             fresh += key
         }
         if (fresh.isNotEmpty()) {
@@ -185,7 +227,7 @@ class V12Repository(
         private const val KEY_LAST_BACKUP = "v12_last_backup"
         private const val STAGING = "restore-pending"
         private val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
-        private val DB_FILES = setOf("myfinance.db", "myfinance-extras.db", V12Database.FILE, V13Database.FILE, V14Database.FILE, V15Database.FILE, V16Database.FILE)
+        private val DB_FILES = setOf("myfinance.db", "myfinance-extras.db", V12Database.FILE, V13Database.FILE, V14Database.FILE, V15Database.FILE, V16Database.FILE, V17Database.FILE)
 
         /** Called before any database is opened: moves a staged restore into place. */
         fun applyPendingRestore(context: Context) {

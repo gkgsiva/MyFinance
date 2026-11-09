@@ -18,6 +18,8 @@ data class StatementRow(
     val type: TxnType,
     val balanceMinor: Long? = null,
     val reference: String? = null,
+    /** Card statements listing several cards (add-on, RuPay UPI card): the last 4 digits of this line's card. */
+    val cardTail: String? = null,
 )
 
 data class ParsedStatement(
@@ -157,6 +159,8 @@ object StatementParser {
 
     private const val DATE_RE =
         """(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{1,2}[\s\-/]?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s\-/,]*\d{2,4}|\d{4}-\d{2}-\d{2})"""
+    /** A date further into a line, before a long serial / reference number ("69% 18/09/2026 14196250597 ..."). */
+    private val midStart = Regex("""(?<=^|\s)$DATE_RE\s+(?=\d{8,}\s)""", RegexOption.IGNORE_CASE)
     private val lineStart = Regex("""^\s*(?:\d{1,4}\s+)?$DATE_RE(?:\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?))?\s*""", RegexOption.IGNORE_CASE)
     private val dateAnywhere = Regex("""(?<![\d/])$DATE_RE(?![\d/])""", RegexOption.IGNORE_CASE)
     // Amounts in statements always carry paise: 1,234.56 / 450.00 / -12.00 / 1,234.56 Cr
@@ -171,7 +175,11 @@ object StatementParser {
      * its description.
      */
     fun fromText(text: String): ParsedStatement? {
-        data class Line(val date: LocalDate, val time: LocalTime?, val desc: StringBuilder, val amounts: List<Pair<Long, TxnType?>>, val raw: String)
+        data class Line(
+            val date: LocalDate, val time: LocalTime?, val desc: StringBuilder, val amounts: List<Pair<Long, TxnType?>>, val raw: String,
+            /** The description without card-statement columns (serial number before it, reward points after it). */
+            val cardDesc: StringBuilder, val card: String?,
+        )
 
         val lines = text.lines()
         val parsed = ArrayList<Line>()
@@ -179,19 +187,36 @@ object StatementParser {
         var lastWasTxn = false
         var continuation = 0
         var headerText = StringBuilder()
+        var card: String? = null
         for (raw in lines) {
-            val line = raw.replace(' ', ' ').trim()
+            var line = raw.replace(' ', ' ').trim()
             if (line.isEmpty()) { lastWasTxn = false; continue }
             if (parsed.isEmpty() && headerText.length < 4000) headerText.append(line).append('\n')
             val low = line.lowercase()
             if (openingBalance == null && (low.contains("opening balance") || low.contains("balance b/f") || low.contains("brought forward"))) {
                 moneyRe.findAll(line).lastOrNull()?.let { openingBalance = parseMoney(it.value)?.first }
             }
-            val start = lineStart.find(line)
-            val date = start?.let { parseDate(it.groupValues[1]) }
+            var start = lineStart.find(line)
+            var date = if (start != null) parseDate(start.groupValues[1]) else null
             if (start == null || date == null) {
-                if (lastWasTxn && continuation < 2 && moneyRe.find(line) == null && !isFooter(line) && parsed.isNotEmpty()) {
-                    parsed.last().desc.append(' ').append(line)
+                // Side panels printed beside the table ("Others-69%") come before the date on the same line.
+                val m = midStart.find(line)
+                if (m != null) {
+                    val cut = line.substring(m.range.first).trim()
+                    val s2 = lineStart.find(cut)
+                    val d2 = if (s2 != null) parseDate(s2.groupValues[1]) else null
+                    if (s2 != null && d2 != null) { line = cut; start = s2; date = d2 }
+                }
+            }
+            if (start == null || date == null) {
+                // "Card Number : 4375 XXXX XXXX 4007" / "4375XXXXXXXX5010": the lines below are this card's.
+                val cardHit = cardNumberRe.find(line)
+                if (cardHit != null && moneyRe.find(line) == null) { card = cardHit.groupValues[1]; lastWasTxn = false; continue }
+                val extra = line.replace(percentRe, " ").trim()
+                if (extra.isEmpty()) continue
+                if (lastWasTxn && continuation < 2 && moneyRe.find(line) == null && !isFooter(line) && !notDescription.containsMatchIn(extra) && parsed.isNotEmpty()) {
+                    parsed.last().desc.append(' ').append(extra)
+                    parsed.last().cardDesc.append(' ').append(extra)
                     continuation++
                 } else lastWasTxn = false
                 continue
@@ -201,9 +226,12 @@ object StatementParser {
             if (amounts.isEmpty() || isSummaryLine(rest)) { lastWasTxn = false; continue }
             val time = start.groupValues[2].ifBlank { null }?.let { parseTime(it) }
             // The description is what comes before the first amount, without a second (value) date.
-            val descText = rest.substring(0, amounts.first().range.first).replace(dateAnywhere, " ")
+            // A currency column ("USD 23.60") sits between the description and the rupee amount.
+            val descText = rest.substring(0, amounts.first().range.first).replace(dateAnywhere, " ").trim()
+                .replace(currencyColumn, "").trim()
             val values = amounts.mapNotNull { m -> parseMoney(m.value) }
-            parsed += Line(date, time, StringBuilder(descText.trim()), values, line)
+            val cardText = descText.replace(serialFirst, "").replace(pointsLast, "").trim()
+            parsed += Line(date, time, StringBuilder(descText), values, line, StringBuilder(cardText), card)
             lastWasTxn = true
             continuation = 0
         }
@@ -225,8 +253,9 @@ object StatementParser {
             } else {
                 // Card bills: the transaction amount is the last money value; "Cr" marks payments and refunds.
                 val (amt, marker) = l.amounts.last()
-                val type = marker ?: if (amt < 0) TxnType.CREDIT else guessType(desc, StatementKind.CARD)
-                StatementRow(l.date, l.time, desc, abs(amt), type, null, referenceIn(l.raw))
+                val cardDesc = cleanDesc(l.cardDesc.toString()).ifEmpty { desc }
+                val type = marker ?: if (amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
+                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card)
             }
         }.filter { it.amountMinor > 0 }
         if (rows.isEmpty()) return null
@@ -380,6 +409,19 @@ object StatementParser {
 
     private fun cleanDesc(s: String): String = s.replace(Regex("""\s+"""), " ").trim().trim('-', '|', ',').trim()
 
+    private val cardNumberRe = Regex("""\b\d{4}\s?[Xx*]{4}\s?[Xx*]{4}\s?(\d{4})\b""")
+    private val percentRe = Regex("""\S*\d+(?:\.\d+)?%""")
+    /** Lines below a transaction that are not part of its description: headings, legal text, reward panels. */
+    private val notDescription = Regex(
+        """^#|transaction\s+details|card\s+(number|account)|category\s+of\s+service|registration\s*no|\brewards?\b|\bpoints\b|invoice\s+no|\bcin\b|^(date|serno|sl\.?\s*no)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val currencyColumn = Regex("""\s+(USD|EUR|GBP|AED|SGD|MYR|THB|JPY|AUD|CAD|CHF|HKD|CNY|LKR|NPR|SAR|QAR|NZD|IDR|VND|KRW|ZAR)$""")
+    /** Card statements: the serial / reference number printed before the description. */
+    private val serialFirst = Regex("""^\d{9,24}\s+""")
+    /** Card statements: the reward points column printed after the description. */
+    private val pointsLast = Regex("""\s+-?\d{1,6}$""")
+
     private val upiRef = Regex("""(?<!\d)(\d{12})(?!\d)""")
 
     /** The 12-digit UPI / IMPS reference in a narration; SMS alerts quote the same number. */
@@ -453,7 +495,8 @@ object Narration {
             val tokens = up.split('/', '-', '|', ':').map { it.trim() }.filter { it.isNotEmpty() }
             var vpaName: String? = null
             for (raw in tokens) {
-                val t = raw.trim('.', ',', '*')
+                // Card statements end the name with the country: "UPI-123456789012-SWIGGY IN".
+                val t = raw.trim('.', ',', '*').replace(Regex("""\s+(IN|IND|INDIA)$"""), "")
                 if (t.contains('@')) { if (vpaName == null) vpaName = t.substringBefore('@').split(' ').last(); continue }
                 if (t in noise || ifsc.matches(t) || bankCode.matches(t) && t.length <= 11 && t.take(4) in bankPrefixes) continue
                 val letters = t.count(Char::isLetter)
@@ -465,7 +508,7 @@ object Narration {
             vpaName?.let { v -> v.replace(Regex("""[._\d]+"""), " ").trim().takeIf { it.length >= 3 }?.let { return title(it) } }
         }
         // Card bills: "SWIGGY BANGALORE IN", "AMAZON PAY INDIA PRIVA MUMBAI".
-        val plain = up.replace(Regex("""\b(POS|ECOM|PUR|PURCHASE|TXN|REF)\b"""), " ")
+        val plain = up.replace(Regex("""\b(POS|ECOM|PUR|PURCHASE|TXN|REF)\b|\bCYBS(\s+SI)?\b"""), " ")
             .replace(Regex("""\b[0-9X*]{6,}\b"""), " ")
             .replace(Regex("""\s+(IN|IND|INDIA)$"""), "")
             .replace(Regex("""\s+"""), " ").trim()

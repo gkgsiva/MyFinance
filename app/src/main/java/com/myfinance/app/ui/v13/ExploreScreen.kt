@@ -59,6 +59,7 @@ private fun periodText(label: String, by: Granularity, short: Boolean): String =
 fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Unit) {
     val all by vm.allTransactions.collectAsState()
     val meta by vm.txnMeta.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
     val labels by vm.usedLabels.collectAsState()
     val payees by vm.payeeOptions.collectAsState()
     val categories by vm.categories.collectAsState()
@@ -226,7 +227,7 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
             if (shown.size < matches.size) Muted("${matches.size - shown.size} hidden payments are counted above but not listed.")
         }
         items(shown.take(500), key = { it.id }) { t ->
-            TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), false) { onOpen(t.id) }
+            TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), false, nicks[t.uid.substringBefore('#')]) { onOpen(t.id) }
         }
     }
 

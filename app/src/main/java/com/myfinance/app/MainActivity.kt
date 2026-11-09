@@ -397,6 +397,8 @@ private fun MyFinanceRoot() {
             composable("health") { com.myfinance.app.ui.v16.HealthScreen(vm, back, openTxn) { route -> nav.navigate(route) } }
             composable("export-all") { com.myfinance.app.ui.v16.ExportScreen(vm, back) }
             composable("currency") { com.myfinance.app.ui.v16.CurrencyScreen(vm, back, openTxn) }
+            composable("payments-ahead") { com.myfinance.app.ui.v16.PaymentsAheadScreen(vm, back, openTxn) { route -> nav.navigate(route) } }
+            composable("forecast") { com.myfinance.app.ui.v16.ForecastScreen(vm, back) }
             composable("heavy") { com.myfinance.app.ui.v16.HeavySpendsScreen(vm, back, openTxn) }
             composable("security") { SecurityScreen(v12, back) }
             composable("backup") { BackupScreen(v12, back) { com.myfinance.app.ui.v15.AutoBackupCard(vm) } }

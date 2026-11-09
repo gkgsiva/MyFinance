@@ -107,6 +107,8 @@ data class BillReminderEntity(
         id, name, ReminderKind.entries.firstOrNull { it.name == kind } ?: ReminderKind.OTHER, amountMinor,
         LocalDate.ofEpochDay(nextDueEpochDay), everyMonths, remindDaysBefore,
         matchWords.split(',').map { it.trim() }.filter { it.isNotEmpty() },
+        // A one-time reminder is done once paid.
+        done = everyMonths == 0 && lastPaidAt != null,
     )
 }
 

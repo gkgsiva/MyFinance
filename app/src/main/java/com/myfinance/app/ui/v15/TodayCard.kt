@@ -1,16 +1,23 @@
 package com.myfinance.app.ui.v15
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -25,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.theme.Amber
@@ -43,81 +51,157 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 private val dayName = DateTimeFormatter.ofPattern("EEE d MMM")
+private val timeOfDay = DateTimeFormatter.ofPattern("h:mm a")
 
 enum class QuickAdd { PAYMENT_DUE, INVESTMENT, PROPERTY, EPF }
 
-/** Today's spend, the week's EMIs, auto debits and dues, and quick ways to add anything. */
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * The top of Overview, compact: today's transactions listed, then what is due today and over the next
+ * few days (and anything missed), then one-line alerts. Adding things lives in the + button menu.
+ */
 @Composable
 fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
     val today by vm.v15.today.collectAsState()
-    var dialog by remember { mutableStateOf<QuickAdd?>(null) }
+    val all by vm.allTransactions.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
     val now = LocalDate.now()
     val message by vm.v15.message.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(message) {
         message?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show(); vm.v15.clearMessage() }
     }
+    val zone = java.time.ZoneId.systemDefault()
+    val todays = remember(all, now) {
+        all.filter { !it.excluded && com.myfinance.core.Dates.localDate(it.timestamp, zone) == now }.sortedByDescending { it.timestamp }
+    }
+    var showAllToday by remember { mutableStateOf(false) }
+    val small = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            // Today: total, then each transaction.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Today", style = MaterialTheme.typography.titleMedium)
+                Text("Today", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("  " + now.format(dayName), style = small, color = muted, modifier = Modifier.weight(1f))
+                if (today.receivedMinor > 0) Text("+" + formatInr(today.receivedMinor) + "  ", style = small, color = IncomeGreen, fontWeight = FontWeight.SemiBold)
+                Text(formatInr(today.spentMinor), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
+            }
+            if (todays.isEmpty()) Text("No transactions yet today", style = small, color = muted)
+            val shown = if (showAllToday) todays else todays.take(5)
+            shown.forEach { t ->
+                val name = nicks[t.uid.substringBefore('#')] ?: t.merchant ?: if (t.type == com.myfinance.core.TxnType.CREDIT) "Money received" else "Payment"
+                Row(
+                    Modifier.fillMaxWidth().clickable { open("edit/${com.myfinance.app.ui.SplitView.originalId(t.id)}") }.padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        if (today.payments == 0) "No spending yet" else "${today.payments} payment${if (today.payments == 1) "" else "s"}" +
-                            if (today.receivedMinor > 0) " · received ${formatInr(today.receivedMinor)}" else "",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        java.time.Instant.ofEpochMilli(t.timestamp).atZone(zone).toLocalTime().format(timeOfDay),
+                        style = small, color = muted, modifier = Modifier.width(56.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(t.category, style = MaterialTheme.typography.labelSmall, color = muted, maxLines = 1)
+                    }
+                    val credit = t.type == com.myfinance.core.TxnType.CREDIT
+                    Text(
+                        (if (credit) "+" else "") + formatInr(t.amountMinor),
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                        color = if (credit) IncomeGreen else MaterialTheme.colorScheme.onSurface,
                     )
                 }
-                Text(formatInr(today.spentMinor), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
             }
-            Text(
-                if (today.upcoming.isEmpty()) "Nothing due in the next 7 days"
-                else "Due this week: ${formatInr(today.upcomingOutMinor)}",
-                style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp),
-            )
-            today.upcoming.take(6).forEach { e ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (e.date == now) "Today" else if (e.date == now.plusDays(1)) "Tomorrow" else e.date.format(dayName),
-                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.32f),
-                    )
-                    Text(e.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.weight(0.45f))
-                    Text(
-                        e.amountMinor?.let { (if (e.incoming) "+" else "") + formatInr(it) } ?: "",
-                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold,
-                        color = if (e.incoming) IncomeGreen else if (e.late) ExpenseRed else Amber,
-                    )
-                }
+            if (todays.size > 5) {
+                Text(
+                    if (showAllToday) "Show less" else "+${todays.size - 5} more today",
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { showAllToday = !showAllToday }.padding(vertical = 4.dp),
+                )
             }
-            if (today.upcoming.size > 6) Text("+${today.upcoming.size - 6} more", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { open("calendar") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Open the cash flow calendar") }
+
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+
+            // Commitments: missed ones first, then today and the next few days.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Due next 7 days", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (today.upcomingOutMinor > 0) Text(formatInr(today.upcomingOutMinor), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Amber)
+            }
+            today.late.forEach { e ->
+                DueLine("Missed?", e.title.substringBefore(" (was due"), e.amountMinor?.let { formatInr(it) }.orEmpty(), ExpenseRed)
+            }
+            val ahead = today.upcoming.filter { !it.late }
+            if (ahead.isEmpty() && today.late.isEmpty()) Text("Nothing due", style = small, color = muted)
+            ahead.take(5).forEach { e ->
+                DueLine(
+                    if (e.date == now) "Today" else if (e.date == now.plusDays(1)) "Tomorrow" else e.date.format(dayName),
+                    e.title,
+                    e.amountMinor?.let { (if (e.incoming) "+" else "") + formatInr(it) }.orEmpty(),
+                    if (e.incoming) IncomeGreen else if (e.date == now) ExpenseRed else Amber,
+                )
+            }
+            if (ahead.size > 5) Text("+${ahead.size - 5} more", style = small, color = muted)
+
+            // One-line alerts.
+            val pace by vm.v15.pace.collectAsState()
+            pace?.takeIf { it.state != com.myfinance.core.PaceState.ON_TRACK }?.let { p ->
+                Text(
+                    "${p.state.label}: ${p.spentPercent}% of budget used by day ${p.day} of ${p.daysInPeriod}",
+                    style = small, color = if (p.state == com.myfinance.core.PaceState.OVER) ExpenseRed else Amber,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
             val inbox by vm.v16.inbox.collectAsState()
-            if (inbox.isNotEmpty()) {
-                TextButton(onClick = { open("review") }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                    Text("${inbox.size} thing${if (inbox.size == 1) "" else "s"} to review", color = Amber)
-                }
-            }
-            Text("Add", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = { open("edit/0") }, label = { Text("Spend (any date)") })
-                AssistChip(onClick = { open("edit-income") }, label = { Text("Income") })
-                AssistChip(onClick = { dialog = QuickAdd.PAYMENT_DUE }, label = { Text("Payment due") })
-                AssistChip(onClick = { dialog = QuickAdd.INVESTMENT }, label = { Text("Past investment") })
-                AssistChip(onClick = { dialog = QuickAdd.PROPERTY }, label = { Text("Property") })
-                AssistChip(onClick = { dialog = QuickAdd.EPF }, label = { Text("EPF") })
-                AssistChip(onClick = { open("lending") }, label = { Text("Lent / borrowed") })
-                AssistChip(onClick = { open("ask") }, label = { Text("Ask") })
-                AssistChip(onClick = { open("heavy") }, label = { Text("Heavy spends") })
+            Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                LinkText("Payments ahead") { open("payments-ahead") }
+                LinkText("Calendar") { open("calendar") }
+                if (inbox.isNotEmpty()) LinkText("${inbox.size} to review", Amber) { open("review") }
             }
         }
     }
+}
 
+@Composable
+private fun DueLine(whenText: String, title: String, amount: String, color: androidx.compose.ui.graphics.Color) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(whenText, style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.width(84.dp), maxLines = 1)
+        Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(amount, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = color)
+    }
+}
+
+@Composable
+private fun LinkText(text: String, color: androidx.compose.ui.graphics.Color? = null, onClick: () -> Unit) {
+    Text(
+        text, style = MaterialTheme.typography.labelLarge, color = color ?: MaterialTheme.colorScheme.primary,
+        modifier = Modifier.clickable(onClick = onClick).padding(end = 16.dp, top = 6.dp, bottom = 6.dp),
+    )
+}
+
+/** The Overview + button: a short menu of everything that can be added, plus Ask and Heavy spends. */
+@Composable
+fun QuickAddFab(vm: FinanceViewModel, open: (String) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    var dialog by remember { mutableStateOf<QuickAdd?>(null) }
+    Box {
+        FloatingActionButton(onClick = { menu = true }) { Icon(Icons.Filled.Add, contentDescription = "Add") }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            fun pick(action: () -> Unit) { menu = false; action() }
+            DropdownMenuItem(text = { Text("Spend (any date)") }, onClick = { pick { open("edit/0") } })
+            DropdownMenuItem(text = { Text("Income") }, onClick = { pick { open("edit-income") } })
+            DropdownMenuItem(text = { Text("Payment due / reminder") }, onClick = { pick { dialog = QuickAdd.PAYMENT_DUE } })
+            DropdownMenuItem(text = { Text("Lent / borrowed") }, onClick = { pick { open("lending") } })
+            DropdownMenuItem(text = { Text("Past investment") }, onClick = { pick { dialog = QuickAdd.INVESTMENT } })
+            DropdownMenuItem(text = { Text("Property") }, onClick = { pick { dialog = QuickAdd.PROPERTY } })
+            DropdownMenuItem(text = { Text("EPF balance") }, onClick = { pick { dialog = QuickAdd.EPF } })
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text("Ask a question") }, onClick = { pick { open("ask") } })
+            DropdownMenuItem(text = { Text("Heavy spends") }, onClick = { pick { open("heavy") } })
+        }
+    }
     dialog?.let { QuickAddDialog(vm, it) { dialog = null } }
 }
 
-private val repeatOptions = listOf(0 to "Only once", 1 to "Every month", 3 to "Every quarter", 6 to "Every 6 months", 12 to "Every year")
+private val repeatOptions = com.myfinance.core.reminderRepeats
 private val investKinds = listOf(AssetKind.FD, AssetKind.MUTUAL_FUND, AssetKind.STOCK, AssetKind.PPF, AssetKind.NPS, AssetKind.GOLD, AssetKind.RD, AssetKind.OTHER)
 
 /** Small forms for things that aren't a transaction: a payment due later, a past investment, a property, EPF. */

@@ -35,9 +35,11 @@ val ReminderKind.label: String
         ReminderKind.INSURANCE -> "Insurance premium"; ReminderKind.SCHOOL_FEES -> "School / college fees"; ReminderKind.RENT -> "Rent"
         ReminderKind.CREDIT_CARD -> "Credit card"; ReminderKind.LOAN_EMI -> "Loan EMI"; ReminderKind.SUBSCRIPTION -> "Subscription"
         ReminderKind.OTHER -> "Other"
+        ReminderKind.WATER -> "Water"; ReminderKind.GAS -> "Gas / LPG"; ReminderKind.PROPERTY_TAX -> "Property tax"
+        ReminderKind.VEHICLE -> "Vehicle insurance / renewal"; ReminderKind.MEMBERSHIP -> "Club / membership"
     }
 
-private val repeatOptions = listOf(1 to "Every month", 2 to "Every 2 months", 3 to "Every quarter", 6 to "Every 6 months", 12 to "Every year", 0 to "Only once")
+private val repeatOptions = com.myfinance.core.reminderRepeats
 
 @Composable
 fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
@@ -58,14 +60,15 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                 Row(Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
                         Text(b.name, style = MaterialTheme.typography.titleSmall)
-                        Text(s.bill.kind.label + " · " + (repeatOptions.firstOrNull { it.first == b.everyMonths }?.second ?: ""), style = MaterialTheme.typography.bodySmall)
+                        Text(s.bill.kind.label + " · " + com.myfinance.core.repeatLabel(b.everyMonths), style = MaterialTheme.typography.bodySmall)
                     }
                     b.amountMinor?.let { Text(formatInr(it), fontWeight = FontWeight.SemiBold) }
                 }
-                val due = "Due ${s.bill.nextDue.format(shortDate)} (" + com.myfinance.app.ui.screens.relativeDay(s.bill.nextDue) + ")"
-                Text(due, color = if (s.state == BillState.OVERDUE || s.state == BillState.DUE_TODAY) ExpenseRed else MaterialTheme.colorScheme.onSurface)
+                val due = if (s.bill.done) "Paid (was due ${s.bill.nextDue.format(shortDate)})"
+                    else "Due ${s.bill.nextDue.format(shortDate)} (" + com.myfinance.app.ui.screens.relativeDay(s.bill.nextDue) + ")"
+                Text(due, color = if (!s.bill.done && (s.state == BillState.OVERDUE || s.state == BillState.DUE_TODAY)) ExpenseRed else MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { if (b.everyMonths == 0) vm.deleteBill(b.id) else vm.markBillPaid(b) }) { Text("Mark paid") }
+                    if (!s.bill.done) TextButton(onClick = { vm.markBillPaid(b) }) { Text("Mark paid") }
                     TextButton(onClick = { editing = b }) { Text("Edit") }
                     TextButton(onClick = { vm.deleteBill(b.id) }) { Text("Delete") }
                 }
@@ -110,6 +113,8 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                             name = name.trim(), kind = kind.name, amountMinor = parseAmountToMinor(amount)?.takeIf { it > 0 },
                             nextDueEpochDay = due.toEpochDay(), everyMonths = every, remindDaysBefore = remind.toIntOrNull() ?: 3,
                             matchWords = words,
+                            // A new date makes a paid one-time reminder due again.
+                            lastPaidAt = if (base.nextDueEpochDay != due.toEpochDay()) null else base.lastPaidAt,
                         ),
                     )
                     adding = false; editing = null
