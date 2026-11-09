@@ -53,27 +53,44 @@ import java.io.File
 /** Receipt photos, tax section and "split this payment" for a saved transaction. */
 @Composable
 fun TransactionExtras(vm: V12ViewModel, txn: TransactionEntity) {
+    PhotosCard(
+        vm, txn.uid, "Receipt / bill photos",
+        "Keep the bill for warranties and records. Photos stay in the app's private storage and go into your encrypted backup.",
+    )
+
+    if (txn.type == TxnType.DEBIT) {
+        TaxPicker(vm, txn)
+        SplitButton(vm, txn)
+    }
+}
+
+/**
+ * Photos kept under [key]: a transaction's uid for receipts, or "vault:<id>" for a policy or warranty.
+ * Stored with the receipts, so they go into the encrypted backup too.
+ */
+@Composable
+fun PhotosCard(vm: V12ViewModel, key: String, title: String, hint: String) {
     val context = LocalContext.current
-    val receipts by remember(txn.uid) { vm.receipts(txn.uid) }.collectAsState(initial = emptyList())
+    val receipts by remember(key) { vm.receipts(key) }.collectAsState(initial = emptyList())
     var cameraFile by remember { mutableStateOf<File?>(null) }
     var viewing by remember { mutableStateOf<ReceiptEntity?>(null) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        cameraFile?.let { f -> if (ok) vm.addReceiptFromCamera(txn.uid, f) else f.delete() }
+        cameraFile?.let { f -> if (ok) vm.addReceiptFromCamera(key, f) else f.delete() }
         cameraFile = null
     }
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let { vm.addReceiptFromUri(txn.uid, it) }
+        uri?.let { vm.addReceiptFromUri(key, it) }
     }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Receipt / bill photos", style = MaterialTheme.typography.labelLarge)
+            Text(title, style = MaterialTheme.typography.labelLarge)
             if (receipts.isNotEmpty()) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     receipts.forEach { r -> Thumb(vm.receiptFile(r)) { viewing = r } }
                 }
-            } else Hint12("Keep the bill for warranties and records. Photos stay in the app's private storage and go into your encrypted backup.")
+            } else Hint12(hint)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     val f = vm.newReceiptFile()
@@ -89,11 +106,6 @@ fun TransactionExtras(vm: V12ViewModel, txn: TransactionEntity) {
         }
     }
 
-    if (txn.type == TxnType.DEBIT) {
-        TaxPicker(vm, txn)
-        SplitButton(vm, txn)
-    }
-
     viewing?.let { r ->
         AlertDialog(
             onDismissRequest = { viewing = null },
@@ -103,7 +115,7 @@ fun TransactionExtras(vm: V12ViewModel, txn: TransactionEntity) {
                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", vm.receiptFile(r))
                     val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     AppLock.expectExternalActivity()
-                    runCatching { context.startActivity(Intent.createChooser(view, "Open receipt")) }
+                    runCatching { context.startActivity(Intent.createChooser(view, "Open photo")) }
                     viewing = null
                 }) { Text("Open") }
             },

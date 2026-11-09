@@ -264,3 +264,24 @@ class SubscriptionAndCalendarTest {
         assertTrue(AutoBackupSchedule.isStale(now - 4 * 24 * h, BackupFrequency.DAILY, now))
     }
 }
+
+class EpfAndOnceBillTest {
+    @Test fun epfoSms() {
+        val e = InvestmentSmsParser.parse(
+            "Dear Member, your passbook balance against TNMAS00123450000012345 is Rs. 4,56,789/-. Contribution of Rs. 3,600/- for due month 102026 has been received. - EPFO",
+            0,
+        )
+        assertNotNull(e)
+        assertEquals(AssetKind.EPF, e.kind)
+        assertEquals(3_600_00, e.amountMinor)
+        assertEquals(4_56_789_00, e.currentValueMinor)
+    }
+
+    @Test fun onlyOnceBillIsNotRepeated() {
+        val bill = BillReminder("b", "School fees", ReminderKind.SCHOOL_FEES, 20_000_00, LocalDate.of(2026, 11, 20), everyMonths = 0)
+        val nov = CashFlowCalendar.build(YearMonth.of(2026, 11), today, emptyList(), bills = listOf(bill), zone = zone)
+        assertEquals(20_000_00, nov.expectedOutMinor)
+        val dec = CashFlowCalendar.build(YearMonth.of(2026, 12), today, emptyList(), bills = listOf(bill), zone = zone)
+        assertEquals(0, dec.expectedOutMinor)
+    }
+}

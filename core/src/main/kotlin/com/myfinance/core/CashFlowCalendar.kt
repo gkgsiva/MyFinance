@@ -139,7 +139,10 @@ object CashFlowCalendar {
                 for (d in dates) if (ends == null || !d.isAfter(ends)) expected += FlowEvent(d, a.name, a.amountMinor, false, kindOf(a.kind), true)
             }
             for (b in bills) {
-                for (d in occurrences(b.nextDue, b.everyMonths, month, today)) {
+                // "Only once" bills (every 0 months) fall on their one date.
+                val dates = if (b.everyMonths <= 0) listOf(b.nextDue).filter { YearMonth.from(it) == month && !it.isBefore(today) }
+                else occurrences(b.nextDue, b.everyMonths, month, today)
+                for (d in dates) {
                     val kind = when (b.kind) {
                         ReminderKind.INSURANCE -> FlowKind.INSURANCE
                         ReminderKind.LOAN_EMI -> FlowKind.EMI

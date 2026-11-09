@@ -16,6 +16,8 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val repo = (applicationContext as MyFinanceApp).repository
         runCatching { repo.checkReminders() }
         runCatching { repo.v12.checkBillReminders() }
+        runCatching { V15Reminders.check(applicationContext, repo) }
+        runCatching { com.myfinance.app.backup.AutoBackup.runIfDue(applicationContext) }
         runCatching { if (repo.syncUri.value != null && repo.autoSync.value) repo.syncNow() }
         repo.onDataChanged()
         return Result.success()
