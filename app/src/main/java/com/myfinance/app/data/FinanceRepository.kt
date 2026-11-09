@@ -323,15 +323,16 @@ class FinanceRepository(
         if (forMerchant && merchant != null && clean.isNotEmpty()) {
             val key = Categorizer.merchantKey(merchant)
             v13.addLabelRules(clean.map { LabelRuleEntity(key, it) })
-            val same = db.transactions().allOnce().filter { it.merchant != null && Categorizer.merchantKey(it.merchant) == key }
+            // The same seller under a slightly different name too, e.g. "IRCTC REFUND" for "IRCTC".
+            val same = db.transactions().allOnce().filter { it.merchant != null && com.myfinance.core.Labels.sameSeller(merchant, it.merchant) }
             v13.addLabels(same.flatMap { t -> clean.map { TxnLabelEntity(t.uid, it) } })
         }
     }
 
     private suspend fun applyLabelRules(row: TransactionEntity, rawMerchant: String? = null) {
-        val keys = listOfNotNull(row.merchant, rawMerchant).map { Categorizer.merchantKey(it) }.toSet()
-        if (keys.isEmpty()) return
-        val labels = v13.labelRules().filter { it.merchantKey in keys }.map { it.label }.distinct()
+        val names = listOfNotNull(row.merchant, rawMerchant)
+        if (names.isEmpty()) return
+        val labels = v13.labelRules().filter { r -> names.any { com.myfinance.core.Labels.sameSeller(r.merchantKey, it) } }.map { it.label }.distinct()
         if (labels.isNotEmpty()) v13.addLabels(labels.map { TxnLabelEntity(row.uid, it) })
     }
 

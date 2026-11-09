@@ -29,6 +29,7 @@ import com.myfinance.app.ui.charts.ChartSeries
 import com.myfinance.app.ui.charts.GroupedBarChart
 import com.myfinance.app.ui.screens.TransactionRow
 import com.myfinance.app.ui.theme.ChartPalette
+import com.myfinance.app.ui.theme.IncomeGreen
 import com.myfinance.app.ui.v12.DateButton
 import com.myfinance.app.ui.v12.Dropdown
 import com.myfinance.core.Granularity
@@ -74,7 +75,8 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
     }
     var value by remember(kind) { mutableStateOf(values.firstOrNull()) }
     if (value == null && values.isNotEmpty()) value = values.first()
-    var type by remember { mutableStateOf(TxnType.DEBIT) }
+    // null = net: what went out minus what came back (refunds, cancellations, cashback).
+    var type by remember { mutableStateOf<TxnType?>(null) }
     var by by remember { mutableStateOf(Granularity.MONTH) }
     val byYear = by == Granularity.YEAR
     val earliest = all.minOfOrNull { it.timestamp }?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
@@ -82,16 +84,21 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
     var to by remember { mutableStateOf(LocalDate.now()) }
 
     val zone = ZoneId.systemDefault()
-    val matches = remember(all, meta, kind, value, type, from, to) {
+    val both = remember(all, meta, kind, value, from, to) {
         val v = value ?: return@remember emptyList()
         val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
         val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        vm.explore(kind, v, type).filter { it.timestamp in start until end }.sortedByDescending { it.timestamp }
+        vm.explore(kind, v, null).filter { it.timestamp in start until end }.sortedByDescending { it.timestamp }
     }
-    val trend = remember(matches, by, from, to) {
-        Insights.trend(matches.map { it.toLite(owner) }, from, to, by, zone)
-    }
-    val total = matches.sumOf { it.amountMinor }
+    val out = both.filter { it.type == TxnType.DEBIT }
+    val back = both.filter { it.type == TxnType.CREDIT }
+    val matches = when (type) { TxnType.DEBIT -> out; TxnType.CREDIT -> back; null -> both }
+    val outTrend = remember(out, by, from, to) { Insights.trend(out.map { it.toLite(owner) }, from, to, by, zone) }
+    val backTrend = remember(back, by, from, to) { Insights.trend(back.map { it.toLite(owner) }, from, to, by, zone) }
+    val trend = if (type == TxnType.CREDIT) backTrend else outTrend
+    val spent = out.sumOf { it.amountMinor }
+    val received = back.sumOf { it.amountMinor }
+    val total = when (type) { TxnType.DEBIT -> spent; TxnType.CREDIT -> received; null -> spent - received }
     val shown = matches.filterNot { meta.hidden(it) }
 
     SimpleScreen(title = "Explore spending", onBack = onBack) {
@@ -109,6 +116,7 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
         }
         item {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = type == null, onClick = { type = null }, label = { Text("Net") })
                 FilterChip(selected = type == TxnType.DEBIT, onClick = { type = TxnType.DEBIT }, label = { Text("Spent") })
                 FilterChip(selected = type == TxnType.CREDIT, onClick = { type = TxnType.CREDIT }, label = { Text("Received") })
                 Granularity.entries.forEach { g -> FilterChip(selected = by == g, onClick = { by = g }, label = { Text("By ${g.label.lowercase()}") }) }
@@ -134,29 +142,61 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
             }
         }
         item {
-            ChartCard(value ?: kind.label, subtitle = "${if (type == TxnType.DEBIT) "Spent" else "Received"} ${formatInr(total)} in ${matches.size} payments") {
+            val subtitle = when (type) {
+                TxnType.DEBIT -> "Spent ${formatInr(spent)} in ${out.size} payments"
+                TxnType.CREDIT -> "Received ${formatInr(received)} in ${back.size} payments"
+                null -> if (spent == 0L) "Received ${formatInr(received)} in ${back.size} payments"
+                else "Net ${formatInr(spent - received)}: spent ${formatInr(spent)}, got back ${formatInr(received)}"
+            }
+            ChartCard(value ?: kind.label, subtitle = subtitle) {
                 val periods = trend.size.coerceAtLeast(1)
+                if (type == null && spent > 0 && received > 0) {
+                    Text(
+                        "${back.size} refunds, cancellations or cashback came back (${received * 100 / spent}% of what was spent).",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Text(
                     "Average ${formatInr(total / periods)} a ${by.label.lowercase()}" +
                         (matches.takeIf { it.isNotEmpty() }?.let { " · typical payment ${formatInr(it.map { m -> m.amountMinor }.sorted()[it.size / 2])}" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (trend.isNotEmpty() && total > 0) {
+                if (trend.isNotEmpty() && (spent > 0 || received > 0)) {
                     val step = (trend.size + 11) / 12
                     val axis = trend.mapIndexed { i, p ->
                         if ((trend.size - 1 - i) % step != 0) "" else periodText(p.label, by, short = true)
                     }
-                    GroupedBarChart(listOf(ChartSeries(value ?: "", trend.map { it.totalMinor }, ChartPalette[0])), axis)
+                    val series = when (type) {
+                        TxnType.DEBIT -> listOf(ChartSeries("Spent", outTrend.map { it.totalMinor }, ChartPalette[0]))
+                        TxnType.CREDIT -> listOf(ChartSeries("Received", backTrend.map { it.totalMinor }, IncomeGreen))
+                        null -> listOfNotNull(
+                            ChartSeries("Spent", outTrend.map { it.totalMinor }, ChartPalette[0]).takeIf { spent > 0 },
+                            ChartSeries("Back", backTrend.map { it.totalMinor }, IncomeGreen).takeIf { received > 0 },
+                        )
+                    }
+                    GroupedBarChart(series, axis)
+                    if (series.size > 1) Muted("Bars: spent, and money back (green).")
                 }
             }
         }
         if (trend.size <= 160) {
-            items(trend.filter { it.count > 0 }.reversed(), key = { "p${it.label}" }) { p ->
+            val rows = outTrend.indices.map { i -> Triple(outTrend[i], backTrend.getOrNull(i), i) }
+                .filter { (o, b, _) -> o.count > 0 || (b?.count ?: 0) > 0 }.reversed()
+            items(rows, key = { "p${it.first.label}" }) { (o, b, _) ->
+                val v = when (type) {
+                    TxnType.DEBIT -> o.totalMinor
+                    TxnType.CREDIT -> b?.totalMinor ?: 0
+                    null -> o.totalMinor - (b?.totalMinor ?: 0)
+                }
+                if (type == TxnType.DEBIT && o.count == 0) return@items
+                if (type == TxnType.CREDIT && (b?.count ?: 0) == 0) return@items
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                    Text(periodText(p.label, by, short = false), modifier = Modifier.weight(1f))
-                    Text("${p.count}×  ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(formatInr(p.totalMinor), fontWeight = FontWeight.SemiBold)
+                    Text(periodText(o.label, by, short = false), modifier = Modifier.weight(1f))
+                    if (type == null && (b?.totalMinor ?: 0) > 0) {
+                        Text("−${formatInr(b!!.totalMinor)} back  ", style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
+                    }
+                    Text(formatInr(v), fontWeight = FontWeight.SemiBold)
                 }
             }
         }

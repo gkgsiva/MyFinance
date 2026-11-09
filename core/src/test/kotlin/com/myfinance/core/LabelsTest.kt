@@ -23,4 +23,23 @@ class LabelsTest {
         assertEquals("Office", c[1])
         assertEquals(1, c.count { it.equals("grocery", ignoreCase = true) })
     }
+
+    @Test
+    fun refundsNetAgainstSpendForALabel() {
+        val txns = listOf(d(1, 150_000), d(2, 80_000), d(3, 150_000, TxnType.CREDIT), d(4, 5_000_000, TxnType.CREDIT))
+        val labels = mapOf(1L to listOf("IRCTC"), 2L to listOf("IRCTC"), 3L to listOf("IRCTC"), 4L to listOf("Salary"))
+        val out = Labels.netByLabel(txns, labels).associateBy { it.label }
+        assertEquals(230_000, out.getValue("IRCTC").spentMinor)
+        assertEquals(150_000, out.getValue("IRCTC").receivedMinor)
+        assertEquals(80_000, out.getValue("IRCTC").netMinor)
+        assertEquals(5_000_000, out.getValue("Salary").receivedMinor)
+    }
+
+    @Test
+    fun sameSellerMatchesRefundText() {
+        kotlin.test.assertTrue(Labels.sameSeller("IRCTC", "IRCTC REFUND"))
+        kotlin.test.assertTrue(Labels.sameSeller("Amazon Pay India", "AMAZON SELLER SERVICES"))
+        kotlin.test.assertFalse(Labels.sameSeller("Swiggy", "Zomato"))
+        kotlin.test.assertFalse(Labels.sameSeller("UPI payment", "UPI refund"))
+    }
 }

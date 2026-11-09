@@ -46,8 +46,9 @@ fun TxnLabelsSection(
     onChange: (ExtrasDraft) -> Unit,
     originalMerchant: String?,
     editedMerchant: String,
+    income: Boolean = false,
 ) {
-    val choices by vm.labelChoices.collectAsState()
+    val choices by (if (income) vm.incomeLabelChoices else vm.labelChoices).collectAsState()
     var newLabel by remember { mutableStateOf("") }
     val all = (draft.labels + choices).distinctBy { it.lowercase() }
 
@@ -96,7 +97,10 @@ fun TxnLabelsSection(
     if (payee.isNotBlank() && draft.labels.isNotEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = draft.labelAll, onCheckedChange = { onChange(draft.copy(labelAll = it)) })
-            Text("Use these labels for every payment to \"$payee\"", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Use these labels for every payment to and from \"$payee\" (refunds too)",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 

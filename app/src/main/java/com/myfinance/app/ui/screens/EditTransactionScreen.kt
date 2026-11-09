@@ -203,6 +203,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 onChange = { extras = it },
                 originalMerchant = original?.merchant,
                 editedMerchant = merchant,
+                income = type == TxnType.CREDIT,
             )
 
             Button(
