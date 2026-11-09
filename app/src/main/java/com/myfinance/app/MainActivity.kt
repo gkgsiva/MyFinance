@@ -89,7 +89,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) FamilyShare.accept(intent)
+        if (savedInstanceState == null) {
+            FamilyShare.accept(intent)
+            Shortcuts.accept(intent)
+        }
         setContent {
             val themeMode by com.myfinance.app.ui.theme.ThemePref.mode.collectAsState()
             val dark = when (themeMode) {
@@ -117,6 +120,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         FamilyShare.accept(intent)
+        Shortcuts.accept(intent)
     }
 
     override fun onStart() {
@@ -254,6 +258,14 @@ private fun MyFinanceRoot() {
     }
     val importOrAsk = { if (smsGranted) vm.importInbox() else requestSms() }
 
+    // Home screen shortcuts and the Today widget open a screen directly.
+    val shortcut by Shortcuts.pending.collectAsState()
+    LaunchedEffect(shortcut) {
+        val route = shortcut ?: return@LaunchedEffect
+        Shortcuts.pending.value = null
+        runCatching { nav.navigate(route) { launchSingleTop = true } }
+    }
+
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
@@ -364,7 +376,14 @@ private fun MyFinanceRoot() {
             composable("plan") { PlanScreen(v12) { route -> nav.navigate(route) } }
             val back = { nav.popBackStack(); Unit }
             val openTxn = { id: Long -> nav.navigate("edit/$id") }
-            composable("goals") { GoalsScreen(v12, back) }
+            composable("goals") { GoalsScreen(v12, back) { id -> com.myfinance.app.ui.v15.GoalLinksPanel(vm, id) } }
+            composable("ask") { com.myfinance.app.ui.v15.AskScreen(vm, back, openTxn) }
+            composable("calendar") { com.myfinance.app.ui.v15.CalendarScreen(vm, back, openTxn) }
+            composable("subscriptions") { com.myfinance.app.ui.v15.SubscriptionsScreen(vm, back) }
+            composable("vault") { com.myfinance.app.ui.v15.VaultScreen(vm, v12, back) }
+            composable("lending") { com.myfinance.app.ui.v15.LendingScreen(vm, back) }
+            composable("tax-pack") { com.myfinance.app.ui.v15.TaxPackScreen(vm, back) { nav.navigate("tax") } }
+            composable("edit-income") { EditTransactionScreen(vm = vm, v12 = v12, id = 0L, onDone = { nav.popBackStack() }, startAsIncome = true) }
             composable("networth") { NetWorthScreen(v12, back) }
             composable("bills") { BillsScreen(v12, back) }
             composable("splits") { SplitsScreen(v12, back) }
@@ -372,7 +391,7 @@ private fun MyFinanceRoot() {
             composable("tax") { TaxScreen(v12, back, openTxn) }
             composable("rules") { RulesScreen(v12, back) }
             composable("security") { SecurityScreen(v12, back) }
-            composable("backup") { BackupScreen(v12, back) }
+            composable("backup") { BackupScreen(v12, back) { com.myfinance.app.ui.v15.AutoBackupCard(vm) } }
             composable(
                 "edit/{id}",
                 arguments = listOf(navArgument("id") { type = NavType.LongType }),

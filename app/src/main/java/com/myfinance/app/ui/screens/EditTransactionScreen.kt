@@ -65,15 +65,15 @@ import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onDone: () -> Unit) {
+fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onDone: () -> Unit, startAsIncome: Boolean = false) {
     val categories by vm.categories.collectAsState()
     var original by remember { mutableStateOf<TransactionEntity?>(null) }
     var loaded by remember { mutableStateOf(id == 0L) }
 
     var amount by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(TxnType.DEBIT) }
+    var type by remember { mutableStateOf(if (startAsIncome) TxnType.CREDIT else TxnType.DEBIT) }
     var merchant by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(DefaultCategories.OTHER) }
+    var category by remember { mutableStateOf(if (startAsIncome) DefaultCategories.INCOME else DefaultCategories.OTHER) }
     var account by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var excluded by remember { mutableStateOf(false) }

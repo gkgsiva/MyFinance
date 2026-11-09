@@ -30,7 +30,7 @@ import com.myfinance.core.parseAmountToMinor
 import java.time.LocalDate
 
 @Composable
-fun GoalsScreen(vm: V12ViewModel, onBack: () -> Unit) {
+fun GoalsScreen(vm: V12ViewModel, onBack: () -> Unit, extra: @Composable (goalId: String) -> Unit = {}) {
     val goals by vm.goals.collectAsState()
     var editing by remember { mutableStateOf<GoalProgress?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -54,6 +54,7 @@ fun GoalsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                     GoalStatus.NO_DEADLINE -> "${formatInr(p.remainingMinor)} to go" to MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Text(text, color = color, style = MaterialTheme.typography.bodySmall)
+                extra(p.goal.id)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { addMoney = p }) { Text("Add money") }
                     TextButton(onClick = { editing = p }) { Text("Edit") }

@@ -1,4 +1,13 @@
 <resources>
     <string name="app_name">MyFinance</string>
     <string name="widget_description">This month\'s spending at a glance</string>
+    <string name="today_widget_description">Today\'s spend and the next EMI or bill due, with quick add</string>
+    <string name="shortcut_add">Add spend</string>
+    <string name="shortcut_add_long">Add a spend</string>
+    <string name="shortcut_ask">Ask</string>
+    <string name="shortcut_ask_long">Ask about your money</string>
+    <string name="shortcut_calendar">Calendar</string>
+    <string name="shortcut_calendar_long">Cash flow calendar</string>
+    <string name="shortcut_income">Add income</string>
+    <string name="shortcut_income_long">Add income</string>
 </resources>

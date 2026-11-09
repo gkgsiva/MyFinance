@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher"
+        android:shortcutId="quick_add"
+        android:shortcutLongLabel="@string/shortcut_add_long"
+        android:shortcutShortLabel="@string/shortcut_add">
+        <intent
+            android:action="com.myfinance.app.OPEN"
+            android:targetClass="com.myfinance.app.MainActivity"
+            android:targetPackage="com.myfinance.app">
+            <extra android:name="open_route" android:value="edit/0" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher"
+        android:shortcutId="add_income"
+        android:shortcutLongLabel="@string/shortcut_income_long"
+        android:shortcutShortLabel="@string/shortcut_income">
+        <intent
+            android:action="com.myfinance.app.OPEN"
+            android:targetClass="com.myfinance.app.MainActivity"
+            android:targetPackage="com.myfinance.app">
+            <extra android:name="open_route" android:value="edit-income" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher"
+        android:shortcutId="ask"
+        android:shortcutLongLabel="@string/shortcut_ask_long"
+        android:shortcutShortLabel="@string/shortcut_ask">
+        <intent
+            android:action="com.myfinance.app.OPEN"
+            android:targetClass="com.myfinance.app.MainActivity"
+            android:targetPackage="com.myfinance.app">
+            <extra android:name="open_route" android:value="ask" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher"
+        android:shortcutId="calendar"
+        android:shortcutLongLabel="@string/shortcut_calendar_long"
+        android:shortcutShortLabel="@string/shortcut_calendar">
+        <intent
+            android:action="com.myfinance.app.OPEN"
+            android:targetClass="com.myfinance.app.MainActivity"
+            android:targetPackage="com.myfinance.app">
+            <extra android:name="open_route" android:value="calendar" />
+        </intent>
+    </shortcut>
+</shortcuts>

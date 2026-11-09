@@ -43,11 +43,12 @@ class FinanceRepository(
     v12Db: V12Database,
     v13Db: V13Database,
     v14Db: V14Database,
+    v15Db: V15Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db)
     }
 
     /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
@@ -55,6 +56,9 @@ class FinanceRepository(
 
     /** v1.4: label budgets, label suggestion answers, refunds awaited, loan rates, pinned reports. */
     val v14: V14Dao = v14Db.dao()
+
+    /** v1.5: vault, lending, goal links, capital gains, subscription answers, sent reminders. */
+    val v15: V15Dao = v15Db.dao()
 
     private val extras get() = extrasDb.extras()
     private val prefs = context.getSharedPreferences("myfinance", Context.MODE_PRIVATE)
@@ -589,6 +593,26 @@ class FinanceRepository(
         )
     }
 
+    /** For the Today widget: what was spent today, and the next EMI, auto debit or bill due (name, amount, date). */
+    suspend fun todayGlance(): Pair<Long, Triple<String, Long?, LocalDate>?> = withContext(Dispatchers.IO) {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now()
+        val start = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val spent = db.transactions().rangeOnce(start, System.currentTimeMillis())
+            .filter { !it.excluded && it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+        val me = ownerName.value
+        val recentFrom = today.minusDays(60).atStartOfDay(zone).toInstant().toEpochMilli()
+        val debits = db.transactions().rangeOnce(recentFrom, System.currentTimeMillis())
+            .filter { !it.excluded && it.type == TxnType.DEBIT }
+            .map { com.myfinance.core.DebitRecord(it.toLite(me), it.rawSms) }
+        val autos = com.myfinance.core.AutoDebits.build(
+            plans = v13.observePlans().first().map { it.toPlan() }, debits = debits, recurring = emptyList(), emiBills = emptyList(),
+            hidden = emptySet(), today = today,
+        ).filter { !it.nextDate.isBefore(today) }.map { Triple(it.name, it.amountMinor as Long?, it.nextDate) }
+        val bills = v12.dao.bills().map { it.toBill() }.filter { !it.nextDue.isBefore(today) }.map { Triple(it.name, it.amountMinor, it.nextDue) }
+        spent to (autos + bills).minByOrNull { it.third }
+    }
+
     /** Sum of all monthly category budgets (0 when none are set). */
     suspend fun totalBudget(): Long = db.categories().allOnce().sumOf { it.monthlyBudgetMinor ?: 0L }
 
@@ -605,6 +629,7 @@ class FinanceRepository(
     suspend fun onDataChanged() {
         runCatching { checkBudgets() }
         runCatching { SpendWidget.refresh(context) }
+        runCatching { com.myfinance.app.widget.TodayWidget.refresh(context) }
     }
 
     /** Sends a notification the first time a category passes 80% and 100% of its budget each month. */

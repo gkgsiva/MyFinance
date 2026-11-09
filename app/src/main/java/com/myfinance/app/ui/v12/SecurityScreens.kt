@@ -108,7 +108,7 @@ fun PinField(label: String, value: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-fun BackupScreen(vm: V12ViewModel, onBack: () -> Unit) {
+fun BackupScreen(vm: V12ViewModel, onBack: () -> Unit, autoBackup: @Composable () -> Unit = {}) {
     val context = LocalContext.current
     val busy by vm.busy.collectAsState()
     val ready by vm.restoreReady.collectAsState()
@@ -136,6 +136,7 @@ fun BackupScreen(vm: V12ViewModel, onBack: () -> Unit) {
                 Button(onClick = { askBackupPassword = true }, enabled = !busy) { Text("Back up now") }
             }
         }
+        item { autoBackup() }
         item {
             InfoCard {
                 Text("Restore", style = MaterialTheme.typography.titleSmall)

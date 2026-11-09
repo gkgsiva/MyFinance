@@ -177,6 +177,8 @@ fun OverviewScreen(
                 item { Text(err, color = MaterialTheme.colorScheme.error) }
             }
 
+            if (month == currentMonth) item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
+
             item { HeroCard(summary.incomeMinor, summary.expenseMinor, summary.netMinor, summary.savingsRatePercent) }
 
             if (groups.isNotEmpty()) {

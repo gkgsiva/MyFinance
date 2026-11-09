@@ -46,8 +46,10 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { Text("Plan", style = MaterialTheme.typography.headlineSmall) }
+        item { Tile("Ask", "In plain words", "\"How much on Swiggy last year?\" answered on your phone") { open("ask") } }
+        item { Tile("Cash flow calendar", "This month", "Salary, EMIs, SIPs, bills and renewals by date") { open("calendar") } }
         item {
-            Tile("Net worth", formatInr(net.summary.netWorthMinor), "Bank, investments, cash minus loans") { open("networth") }
+            Tile("Net worth", formatInr(net.summary.netWorthMinor), "Bank, investments, property, EPF, cash minus loans") { open("networth") }
         }
         item {
             val behind = goals.count { it.status == GoalStatus.BEHIND || it.status == GoalStatus.OVERDUE }
@@ -64,6 +66,9 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         item { Tile("Card bill check", "Bills vs paid", "Each card statement against what you paid; flags gaps and late payments") { open("card-bills") } }
         item { Tile("Refund tracker", "Waiting", "IRCTC, Amazon and other refunds still to come back") { open("refunds") } }
         item { Tile("Year in review", "Share", "Your year on one page, ready for WhatsApp") { open("year-review") } }
+        item { Tile("Subscription audit", "Check", "Price hikes, duplicates and ones you don't use") { open("subscriptions") } }
+        item { Tile("Insurance & warranties", "Vault", "Policies, renewal dates, warranty ends and bill photos") { open("vault") } }
+        item { Tile("Lent & borrowed", "Track", "Money lent to or borrowed from friends and family") { open("lending") } }
         item {
             Tile("Bill reminders", if (bills.isEmpty()) "Add a bill" else "${bills.size} bills", if (dueSoon > 0) "$dueSoon due soon" else "Electricity, mobile, insurance, school fees") { open("bills") }
         }
@@ -83,6 +88,7 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
                 if (tax.suggestions.isNotEmpty()) "${tax.suggestions.size} payments may be tax-saving" else "80C, 80D, NPS and more",
             ) { open("tax") }
         }
+        item { Tile("Tax-time pack", "For ITR", "Income, interest, capital gains and deductions for a year, as Excel") { open("tax-pack") } }
         item { Text("Settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
         item { Tile("All settings", "", "Hidden items, deleted, labels, payee names, rescan, theme and more") { open("settings") } }
         item { Tile("Custom SMS rules", "${rules.size} rules", "e.g. any SMS with SWIGGY goes to Food") { open("rules") } }
