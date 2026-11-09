@@ -5,19 +5,29 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.myfinance.app.MyFinanceApp
+import com.myfinance.app.data.AutoDebitEntity
 import com.myfinance.app.data.BillEntity
+import com.myfinance.app.data.DeletedTxnEntity
+import com.myfinance.app.data.HiddenAutoDebitEntity
 import com.myfinance.app.data.CategoryEntity
 import com.myfinance.app.data.FinanceRepository
 import com.myfinance.app.data.TransactionEntity
 import com.myfinance.app.data.accountLabel
 import com.myfinance.app.data.toLite
 import com.myfinance.app.report.PdfStatement
+import com.myfinance.core.AutoDebitItem
+import com.myfinance.core.AutoDebitPlan
+import com.myfinance.core.AutoDebitTotals
+import com.myfinance.core.AutoDebits
 import com.myfinance.core.BalanceReading
+import com.myfinance.core.DebitRecord
+import com.myfinance.core.TxnType
 import com.myfinance.core.BillParser
 import com.myfinance.core.FinanceSummary
 import com.myfinance.core.FySummary
 import com.myfinance.core.MerchantStat
 import com.myfinance.core.ModeShare
+import com.myfinance.core.MonthCycle
 import com.myfinance.core.MonthTotals
 import com.myfinance.core.RecurringDetector
 import com.myfinance.core.RecurringPayment
@@ -33,6 +43,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -45,7 +56,13 @@ import java.time.ZoneId
 
 enum class GroupBy(val label: String) { CATEGORY("Category"), MERCHANT("Merchant"), ACCOUNT("Account"), PERSON("Person") }
 
-data class ImportState(val running: Boolean = false, val lastAdded: Int? = null, val error: String? = null)
+data class ImportState(
+    val running: Boolean = false,
+    val lastAdded: Int? = null,
+    val error: String? = null,
+    /** Full result of the last scan, for the "Rescan messages" screen. */
+    val scan: FinanceRepository.ScanResult? = null,
+)
 
 data class SyncState(val running: Boolean = false, val message: String? = null)
 
@@ -66,8 +83,15 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = (app as MyFinanceApp).repository
 
-    private val _month = MutableStateFlow(YearMonth.now())
+    /** Which month a transaction counts towards; set under Manage > Month for budgets and reports. */
+    val monthCycle: StateFlow<MonthCycle> = repo.monthCycle
+
+    private val _month = MutableStateFlow(repo.monthCycle.value.current())
     val month: StateFlow<YearMonth> = _month.asStateFlow()
+
+    /** The budget month today is in: the latest one the month arrows can reach. */
+    val currentMonth: StateFlow<YearMonth> = monthCycle.map { it.current() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, repo.monthCycle.value.current())
 
     val query = MutableStateFlow("")
     val categoryFilter = MutableStateFlow<String?>(null)
@@ -115,12 +139,12 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** All transactions in the selected month, newest first. */
-    val monthTransactions: StateFlow<List<TransactionEntity>> = _month
-        .flatMapLatest { ym ->
+    val monthTransactions: StateFlow<List<TransactionEntity>> = combine(_month, monthCycle) { ym, cycle -> ym to cycle }
+        .flatMapLatest { (ym, cycle) ->
             val zone = ZoneId.systemDefault()
-            val from = ym.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val to = ym.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-            repo.transactionsBetween(from, to)
+            val range = cycle.loadRange(ym, zone)
+            repo.transactionsBetween(range.first, range.last)
+                .map { list -> list.filter { cycle.periodOf(it.timestamp, it.type, it.category, zone) == ym } }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -153,18 +177,17 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<String>() to emptyList())
 
     val reports: StateFlow<ReportsData> =
-        combine(allLite, _month, reportMonths) { txns, end, count ->
+        combine(allLite, _month, reportMonths, monthCycle) { txns, end, count, cycle ->
             val zone = ZoneId.systemDefault()
             val months = Reports.months(end, count)
-            val start = months.first().atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val stop = end.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val window = txns.filter { it.timestamp in start until stop }
+            val inWindow = months.toSet()
+            val window = txns.filter { cycle.periodOf(it, zone) in inWindow }
             val (byAmount, byCount) = Reports.topMerchants(window, 10)
             ReportsData(
                 months = months,
-                monthly = Reports.monthly(txns, end, count, zone),
-                categoryTrends = Reports.categoryTrends(txns, end, count, zone),
-                perPerson = Reports.perPerson(txns, end, count, zone),
+                monthly = Reports.monthly(txns, end, count, zone, cycle),
+                categoryTrends = Reports.categoryTrends(txns, end, count, zone, cycle),
+                perPerson = Reports.perPerson(txns, end, count, zone, cycle),
                 topByAmount = byAmount,
                 topByCount = byCount,
                 modes = Reports.paymentModes(window),
@@ -194,7 +217,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         repo.balances.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun previousMonth() { _month.value = _month.value.minusMonths(1) }
-    fun nextMonth() { if (_month.value < YearMonth.now()) _month.value = _month.value.plusMonths(1) }
+    fun nextMonth() { if (_month.value < currentMonth.value) _month.value = _month.value.plusMonths(1) }
+
+    /** Saves the month setting and jumps to the budget month today is in, so the screens line up. */
+    fun setMonthCycle(cycle: MonthCycle) {
+        repo.setMonthCycle(cycle)
+        _month.value = cycle.current()
+        viewModelScope.launch { repo.onDataChanged() }
+    }
 
     fun clearFilters() {
         query.value = ""
@@ -202,12 +232,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         advancedFilter.value = TxnFilter()
     }
 
-    fun importInbox() {
+    /** Reads the SMS inbox. [monthsBack] 0 = everything; see [FinanceRepository.importInbox]. */
+    fun importInbox(monthsBack: Int = 12, bringBackDeleted: Boolean = false) {
         if (_import.value.running) return
         _import.value = ImportState(running = true)
         viewModelScope.launch {
             _import.value = try {
-                ImportState(lastAdded = repo.importInbox())
+                val r = repo.importInbox(monthsBack, bringBackDeleted)
+                ImportState(lastAdded = r.added, scan = r)
             } catch (e: SecurityException) {
                 ImportState(error = "SMS permission is needed to import messages.")
             } catch (e: Exception) {
@@ -296,7 +328,66 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun load(id: Long): TransactionEntity? = repo.get(id)
 
     fun save(txn: TransactionEntity, learnRule: Boolean) = viewModelScope.launch { repo.save(txn, learnRule) }
-    fun delete(txn: TransactionEntity) = viewModelScope.launch { repo.delete(txn) }
+    // ---- Delete, undo and the Recently deleted bin ----
+
+    private val _justDeleted = MutableStateFlow<TransactionEntity?>(null)
+
+    /** The transaction deleted a moment ago, for the "Undo" snackbar. */
+    val justDeleted: StateFlow<TransactionEntity?> = _justDeleted.asStateFlow()
+
+    fun delete(txn: TransactionEntity) = viewModelScope.launch {
+        repo.delete(txn)
+        _justDeleted.value = txn
+    }
+
+    fun undoDelete() {
+        val t = _justDeleted.value ?: return
+        _justDeleted.value = null
+        viewModelScope.launch { repo.restore(t.uid) }
+    }
+
+    fun clearJustDeleted() { _justDeleted.value = null }
+
+    val recentlyDeleted: StateFlow<List<DeletedTxnEntity>> =
+        repo.recentlyDeleted.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun restore(uid: String) = viewModelScope.launch { repo.restore(uid) }
+    fun deleteForever(uid: String) = viewModelScope.launch { repo.deleteForever(uid) }
+    fun emptyTrash() = viewModelScope.launch { repo.emptyTrash() }
+
+    // ---- Auto debits & EMIs ----
+
+    private val autoPlans = repo.v13.observePlans()
+    private val hiddenAuto = repo.v13.observeHidden()
+
+    /** EMIs, auto debits, SIPs, insurance and subscriptions with their next expected date, soonest first. */
+    val autoDebits: StateFlow<List<AutoDebitItem>> =
+        combine(autoPlans, allTransactions, recurring, openBills, hiddenAuto) { plans, all, rec, bills, hidden ->
+            val me = ownerName.value
+            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms) }
+            AutoDebits.build(
+                plans = plans.map { it.toPlan() },
+                debits = debits,
+                recurring = rec,
+                emiBills = bills.map { it.toBill() },
+                hidden = hidden.mapTo(HashSet()) { it.key },
+                today = LocalDate.now(),
+            )
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val autoDebitTotals: StateFlow<AutoDebitTotals> =
+        autoDebits.map { AutoDebits.totals(it, LocalDate.now()) }
+            .stateIn(viewModelScope, SharingStarted.Lazily, AutoDebitTotals(0, 0, 0))
+
+    suspend fun autoPlan(id: String): AutoDebitPlan? =
+        autoPlans.first().firstOrNull { it.id == id }?.toPlan()
+
+    fun saveAutoPlan(p: AutoDebitPlan) = viewModelScope.launch { repo.v13.upsertPlan(AutoDebitEntity.from(p)) }
+    fun deleteAutoPlan(id: String) = viewModelScope.launch { repo.v13.deletePlan(id) }
+    fun hideAutoDebit(key: String) = viewModelScope.launch { repo.v13.hide(HiddenAutoDebitEntity(key)) }
+    fun unhideAutoDebits() = viewModelScope.launch { repo.v13.unhideAll() }
 
     fun addCategory(name: String, budgetMinor: Long?) = viewModelScope.launch { repo.addCategory(name, budgetMinor) }
     fun updateCategory(c: CategoryEntity) = viewModelScope.launch { repo.updateCategory(c) }

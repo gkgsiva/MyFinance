@@ -62,6 +62,27 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Custom SMS rules**: "any SMS with SWIGGY goes to Food", with the option to rename, leave out of
   totals, ignore, or tag a tax section; match on merchant, SMS text or sender, with a live preview.
 
+### New in 1.3
+
+- **Auto debits & EMIs** (Plan tab, or Bills, payments & balances): one list of loan EMIs, SIPs,
+  insurance premiums, subscriptions and NACH / ECS / e-mandate / autopay debits, each with its next
+  expected date, instalments left and the total due in the next 30 days. Add your own with the due
+  date and number of instalments; a matching debit SMS ticks off that month. Ones found in SMS can be
+  added to your list or hidden.
+- **Undo and Recently deleted**: deleting a transaction shows an Undo button, and Manage > Recently
+  deleted keeps deleted transactions for 60 days so you can restore them exactly as they were.
+- **Rescan messages** (Manage tab): re-read the SMS inbox for the last 1, 3, 6 or 12 months or all of
+  it. Nothing is added twice, edited transactions keep your changes, and deleted ones stay deleted
+  unless you tick "bring back".
+- **Import bank and credit card statements** (Manage > Import statements): build a profile for past
+  years from the statements your bank emails or lets you download. PDF (including password-protected
+  PDFs), Excel (.xlsx and old .xls) and CSV work, for HDFC, SBI, ICICI, Axis, Kotak and most other
+  Indian banks and cards. Pick many files at once, for example 3 years of monthly card bills; a PDF
+  password is tried on the other files too, and is never saved. The preview shows what is new;
+  transactions already added from SMS (same UPI reference, or same amount and account within 2 days)
+  and lines from statements imported before are skipped. Imported lines are categorised like SMS and
+  your custom rules apply. Reports now go back 3 or 5 years and the financial year card compares years.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:

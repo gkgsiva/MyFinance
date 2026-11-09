@@ -51,6 +51,7 @@ import java.time.YearMonth
 @Composable
 fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -> Unit) {
     val month by vm.month.collectAsState()
+    val currentMonth by vm.currentMonth.collectAsState()
     val txns by vm.filteredTransactions.collectAsState()
     val query by vm.query.collectAsState()
     val filter by vm.categoryFilter.collectAsState()
@@ -92,7 +93,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
                     }
                     Text(month.format(monthFormat), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    IconButton(onClick = vm::nextMonth, enabled = month < YearMonth.now()) {
+                    IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                     }
                 }

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import com.myfinance.core.MonthCycle
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -38,12 +39,16 @@ class FinanceRepository(
     private val db: FinanceDatabase,
     private val extrasDb: ExtrasDatabase,
     v12Db: V12Database,
+    v13Db: V13Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db)
     }
+
+    /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
+    val v13: V13Dao = v13Db.dao()
 
     private val extras get() = extrasDb.extras()
     private val prefs = context.getSharedPreferences("myfinance", Context.MODE_PRIVATE)
@@ -56,6 +61,26 @@ class FinanceRepository(
         val n = name.trim().ifEmpty { "Me" }
         prefs.edit().putString("owner", n).apply()
         _ownerName.value = n
+    }
+
+    private val _monthCycle = MutableStateFlow(readMonthCycle())
+
+    /** Which month a transaction counts towards (custom start day, late salary for next month). */
+    val monthCycle: StateFlow<MonthCycle> = _monthCycle.asStateFlow()
+
+    private fun readMonthCycle(): MonthCycle = runCatching {
+        MonthCycle(
+            startDay = prefs.getInt(KEY_CYCLE_START, 1),
+            salaryFromDay = prefs.getInt(KEY_SALARY_FROM, 0).takeIf { it > 0 },
+        )
+    }.getOrDefault(MonthCycle.CALENDAR)
+
+    fun setMonthCycle(cycle: MonthCycle) {
+        prefs.edit()
+            .putInt(KEY_CYCLE_START, cycle.startDay)
+            .putInt(KEY_SALARY_FROM, cycle.salaryFromDay ?: 0)
+            .apply()
+        _monthCycle.value = cycle
     }
 
     val categories: Flow<List<CategoryEntity>> = db.categories().observeAll()
@@ -87,11 +112,14 @@ class FinanceRepository(
     private suspend fun categorizer(): Categorizer =
         Categorizer(db.merchantRules().all().associate { it.merchantKey to it.category })
 
+    /** What happened to one SMS on import. */
+    enum class Ingest { ADDED, ALREADY_HERE, DELETED_BEFORE, NOT_A_TRANSACTION }
+
     /**
      * Parses one SMS: stores the transaction it describes, plus any bill due date or account balance
-     * it mentions. Returns true when a new transaction was added.
+     * it mentions. A message whose transaction the user deleted is not added again.
      */
-    suspend fun ingestSms(sender: String, body: String, timestamp: Long, categorizer: Categorizer? = null): Boolean {
+    suspend fun ingestSms(sender: String, body: String, timestamp: Long, categorizer: Categorizer? = null): Ingest {
         val key = smsKey(sender, body)
         BillParser.parse(sender, body, timestamp)?.let { b ->
             extras.insertBill(
@@ -112,10 +140,11 @@ class FinanceRepository(
 
         runCatching { v12.onSms(key, body, timestamp) }
 
-        val parsed = SmsParser.parse(sender, body, timestamp) ?: return false
+        val parsed = SmsParser.parse(sender, body, timestamp) ?: return Ingest.NOT_A_TRANSACTION
+        if (v13.isSmsDeleted(key) > 0) return Ingest.DELETED_BEFORE
         // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
         val rule = v12.ruleFor(sender, body, parsed.merchant, parsed.type, parsed.amountMinor)
-        if (rule?.ignore == true) return false
+        if (rule?.ignore == true) return Ingest.NOT_A_TRANSACTION
         val cat = (categorizer ?: categorizer()).categorize(parsed.merchant, parsed.type, body)
         val base = TransactionEntity(
             amountMinor = parsed.amountMinor,
@@ -134,7 +163,7 @@ class FinanceRepository(
         val row = rule?.applyTo(base) ?: base
         val added = db.transactions().insert(row) != -1L
         if (added) runCatching { v12.onNewTransaction(row, rule) }
-        return added
+        return if (added) Ingest.ADDED else Ingest.ALREADY_HERE
     }
 
     /**
@@ -156,14 +185,32 @@ class FinanceRepository(
         changed.size
     }
 
+    data class ScanResult(
+        val messages: Int = 0,
+        val added: Int = 0,
+        val alreadyHere: Int = 0,
+        val skippedDeleted: Int = 0,
+        val restored: Int = 0,
+    )
+
     /**
-     * Reads the SMS inbox and imports every transaction message received in the last [monthsBack] months.
-     * Safe to run repeatedly: already-imported messages are skipped by their dedupe key.
+     * Reads the SMS inbox and imports every transaction message received in the last [monthsBack] months
+     * (0 = the whole inbox). Safe to run repeatedly: messages already imported (including ones you edited)
+     * are left as they are, and ones you deleted are skipped unless [bringBackDeleted] is set.
      */
-    suspend fun importInbox(monthsBack: Int = 12): Int = withContext(Dispatchers.IO) {
-        val since = System.currentTimeMillis() - monthsBack * 31L * 24 * 60 * 60 * 1000
+    suspend fun importInbox(monthsBack: Int = 12, bringBackDeleted: Boolean = false): ScanResult = withContext(Dispatchers.IO) {
+        val since = if (monthsBack <= 0) 0L else System.currentTimeMillis() - monthsBack * 31L * 24 * 60 * 60 * 1000
+        var restored = 0
+        if (bringBackDeleted) {
+            // Restore the bin's copies first, so any edits made before deleting are kept.
+            for (t in v13.trash()) if (t.smsKey != null && restoreRow(t)) restored++
+            v13.forgetDeletedSms()
+        }
         val cat = categorizer()
+        var messages = 0
         var added = 0
+        var already = 0
+        var skipped = 0
         context.contentResolver.query(
             Uri.parse("content://sms/inbox"),
             arrayOf("address", "body", "date"),
@@ -178,13 +225,22 @@ class FinanceRepository(
                 val sender = c.getString(iAddr) ?: continue
                 val body = c.getString(iBody) ?: continue
                 if (!SmsParser.looksLikeFinancialSender(sender)) continue
-                if (ingestSms(sender, body, c.getLong(iDate), cat)) added++
+                messages++
+                when (ingestSms(sender, body, c.getLong(iDate), cat)) {
+                    Ingest.ADDED -> added++
+                    Ingest.ALREADY_HERE -> already++
+                    Ingest.DELETED_BEFORE -> skipped++
+                    Ingest.NOT_A_TRANSACTION -> {}
+                }
             }
         }
-        prefs.edit().putBoolean(KEY_BACKFILLED, true).apply()
+        prefs.edit().putBoolean(KEY_BACKFILLED, true).putLong(KEY_LAST_SCAN, System.currentTimeMillis()).apply()
         onDataChanged()
-        added
+        ScanResult(messages, added, already, skipped, restored)
     }
+
+    /** When the inbox was last read in full (0 = never). */
+    val lastScan: Long get() = prefs.getLong(KEY_LAST_SCAN, 0L)
 
     /** v1.0 never stored bills or balances, so v1.1 re-reads the inbox once after the upgrade. */
     val needsBackfill: Boolean get() = !prefs.getBoolean(KEY_BACKFILLED, false)
@@ -215,10 +271,42 @@ class FinanceRepository(
         if (updates.isNotEmpty()) db.transactions().updateAll(updates)
     }
 
-    suspend fun delete(txn: TransactionEntity) {
+    /**
+     * Moves a transaction to the Recently deleted bin. It can be restored from there; a record of it is
+     * kept even after the bin is emptied, so rescanning the inbox or merging a family file won't add it back.
+     */
+    suspend fun delete(txn: TransactionEntity) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        v13.putTrash(DeletedTxnEntity.from(txn, now))
+        v13.putKey(DeletedKeyEntity(txn.uid, txn.smsKey, now))
         db.transactions().delete(txn)
         onDataChanged()
     }
+
+    val recentlyDeleted: Flow<List<DeletedTxnEntity>> = v13.observeTrash()
+
+    /** Puts a deleted transaction back where it was. Returns false when it was not in the bin. */
+    suspend fun restore(uid: String): Boolean = withContext(Dispatchers.IO) {
+        val t = v13.trashed(uid) ?: return@withContext false
+        restoreRow(t).also { onDataChanged() }
+    }
+
+    private suspend fun restoreRow(t: DeletedTxnEntity): Boolean {
+        val row = t.toEntity()
+        // Same id first, so links from receipts, splits and tax tags (by uid) keep working either way.
+        val ok = db.transactions().insert(row) != -1L || db.transactions().insert(row.copy(id = 0)) != -1L
+        v13.removeTrash(t.uid)
+        v13.removeKey(t.uid)
+        return ok
+    }
+
+    /** Removes it from the bin for good. It still won't come back on a rescan. */
+    suspend fun deleteForever(uid: String) = v13.removeTrash(uid)
+
+    suspend fun emptyTrash() = v13.emptyTrash()
+
+    /** The bin keeps rows for 60 days. */
+    suspend fun purgeOldTrash() = v13.purgeTrashBefore(System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000)
 
     // ---- Family export / merge / Drive sync ----
 
@@ -284,7 +372,11 @@ class FinanceRepository(
         val (incoming, bad) = CsvCodec.decode(text)
         val me = ownerName.value
         val existing = db.transactions().allOnce().map { it.toShared(me) }
-        val fresh = Dedupe.newOnly(existing, incoming)
+        // Rows deleted on this phone stay deleted, even if another phone still has them.
+        val deleted = v13.keys()
+        val deletedUids = deleted.mapTo(HashSet()) { it.uid }
+        val deletedSms = deleted.mapNotNullTo(HashSet()) { it.smsKey }
+        val fresh = Dedupe.newOnly(existing, incoming).filter { it.uid !in deletedUids && (it.smsKey == null || it.smsKey !in deletedSms) }
         val known = db.categories().names().toMutableSet()
         var added = 0
         val modes = ArrayList<TxnModeEntity>()
@@ -389,7 +481,7 @@ class FinanceRepository(
 
     data class MonthTotals(val incomeMinor: Long, val expenseMinor: Long)
 
-    suspend fun monthTotals(month: YearMonth = YearMonth.now()): MonthTotals {
+    suspend fun monthTotals(month: YearMonth = monthCycle.value.current()): MonthTotals {
         val list = monthRows(month).filterNot { it.excluded }
         return MonthTotals(
             incomeMinor = list.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor },
@@ -400,11 +492,13 @@ class FinanceRepository(
     /** Sum of all monthly category budgets (0 when none are set). */
     suspend fun totalBudget(): Long = db.categories().allOnce().sumOf { it.monthlyBudgetMinor ?: 0L }
 
+    /** Rows that count towards the budget month [month], using the month setting. */
     private suspend fun monthRows(month: YearMonth): List<TransactionEntity> {
         val zone = ZoneId.systemDefault()
-        val from = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val to = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-        return db.transactions().rangeOnce(from, to)
+        val cycle = monthCycle.value
+        val range = cycle.loadRange(month, zone)
+        return db.transactions().rangeOnce(range.first, range.last)
+            .filter { cycle.periodOf(it.timestamp, it.type, it.category, zone) == month }
     }
 
     /** Refreshes everything that depends on the totals: budget alerts and the home screen widget. */
@@ -415,7 +509,7 @@ class FinanceRepository(
 
     /** Sends a notification the first time a category passes 80% and 100% of its budget each month. */
     suspend fun checkBudgets() {
-        val month = YearMonth.now()
+        val month = monthCycle.value.current()
         val budgets = db.categories().allOnce().mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap()
         if (budgets.isEmpty()) return
         val spent = monthRows(month).filter { !it.excluded && it.type == TxnType.DEBIT }
@@ -522,14 +616,20 @@ class FinanceRepository(
 
     /** Every stored transaction, in the shape the statement matcher compares against. */
     suspend fun existingForImport(): List<ExistingTxn> = withContext(Dispatchers.IO) {
-        db.transactions().allOnce().map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey) }
+        val stored = db.transactions().allOnce().map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey) }
+        // Statement lines the user deleted count as already imported, so they stay deleted.
+        val deleted = v13.keys().mapNotNull { k -> k.smsKey?.takeIf { it.startsWith("STMT|") } }
+            .map { ExistingTxn(-1, com.myfinance.core.TxnType.DEBIT, 0, null, null, it) }
+        stored + deleted
     }
 
     /** Stores the statement rows the user chose to import, categorised like SMS. Returns how many were added. */
     suspend fun addImported(rows: List<ImportCandidate>): Int = withContext(Dispatchers.IO) {
         val cat = categorizer()
+        val deletedUids = v13.keys().mapTo(HashSet()) { it.uid }
         var added = 0
         for (c in rows) {
+            if (c.uid in deletedUids) continue
             val r = c.row
             val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
             if (rule?.ignore == true) continue
@@ -556,6 +656,9 @@ class FinanceRepository(
         private const val KEY_BUDGET_SENT = "budget_alerts_sent"
         private const val KEY_REMINDERS_SENT = "reminders_sent"
         private const val KEY_BACKFILLED = "backfilled_v11"
+        private const val KEY_CYCLE_START = "month_start_day"
+        private const val KEY_SALARY_FROM = "salary_next_month_from_day"
+        private const val KEY_LAST_SCAN = "last_inbox_scan"
 
         private val dayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM")
 

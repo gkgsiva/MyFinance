@@ -45,7 +45,7 @@ object SpendWidget {
         val ids = manager.getAppWidgetIds(ComponentName(context, SpendWidgetProvider::class.java))
         if (ids.isEmpty()) return
         val repo = (context.applicationContext as MyFinanceApp).repository
-        val month = YearMonth.now()
+        val month = repo.monthCycle.value.current()
         val totals = repo.monthTotals(month)
         val budget = repo.totalBudget()
 

@@ -50,12 +50,13 @@ import java.time.format.DateTimeFormatter
 
 /** Family sharing plus category & budget management. */
 @Composable
-fun CategoriesScreen(vm: FinanceViewModel, onImportStatement: () -> Unit = {}) {
+fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
     val categories by vm.categories.collectAsState()
     val summary by vm.summary.collectAsState()
     val owner by vm.ownerName.collectAsState()
     val sync by vm.syncState.collectAsState()
     val spentBy = summary.byCategory.associate { it.key to it.totalMinor }
+    val trash by vm.recentlyDeleted.collectAsState()
 
     var editing by remember { mutableStateOf<CategoryEntity?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -89,6 +90,24 @@ fun CategoriesScreen(vm: FinanceViewModel, onImportStatement: () -> Unit = {}) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Messages & deleted items", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = { open("rescan") }) { Text("Rescan messages") }
+                        FilledTonalButton(onClick = { open("trash") }) {
+                            Text(if (trash.isEmpty()) "Recently deleted" else "Recently deleted (${trash.size})")
+                        }
+                    }
+                    Text(
+                        "Deleted a transaction by mistake? Restore it from Recently deleted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Bank and card statements", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Fill in past years from downloaded bank statements and credit card bills (PDF, Excel or CSV). " +
@@ -96,7 +115,7 @@ fun CategoriesScreen(vm: FinanceViewModel, onImportStatement: () -> Unit = {}) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = onImportStatement, modifier = Modifier.fillMaxWidth()) { Text("Import statements") }
+                    Button(onClick = { open("import-statement") }, modifier = Modifier.fillMaxWidth()) { Text("Import statements") }
                 }
             }
         }
@@ -150,6 +169,8 @@ fun CategoriesScreen(vm: FinanceViewModel, onImportStatement: () -> Unit = {}) {
                 }
             }
         }
+
+        item { MonthCycleCard(vm) }
 
         item {
             Card(Modifier.fillMaxWidth()) {
