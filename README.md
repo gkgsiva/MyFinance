@@ -134,6 +134,21 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in 1.6
+
+- **Auto debits are only what repeats.** A single "autopay mandate" SMS no longer makes something an auto debit. It has to have been paid at least twice, a similar amount, about a month, quarter or year apart. Family UPI / UPI Circle payments are left out. Tap a detected row and choose **Not recurring** to remove that payee for good; undo it under Settings > Hidden items.
+- **Review inbox** (Plan, and on the Today card): new payees, possible recurring payments, transfers, duplicates and late entries, each fixed or confirmed with a tap.
+- **Family UPI:** what each family member spent through your UPI, by month, with a monthly limit per person. Label a payment "Family UPI - Name" or set the person on the screen.
+- **Transfers & card bills:** money between your own accounts and card bill payments, so nothing counts twice.
+- **Split a payment** into categories from its edit screen.
+- **Search** by note text, notes in general and bill photos (Filters).
+- **Rule tester:** "Test on past entries" in the rule editor.
+- **Monthly close:** lock a finished month; imports leave it alone.
+- **Data health check:** missing months, quiet accounts, possible duplicates.
+- **Export to Excel or Sheets:** everything with labels, payees and categories.
+- **Foreign currency:** USD and other card spends converted to rupees with rates you can edit.
+- **Heavy spends:** every payment above an amount you choose in a period you choose.
+
 ### New in 1.5
 
 - **Today card** on the Overview: today's spend and everything due in the next 7 days (EMIs, auto debits, bills, renewals, money lent), with quick add buttons.

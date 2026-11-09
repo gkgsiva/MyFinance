@@ -13,15 +13,23 @@ data class TxnFilter(
     val maxAmountMinor: Long? = null,
     val type: TxnType? = null,
     val mode: PaymentMode? = null,
+    /** Only entries with a bill photo. */
+    val withPhoto: Boolean = false,
+    /** Only entries whose note contains this text (any note when "*"). */
+    val noteText: String = "",
 ) {
     /** True when anything beyond the text box and category is set (shown as a badge on the filter button). */
     val hasAdvanced: Boolean
         get() = fromMillis != null || toMillis != null || owner != null || account != null ||
-            minAmountMinor != null || maxAmountMinor != null || type != null || mode != null
+            minAmountMinor != null || maxAmountMinor != null || type != null || mode != null || withPhoto || noteText.isNotBlank()
 
     val hasDateRange: Boolean get() = fromMillis != null || toMillis != null
 
-    fun matches(t: TxnLite, note: String? = null): Boolean {
+    fun matches(t: TxnLite, note: String? = null, hasPhoto: Boolean = false): Boolean {
+        if (withPhoto && !hasPhoto) return false
+        val noteNeedle = noteText.trim()
+        if (noteNeedle == "*" && note.isNullOrBlank()) return false
+        if (noteNeedle.isNotEmpty() && noteNeedle != "*" && note?.contains(noteNeedle, ignoreCase = true) != true) return false
         if (fromMillis != null && t.timestamp < fromMillis) return false
         if (toMillis != null && t.timestamp > toMillis) return false
         if (category != null && t.category != category) return false

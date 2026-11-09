@@ -171,6 +171,9 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                     item.account?.let { Text("Account: $it") }
                     if (item.occurrences > 0) Muted("Found ${item.occurrences} payments in your SMS.")
                     Muted("Hide takes it off this list but keeps it in the totals above.")
+                    if (com.myfinance.core.AutoDebits.payeeKey(item) != null) {
+                        Muted("Not recurring takes this payee off the list and out of the totals, e.g. a one-time payment or a family UPI payment. Labelling a payment \"Family UPI\" does the same.")
+                    }
                 }
             },
             confirmButton = {
@@ -190,6 +193,9 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                 Row {
                     if (item.source == AutoDebitSource.MANUAL) {
                         TextButton(onClick = { selected = null; item.planId?.let(vm::deleteAutoPlan) }) { Text("Delete") }
+                    }
+                    if (com.myfinance.core.AutoDebits.payeeKey(item) != null) {
+                        TextButton(onClick = { selected = null; vm.markNotRecurring(item) }) { Text("Not recurring") }
                     }
                     if (item.key in hiddenKeys) {
                         TextButton(onClick = { selected = null; vm.unhideAutoDebit(item.key) }) { Text("Unhide") }

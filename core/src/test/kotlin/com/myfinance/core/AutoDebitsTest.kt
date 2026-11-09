@@ -56,12 +56,63 @@ class AutoDebitsTest {
     }
 
     @Test
-    fun singleMandateDebitGivesEstimatedMonthlyDate() {
+    fun singleMandateDebitIsNotRecurring() {
         val today = LocalDate.of(2026, 11, 9)
         val items = AutoDebits.mandateSeries(listOf(debit(LocalDate.of(2026, 10, 28), 150_000, "ACME LOANS", "Rs 1500 debited via ECS")), today, zone)
+        assertTrue(items.isEmpty())
+    }
+
+    @Test
+    fun repeatedMandateDebitIsMonthly() {
+        val today = LocalDate.of(2026, 11, 9)
+        val sms = "Rs 1500 debited via ECS"
+        val items = AutoDebits.mandateSeries(
+            listOf(debit(LocalDate.of(2026, 9, 28), 150_000, "ACME LOANS", sms), debit(LocalDate.of(2026, 10, 28), 150_000, "ACME LOANS", sms)),
+            today, zone,
+        )
         val i = items.single()
         assertEquals(LocalDate.of(2026, 11, 28), i.nextDate)
-        assertTrue(i.estimated)
+        assertEquals(2, i.occurrences)
+    }
+
+    @Test
+    fun mandateDebitsWithDifferentAmountsOrOddGapsAreNotRecurring() {
+        val today = LocalDate.of(2026, 11, 9)
+        val sms = "Rs debited via UPI autopay mandate"
+        val amounts = AutoDebits.mandateSeries(
+            listOf(debit(LocalDate.of(2026, 9, 28), 40_000, "SWIGGY", sms), debit(LocalDate.of(2026, 10, 28), 150_000, "SWIGGY", sms)),
+            today, zone,
+        )
+        assertTrue(amounts.isEmpty())
+        val gaps = AutoDebits.mandateSeries(
+            listOf(debit(LocalDate.of(2026, 10, 20), 50_000, "ZOMATO", sms), debit(LocalDate.of(2026, 10, 28), 50_000, "ZOMATO", sms)),
+            today, zone,
+        )
+        assertTrue(gaps.isEmpty())
+    }
+
+    @Test
+    fun familyUpiPaymentsAreNotAutoDebits() {
+        val today = LocalDate.of(2026, 11, 9)
+        val circle = "Rs 500 debited from A/c XX1234 via UPI Circle autopay mandate by Priya"
+        val debits = listOf(debit(LocalDate.of(2026, 9, 28), 50_000, "CANTEEN", circle), debit(LocalDate.of(2026, 10, 28), 50_000, "CANTEEN", circle))
+        assertTrue(AutoDebits.mandateSeries(debits, today, zone).isEmpty())
+        assertTrue(AutoDebits.isFamilyUpi(debits[0]))
+        // A label with "family" in it marks it too, and keeps it out of the recurring rows.
+        val labelled = listOf(
+            DebitRecord(TxnLite(50_000, TxnType.DEBIT, "Other", "BOOK STORE", null, at(LocalDate.of(2026, 10, 28))), "autopay mandate", listOf("Family UPI")),
+        )
+        val rec = RecurringPayment("BOOK STORE", "Other", 50_000, Cadence.MONTHLY, LocalDate.of(2026, 10, 28), LocalDate.of(2026, 11, 28), 3)
+        assertTrue(AutoDebits.build(emptyList(), labelled, listOf(rec), emptyList(), emptySet(), today, zone).isEmpty())
+    }
+
+    @Test
+    fun notRecurringPayeeStaysOff() {
+        val today = LocalDate.of(2026, 11, 9)
+        val rec = RecurringPayment("Gym Club", "Other", 100_000, Cadence.MONTHLY, LocalDate.of(2026, 10, 28), LocalDate.of(2026, 11, 28), 3)
+        val shown = AutoDebits.build(emptyList(), emptyList(), listOf(rec), emptyList(), emptySet(), today, zone)
+        val key = AutoDebits.payeeKey(shown.single())!!
+        assertTrue(AutoDebits.build(emptyList(), emptyList(), listOf(rec), emptyList(), emptySet(), today, zone, notRecurring = setOf(key)).isEmpty())
     }
 
     @Test
@@ -70,6 +121,7 @@ class AutoDebitsTest {
         val debits = listOf(
             debit(LocalDate.of(2026, 10, 5), 2_500_000, "BAJAJ FINANCE", "NACH debit Bajaj Finance"),
             debit(LocalDate.of(2026, 11, 4), 2_500_000, "BAJAJ FINANCE", "NACH debit Bajaj Finance"),
+            debit(LocalDate.of(2026, 10, 1), 64_900, "NETFLIX", "autopay Netflix"),
             debit(LocalDate.of(2026, 11, 1), 64_900, "NETFLIX", "autopay Netflix"),
         )
         val all = AutoDebits.build(listOf(plan), debits, emptyList(), emptyList(), emptySet(), today, zone)

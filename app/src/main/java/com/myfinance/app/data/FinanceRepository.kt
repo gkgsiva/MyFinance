@@ -44,11 +44,12 @@ class FinanceRepository(
     v13Db: V13Database,
     v14Db: V14Database,
     v15Db: V15Database,
+    v16Db: V16Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db, V16Database.FILE to v16Db)
     }
 
     /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
@@ -59,6 +60,26 @@ class FinanceRepository(
 
     /** v1.5: vault, lending, goal links, capital gains, subscription answers, sent reminders. */
     val v15: V15Dao = v15Db.dao()
+
+    /** v1.6: split parts, family UPI people and limits, closed months, review answers. */
+    val v16: V16Dao = v16Db.dao()
+
+    /** Rupees per unit of other currencies, for foreign spends. Starts from [com.myfinance.core.Fx.defaultRates]. */
+    private val _fxRates = MutableStateFlow(com.myfinance.core.Fx.defaultRates + com.myfinance.core.Fx.parseRates(
+        context.getSharedPreferences("myfinance", Context.MODE_PRIVATE).getString("fx_rates", null),
+    ))
+    val fxRates: StateFlow<Map<String, Double>> = _fxRates.asStateFlow()
+
+    fun setFxRate(code: String, rate: Double) {
+        val m = LinkedHashMap(_fxRates.value).apply { put(code.uppercase(), rate) }
+        _fxRates.value = m
+        prefs.edit().putString("fx_rates", com.myfinance.core.Fx.formatRates(m)).apply()
+    }
+
+    /** Months the user closed (budget months), so imports leave them alone. */
+    private suspend fun closedMonths(): Set<YearMonth> = runCatching { v16.closed().mapNotNull { com.myfinance.core.MonthClose.parse(it.month) }.toSet() }.getOrDefault(emptySet())
+
+    private fun monthOf(t: TransactionEntity): YearMonth = monthCycle.value.periodOf(t.timestamp, t.type, t.category, ZoneId.systemDefault())
 
     private val extras get() = extrasDb.extras()
     private val prefs = context.getSharedPreferences("myfinance", Context.MODE_PRIVATE)
@@ -150,7 +171,7 @@ class FinanceRepository(
 
         runCatching { v12.onSms(key, body, timestamp) }
 
-        val parsed = SmsParser.parse(sender, body, timestamp) ?: return Ingest.NOT_A_TRANSACTION
+        val parsed = SmsParser.parse(sender, body, timestamp, _fxRates.value) ?: return Ingest.NOT_A_TRANSACTION
         if (v13.isSmsDeleted(key) > 0) return Ingest.DELETED_BEFORE
         // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
         val rule = v12.ruleFor(sender, body, parsed.merchant, parsed.type, parsed.amountMinor)
@@ -169,6 +190,7 @@ class FinanceRepository(
             rawSms = body,
             reference = parsed.reference,
             balanceMinor = parsed.balanceMinor,
+            note = parsed.foreign?.let { f -> parsed.fxRate?.let { com.myfinance.core.Fx.note(f, it) } },
         )
         // A name the user gave this payee ("Vegetable seller Ravi") replaces the raw UPI id / merchant text.
         val nick = parsed.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
@@ -179,6 +201,11 @@ class FinanceRepository(
         if (added) {
             runCatching { v12.onNewTransaction(row, rule) }
             runCatching { applyLabelRules(row, parsed.merchant) }
+            // A late SMS for a month already closed: added, and shown in the review inbox.
+            runCatching {
+                val m = monthOf(row)
+                if (m in closedMonths()) v16.putLate(LateArrivalEntity(row.uid, m.toString(), System.currentTimeMillis()))
+            }
         }
         return if (added) Ingest.ADDED else Ingest.ALREADY_HERE
     }
@@ -605,9 +632,12 @@ class FinanceRepository(
         val debits = db.transactions().rangeOnce(recentFrom, System.currentTimeMillis())
             .filter { !it.excluded && it.type == TxnType.DEBIT }
             .map { com.myfinance.core.DebitRecord(it.toLite(me), it.rawSms) }
+        val notRecurring = v13.observeHidden().first().map { it.key }
+            .filter { it.startsWith(com.myfinance.core.AutoDebits.NOT_RECURRING_PREFIX) }
+            .mapTo(HashSet()) { it.removePrefix(com.myfinance.core.AutoDebits.NOT_RECURRING_PREFIX) }
         val autos = com.myfinance.core.AutoDebits.build(
             plans = v13.observePlans().first().map { it.toPlan() }, debits = debits, recurring = emptyList(), emiBills = emptyList(),
-            hidden = emptySet(), today = today,
+            hidden = emptySet(), today = today, notRecurring = notRecurring,
         ).filter { !it.nextDate.isBefore(today) }.map { Triple(it.name, it.amountMinor as Long?, it.nextDate) }
         val bills = v12.dao.bills().map { it.toBill() }.filter { !it.nextDue.isBefore(today) }.map { Triple(it.name, it.amountMinor, it.nextDue) }
         spent to (autos + bills).minByOrNull { it.third }
@@ -845,7 +875,7 @@ class FinanceRepository(
         stored + deleted
     }
 
-    data class ImportResult(val added: Int, val updated: Int)
+    data class ImportResult(val added: Int, val updated: Int, val skippedClosed: Int = 0)
 
     /**
      * Stores the statement lines the user chose to import. New lines are categorised like SMS (custom
@@ -859,8 +889,13 @@ class FinanceRepository(
         val nicknames = runCatching { v13.payeeNames().mapTo(HashSet()) { it.name } }.getOrDefault(HashSet())
         var added = 0
         var updated = 0
+        var skippedClosed = 0
+        val closed = closedMonths()
+        val zone = ZoneId.systemDefault()
         for (c in rows) {
             val r = c.row
+            // Closed months stay as they were reviewed.
+            if (closed.isNotEmpty() && monthCycle.value.periodOf(c.timestamp, r.type, DefaultCategories.OTHER, zone) in closed) { skippedClosed++; continue }
             val nick = c.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
             if (c.updatesExisting) {
                 val t = db.transactions().get(c.matchedId!!) ?: continue
@@ -894,7 +929,7 @@ class FinanceRepository(
             }
         }
         onDataChanged()
-        ImportResult(added, updated)
+        ImportResult(added, updated, skippedClosed)
     }
 
     /**

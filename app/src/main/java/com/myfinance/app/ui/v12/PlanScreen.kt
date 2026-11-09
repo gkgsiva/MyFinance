@@ -46,6 +46,10 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { Text("Plan", style = MaterialTheme.typography.headlineSmall) }
+        item { Tile("Review inbox", "Check", "New payees, possible recurring payments, transfers and duplicates to confirm") { open("review") } }
+        item { Tile("Heavy spends", "Over ₹…", "Every payment above an amount you set, in a period you choose") { open("heavy") } }
+        item { Tile("Family UPI", "Per person", "What your family spent through your UPI, by person and month, with limits") { open("family-upi") } }
+        item { Tile("Transfers & card bills", "Not spending", "Money between your own accounts and card bill payments, so nothing counts twice") { open("transfers") } }
         item { Tile("Ask", "In plain words", "\"How much on Swiggy last year?\" answered on your phone") { open("ask") } }
         item { Tile("Cash flow calendar", "This month", "Salary, EMIs, SIPs, bills and renewals by date") { open("calendar") } }
         item {
@@ -90,6 +94,10 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         }
         item { Tile("Tax-time pack", "For ITR", "Income, interest, capital gains and deductions for a year, as Excel") { open("tax-pack") } }
         item { Text("Settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
+        item { Tile("Monthly close", "Lock months", "Review a finished month and lock it so imports don't change it") { open("month-close") } }
+        item { Tile("Data health check", "Gaps", "Missing months, accounts gone quiet and possible duplicates") { open("health") } }
+        item { Tile("Export to Excel or Sheets", "Everything", "All entries with labels, payees and categories, plus monthly sheets") { open("export-all") } }
+        item { Tile("Foreign currency", "Rates", "USD and other card spends in rupees; edit the rates") { open("currency") } }
         item { Tile("All settings", "", "Hidden items, deleted, labels, payee names, rescan, theme and more") { open("settings") } }
         item { Tile("Custom SMS rules", "${rules.size} rules", "e.g. any SMS with SWIGGY goes to Food") { open("rules") } }
         item { Tile("App lock", if (lock) "On" else "Off", "Fingerprint or PIN to open the app") { open("security") } }

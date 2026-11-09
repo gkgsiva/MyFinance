@@ -97,8 +97,9 @@ data class TxnMeta(
     val hiddenIds: Set<Long> = emptySet(),
     val labelsById: Map<Long, List<String>> = emptyMap(),
 ) {
-    fun labels(t: TransactionEntity): List<String> = labelsByUid[t.uid].orEmpty()
-    fun hidden(t: TransactionEntity): Boolean = t.uid in hiddenUids
+    /** Parts of a split payment (uid "<payment uid>#n") share the payment's labels and hidden flag. */
+    fun labels(t: TransactionEntity): List<String> = labelsByUid[t.uid.substringBefore('#')].orEmpty()
+    fun hidden(t: TransactionEntity): Boolean = t.uid.substringBefore('#') in hiddenUids
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -144,8 +145,11 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     private val mergedModes: StateFlow<Map<String, String>> =
         repo.mergedModes.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /** Every transaction, with split payments shown as their parts (see [SplitView]). */
     val allTransactions: StateFlow<List<TransactionEntity>> =
-        repo.allTransactions().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        combine(repo.allTransactions(), repo.v16.observeParts()) { list, parts -> SplitView.expand(list, parts) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Labels and hidden flags. Hidden transactions still count in every total; they just aren't listed. */
     val txnMeta: StateFlow<TxnMeta> =
@@ -153,11 +157,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             val hiddenUids = hidden.mapTo(HashSet()) { it.uid }
             val byUid = labels.groupBy({ it.uid }, { it.label }).mapValues { (_, v) -> v.sorted() }
             val idOf = all.associate { it.uid to it.id }
+            // Parts of a split payment carry the payment's labels and hidden flag.
+            val partIds = all.filter { '#' in it.uid }.groupBy({ it.uid.substringBefore('#') }, { it.id })
+            fun ids(uid: String) = listOfNotNull(idOf[uid]) + partIds[uid].orEmpty()
             TxnMeta(
                 hiddenUids = hiddenUids,
                 labelsByUid = byUid,
-                hiddenIds = hiddenUids.mapNotNullTo(HashSet()) { idOf[it] },
-                labelsById = byUid.mapNotNull { (uid, l) -> idOf[uid]?.let { it to l } }.toMap(),
+                hiddenIds = hiddenUids.flatMapTo(HashSet()) { ids(it) },
+                labelsById = byUid.flatMap { (uid, l) -> ids(uid).map { it to l } }.toMap(),
             )
         }
             .flowOn(Dispatchers.Default)
@@ -216,6 +223,10 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     }
         .stateIn(viewModelScope, SharingStarted.Eagerly, FinanceSummary.of(emptyList()))
 
+    /** Transactions with a bill photo, by uid. */
+    private val photoUids: StateFlow<Set<String>> =
+        repo.v12.receiptUids.map { it.toSet() }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
+
     /** The filter actually applied: the search box and category chip plus the advanced options. */
     val effectiveFilter: StateFlow<TxnFilter> =
         combine(query, categoryFilter, advancedFilter) { q, c, a -> a.copy(text = q, category = c) }
@@ -228,17 +239,18 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val filteredTransactions: StateFlow<List<TransactionEntity>> =
         combine(
             combine(monthTransactions, allTransactions, effectiveFilter) { m, a, f -> Triple(m, a, f) },
-            combine(mergedModes, ownerName) { modes, me -> modes to me },
+            combine(mergedModes, ownerName, photoUids) { modes, me, photos -> Triple(modes, me, photos) },
             combine(txnMeta, labelFilter, showHidden) { meta, label, showH -> Triple(meta, label, showH) },
-        ) { (month, all, f), (modes, me), (meta, label, showH) ->
+        ) { (month, all, f), (modes, me, photos), (meta, label, showH) ->
             val source = if (f.hasDateRange) all else month
             source.filter { t ->
                 (showH || !meta.hidden(t)) &&
                     (label == null || label in meta.labels(t)) &&
                     t.toLite(me, modes).let { lite ->
-                        f.matches(lite, t.note) ||
+                        val photo = t.uid.substringBefore('#') in photos
+                        f.matches(lite, t.note, photo) ||
                             // The search box also finds labels.
-                            (f.text.isNotBlank() && meta.labels(t).any { it.contains(f.text.trim(), ignoreCase = true) } && f.copy(text = "").matches(lite, t.note))
+                            (f.text.isNotBlank() && meta.labels(t).any { it.contains(f.text.trim(), ignoreCase = true) } && f.copy(text = "").matches(lite, t.note, photo))
                     }
             }
         }
@@ -409,9 +421,15 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun markBillPaid(id: Long) = viewModelScope.launch { repo.markBillPaid(id, true) }
     fun deleteBill(id: Long) = viewModelScope.launch { repo.deleteBill(id) }
 
-    suspend fun load(id: Long): TransactionEntity? = repo.get(id)
+    /** A part of a split payment opens the payment itself. */
+    suspend fun load(id: Long): TransactionEntity? = repo.get(SplitView.originalId(id))
 
-    fun save(txn: TransactionEntity, learnRule: Boolean) = viewModelScope.launch { repo.save(txn, learnRule) }
+    private suspend fun stored(txn: TransactionEntity): TransactionEntity? =
+        if (txn.id < 0) repo.get(SplitView.originalId(txn.id)) else txn
+
+    fun save(txn: TransactionEntity, learnRule: Boolean) = viewModelScope.launch {
+        if (txn.id >= 0) repo.save(txn, learnRule)
+    }
     // ---- Delete, undo and the Recently deleted bin ----
 
     private val _justDeleted = MutableStateFlow<TransactionEntity?>(null)
@@ -420,8 +438,9 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val justDeleted: StateFlow<TransactionEntity?> = _justDeleted.asStateFlow()
 
     fun delete(txn: TransactionEntity) = viewModelScope.launch {
-        repo.delete(txn)
-        _justDeleted.value = txn
+        val t = stored(txn) ?: return@launch
+        repo.delete(t)
+        _justDeleted.value = t
     }
 
     fun undoDelete() {
@@ -446,9 +465,10 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** EMIs, auto debits, SIPs, insurance and subscriptions with their next expected date, soonest first. */
     private val autoDebitsWithHidden: StateFlow<Pair<List<AutoDebitItem>, Set<String>>> =
-        combine(autoPlans, allTransactions, recurring, openBills, hiddenAuto) { plans, all, rec, bills, hidden ->
+        combine(autoPlans, allTransactions, recurring, openBills, combine(hiddenAuto, txnMeta) { h, m -> h to m }) { plans, all, rec, bills, (hidden, meta) ->
             val me = ownerName.value
-            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms) }
+            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms, meta.labels(it)) }
+            val keys = hidden.mapTo(HashSet()) { it.key }
             AutoDebits.build(
                 plans = plans.map { it.toPlan() },
                 debits = debits,
@@ -456,7 +476,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
                 emiBills = bills.map { it.toBill() },
                 hidden = emptySet(),
                 today = LocalDate.now(),
-            ) to hidden.mapTo(HashSet()) { it.key }
+                notRecurring = keys.filter { it.startsWith(AutoDebits.NOT_RECURRING_PREFIX) }.mapTo(HashSet()) { it.removePrefix(AutoDebits.NOT_RECURRING_PREFIX) },
+            ) to keys
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<AutoDebitItem>() to emptySet())
@@ -485,6 +506,16 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun unhideAutoDebits() = viewModelScope.launch { repo.v13.unhideAll() }
     fun unhideAutoDebit(key: String) = viewModelScope.launch { repo.v13.unhide(key) }
 
+    /** Takes a detected payee off the auto debit list and out of its totals, for good (undo under Settings > Hidden items). */
+    fun markNotRecurring(item: AutoDebitItem) = viewModelScope.launch {
+        AutoDebits.payeeKey(item)?.let { repo.v13.hide(HiddenAutoDebitEntity(AutoDebits.NOT_RECURRING_PREFIX + it)) }
+    }
+
+    /** Payees marked "Not recurring", as stored keys. */
+    val notRecurringKeys: StateFlow<List<String>> =
+        hiddenAuto.map { list -> list.map { it.key }.filter { it.startsWith(AutoDebits.NOT_RECURRING_PREFIX) }.sorted() }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     // ---- Labels, hiding and payee names ----
 
     suspend fun labelsOf(uid: String): List<String> = repo.labelsOf(uid)
@@ -510,7 +541,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun setHidden(txn: TransactionEntity, hidden: Boolean) = viewModelScope.launch {
-        repo.setLabels(txn, repo.labelsOf(txn.uid), hidden, forMerchant = false)
+        val t = stored(txn) ?: return@launch
+        repo.setLabels(t, repo.labelsOf(t.uid), hidden, forMerchant = false)
     }
 
     /** Saved payee names: name -> the raw payee texts it replaces. */
@@ -590,4 +622,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** v1.5: Ask, tax-time pack, vault, subscriptions, calendar, goal links, lending, auto-backup, Today card. */
     val v15 = V15State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits, recurring)
+
+    /** v1.6: review inbox, family UPI, transfers, splits, monthly close, health check, rule tester, export, currencies, heavy spends. */
+    val v16 = V16State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits)
 }

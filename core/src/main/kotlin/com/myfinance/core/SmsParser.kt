@@ -84,13 +84,21 @@ object SmsParser {
         RegexOption.IGNORE_CASE,
     )
 
-    fun parse(sender: String, body: String, timestamp: Long): ParsedTransaction? {
+    /**
+     * [rates] are rupees per unit of other currencies: a card spend in USD with no rupee amount is converted
+     * with them, and the foreign amount is returned in [ParsedTransaction.foreign].
+     */
+    fun parse(sender: String, body: String, timestamp: Long, rates: Map<String, Double> = Fx.defaultRates): ParsedTransaction? {
         val text = body.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
         if (text.isEmpty()) return null
         if (ignoreRegex.containsMatchIn(text)) return null
 
-        val amountMatch = findTransactionAmount(text) ?: return null
-        val amount = parseAmountToMinor(amountMatch.groupValues[1]) ?: return null
+        val amountMatch = findTransactionAmount(text)
+        // A foreign amount before any rupee amount ("Spent USD 12.99 on card ..."): convert it.
+        val foreign = Fx.find(text)?.takeIf { (_, at) -> amountMatch == null || at < amountMatch.range.first }?.first
+        val rate = foreign?.let { Fx.rate(it.code, rates) }
+        val amount = if (foreign != null && rate != null) Fx.toInrMinor(foreign, rate)
+            else parseAmountToMinor((amountMatch ?: return null).groupValues[1]) ?: return null
         if (amount <= 0) return null
 
         val type = detectType(text) ?: return null
@@ -106,6 +114,8 @@ object SmsParser {
             reference = refRegex.find(text)?.groupValues?.get(1),
             balanceMinor = findBalance(text),
             timestamp = timestamp,
+            foreign = foreign.takeIf { rate != null },
+            fxRate = rate,
         )
     }
 

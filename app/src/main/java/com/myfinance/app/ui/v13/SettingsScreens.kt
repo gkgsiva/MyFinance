@@ -56,7 +56,8 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     }
-    val hiddenCount = hiddenTxns.size + hiddenAuto.size
+    val notRecurring by vm.notRecurringKeys.collectAsState()
+    val hiddenCount = hiddenTxns.size + hiddenAuto.size + notRecurring.size
 
     SimpleScreen(title = "Settings", onBack = onBack) {
         item { Group("Hidden & deleted") }
@@ -153,12 +154,13 @@ private fun SettingTile(title: String, value: String, hint: String, onClick: () 
 fun HiddenItemsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Unit) {
     val txns by vm.hiddenTransactions.collectAsState()
     val auto by vm.hiddenAutoDebitItems.collectAsState()
+    val notRecurring by vm.notRecurringKeys.collectAsState()
 
     SimpleScreen(
         title = "Hidden items",
         onBack = onBack,
         actions = {
-            if (txns.isNotEmpty() || auto.isNotEmpty()) {
+            if (txns.isNotEmpty() || auto.isNotEmpty() || notRecurring.isNotEmpty()) {
                 TextButton(onClick = { vm.unhideAllTxns(); vm.unhideAutoDebits() }) { Text("Unhide all") }
             }
         },
@@ -183,6 +185,18 @@ fun HiddenItemsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -
                 onOpen = null,
                 onUnhide = { vm.unhideAutoDebit(a.key) },
             )
+        }
+        if (notRecurring.isNotEmpty()) {
+            item { Text("Not recurring", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
+            item { Muted("Payees you marked as not a recurring payment. They are left out of auto debits and their totals.") }
+            items(notRecurring, key = { "n$it" }) { k ->
+                HiddenRow(
+                    title = k.removePrefix(com.myfinance.core.AutoDebits.NOT_RECURRING_PREFIX).replaceFirstChar(Char::uppercase),
+                    detail = "Not a recurring payment",
+                    onOpen = null,
+                    onUnhide = { vm.unhideAutoDebit(k) },
+                )
+            }
         }
     }
 }
