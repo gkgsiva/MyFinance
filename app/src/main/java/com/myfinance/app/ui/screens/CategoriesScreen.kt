@@ -155,6 +155,8 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
             }
         }
 
+        item { MonthCycleCard(vm) }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
