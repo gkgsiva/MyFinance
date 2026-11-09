@@ -5,14 +5,23 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.myfinance.app.MyFinanceApp
+import com.myfinance.app.data.AutoDebitEntity
 import com.myfinance.app.data.BillEntity
+import com.myfinance.app.data.DeletedTxnEntity
+import com.myfinance.app.data.HiddenAutoDebitEntity
 import com.myfinance.app.data.CategoryEntity
 import com.myfinance.app.data.FinanceRepository
 import com.myfinance.app.data.TransactionEntity
 import com.myfinance.app.data.accountLabel
 import com.myfinance.app.data.toLite
 import com.myfinance.app.report.PdfStatement
+import com.myfinance.core.AutoDebitItem
+import com.myfinance.core.AutoDebitPlan
+import com.myfinance.core.AutoDebitTotals
+import com.myfinance.core.AutoDebits
 import com.myfinance.core.BalanceReading
+import com.myfinance.core.DebitRecord
+import com.myfinance.core.TxnType
 import com.myfinance.core.BillParser
 import com.myfinance.core.FinanceSummary
 import com.myfinance.core.FySummary
@@ -34,6 +43,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -46,7 +56,13 @@ import java.time.ZoneId
 
 enum class GroupBy(val label: String) { CATEGORY("Category"), MERCHANT("Merchant"), ACCOUNT("Account"), PERSON("Person") }
 
-data class ImportState(val running: Boolean = false, val lastAdded: Int? = null, val error: String? = null)
+data class ImportState(
+    val running: Boolean = false,
+    val lastAdded: Int? = null,
+    val error: String? = null,
+    /** Full result of the last scan, for the "Rescan messages" screen. */
+    val scan: FinanceRepository.ScanResult? = null,
+)
 
 data class SyncState(val running: Boolean = false, val message: String? = null)
 
@@ -216,12 +232,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         advancedFilter.value = TxnFilter()
     }
 
-    fun importInbox() {
+    /** Reads the SMS inbox. [monthsBack] 0 = everything; see [FinanceRepository.importInbox]. */
+    fun importInbox(monthsBack: Int = 12, bringBackDeleted: Boolean = false) {
         if (_import.value.running) return
         _import.value = ImportState(running = true)
         viewModelScope.launch {
             _import.value = try {
-                ImportState(lastAdded = repo.importInbox())
+                val r = repo.importInbox(monthsBack, bringBackDeleted)
+                ImportState(lastAdded = r.added, scan = r)
             } catch (e: SecurityException) {
                 ImportState(error = "SMS permission is needed to import messages.")
             } catch (e: Exception) {
@@ -310,7 +328,66 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun load(id: Long): TransactionEntity? = repo.get(id)
 
     fun save(txn: TransactionEntity, learnRule: Boolean) = viewModelScope.launch { repo.save(txn, learnRule) }
-    fun delete(txn: TransactionEntity) = viewModelScope.launch { repo.delete(txn) }
+    // ---- Delete, undo and the Recently deleted bin ----
+
+    private val _justDeleted = MutableStateFlow<TransactionEntity?>(null)
+
+    /** The transaction deleted a moment ago, for the "Undo" snackbar. */
+    val justDeleted: StateFlow<TransactionEntity?> = _justDeleted.asStateFlow()
+
+    fun delete(txn: TransactionEntity) = viewModelScope.launch {
+        repo.delete(txn)
+        _justDeleted.value = txn
+    }
+
+    fun undoDelete() {
+        val t = _justDeleted.value ?: return
+        _justDeleted.value = null
+        viewModelScope.launch { repo.restore(t.uid) }
+    }
+
+    fun clearJustDeleted() { _justDeleted.value = null }
+
+    val recentlyDeleted: StateFlow<List<DeletedTxnEntity>> =
+        repo.recentlyDeleted.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun restore(uid: String) = viewModelScope.launch { repo.restore(uid) }
+    fun deleteForever(uid: String) = viewModelScope.launch { repo.deleteForever(uid) }
+    fun emptyTrash() = viewModelScope.launch { repo.emptyTrash() }
+
+    // ---- Auto debits & EMIs ----
+
+    private val autoPlans = repo.v13.observePlans()
+    private val hiddenAuto = repo.v13.observeHidden()
+
+    /** EMIs, auto debits, SIPs, insurance and subscriptions with their next expected date, soonest first. */
+    val autoDebits: StateFlow<List<AutoDebitItem>> =
+        combine(autoPlans, allTransactions, recurring, openBills, hiddenAuto) { plans, all, rec, bills, hidden ->
+            val me = ownerName.value
+            val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms) }
+            AutoDebits.build(
+                plans = plans.map { it.toPlan() },
+                debits = debits,
+                recurring = rec,
+                emiBills = bills.map { it.toBill() },
+                hidden = hidden.mapTo(HashSet()) { it.key },
+                today = LocalDate.now(),
+            )
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val autoDebitTotals: StateFlow<AutoDebitTotals> =
+        autoDebits.map { AutoDebits.totals(it, LocalDate.now()) }
+            .stateIn(viewModelScope, SharingStarted.Lazily, AutoDebitTotals(0, 0, 0))
+
+    suspend fun autoPlan(id: String): AutoDebitPlan? =
+        autoPlans.first().firstOrNull { it.id == id }?.toPlan()
+
+    fun saveAutoPlan(p: AutoDebitPlan) = viewModelScope.launch { repo.v13.upsertPlan(AutoDebitEntity.from(p)) }
+    fun deleteAutoPlan(id: String) = viewModelScope.launch { repo.v13.deletePlan(id) }
+    fun hideAutoDebit(key: String) = viewModelScope.launch { repo.v13.hide(HiddenAutoDebitEntity(key)) }
+    fun unhideAutoDebits() = viewModelScope.launch { repo.v13.unhideAll() }
 
     fun addCategory(name: String, budgetMinor: Long?) = viewModelScope.launch { repo.addCategory(name, budgetMinor) }
     fun updateCategory(c: CategoryEntity) = viewModelScope.launch { repo.updateCategory(c) }

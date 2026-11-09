@@ -58,6 +58,9 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
             ) { open("goals") }
         }
         item {
+            Tile("Auto debits & EMIs", "Next dates", "Loan EMIs, SIPs, insurance, NACH and autopay debits") { open("autodebits") }
+        }
+        item {
             Tile("Bill reminders", if (bills.isEmpty()) "Add a bill" else "${bills.size} bills", if (dueSoon > 0) "$dueSoon due soon" else "Electricity, mobile, insurance, school fees") { open("bills") }
         }
         item {

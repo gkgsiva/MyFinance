@@ -62,6 +62,19 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Custom SMS rules**: "any SMS with SWIGGY goes to Food", with the option to rename, leave out of
   totals, ignore, or tag a tax section; match on merchant, SMS text or sender, with a live preview.
 
+### New in 1.3
+
+- **Auto debits & EMIs** (Plan tab, or Bills, payments & balances): one list of loan EMIs, SIPs,
+  insurance premiums, subscriptions and NACH / ECS / e-mandate / autopay debits, each with its next
+  expected date, instalments left and the total due in the next 30 days. Add your own with the due
+  date and number of instalments; a matching debit SMS ticks off that month. Ones found in SMS can be
+  added to your list or hidden.
+- **Undo and Recently deleted**: deleting a transaction shows an Undo button, and Manage > Recently
+  deleted keeps deleted transactions for 60 days so you can restore them exactly as they were.
+- **Rescan messages** (Manage tab): re-read the SMS inbox for the last 1, 3, 6 or 12 months or all of
+  it. Nothing is added twice, edited transactions keep your changes, and deleted ones stay deleted
+  unless you tick "bring back".
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:
