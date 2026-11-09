@@ -88,7 +88,7 @@ object InvestmentSmsParser {
     private val fundName = Regex("""\b(?:in|of|from|for|to)\s+(?:the\s+)?(?:scheme\s+)?(?!(?:rs\.?|inr|₹)\s*[0-9])([A-Z][A-Za-z0-9&().\- ]{2,60}?(?:fund|scheme|etf|plan)(?:\s*-\s*[A-Za-z ]+?)?)(?=\s+(?:has|is|was|for|at|on|folio|units|allotted|processed|nav|with)\b|[.,;]|$)""", RegexOption.IGNORE_CASE)
     private val stockTrade = Regex("""\b(bought|sold|buy|sell)\s+([0-9]+)\s+(?:shares?\s+of\s+)?([A-Z][A-Z0-9&\-]{1,20})\b""", RegexOption.IGNORE_CASE)
     private val currentValue = Regex("""(?:current|market|valuation)\s+value\s*(?:is|:|of)?\s*(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE)
-    private val epfBalance = Regex("""balance[^0-9₹]{0,60}?(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE)
+    private val epfBalance = Regex("""balance.{0,80}?(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE)
     private val epfContribution = Regex("""contribution\s+of\s+(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE)
     private val ignore = Regex("""\botp\b|\bfailed\b|\brejected\b|\bunsuccessful\b|will be debited|is due|\breminder\b|\bmandate\s+registered""", RegexOption.IGNORE_CASE)
 

@@ -224,7 +224,7 @@ class SubscriptionAndCalendarTest {
         assertEquals(2, r.items.size)
         val n = r.items.first { it.name == "Netflix" }
         assertTrue(SubFlag.PRICE_HIKE in n.flags)
-        assertEquals(499_00, n.previousMinor)
+        assertEquals(499_00L, n.previousMinor)
         assertTrue(SubFlag.SAME_KIND in n.flags)
         val h = r.items.first { it.name == "JioHotstar" }
         assertEquals(Cadence.YEARLY, h.cadence)
@@ -274,7 +274,7 @@ class EpfAndOnceBillTest {
         assertNotNull(e)
         assertEquals(AssetKind.EPF, e.kind)
         assertEquals(3_600_00, e.amountMinor)
-        assertEquals(4_56_789_00, e.currentValueMinor)
+        assertEquals(4_56_789_00L, e.currentValueMinor)
     }
 
     @Test fun onlyOnceBillIsNotRepeated() {
