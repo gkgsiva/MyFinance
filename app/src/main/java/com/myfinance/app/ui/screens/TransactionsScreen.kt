@@ -59,6 +59,10 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val categories by vm.categories.collectAsState()
     val options by vm.filterOptions.collectAsState()
     val sync by vm.syncState.collectAsState()
+    val meta by vm.txnMeta.collectAsState()
+    val usedLabels by vm.usedLabels.collectAsState()
+    val labelFilter by vm.labelFilter.collectAsState()
+    val showHidden by vm.showHidden.collectAsState()
     val colorOf = categories.associate { it.name to Color(it.color) }
     val fallback = MaterialTheme.colorScheme.outline
 
@@ -103,6 +107,10 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("Export to Excel") }, onClick = { menuOpen = false; xlsxLauncher.launch("$fileStem.xlsx") })
                         DropdownMenuItem(text = { Text("Export to CSV") }, onClick = { menuOpen = false; csvLauncher.launch("$fileStem.csv") })
+                        DropdownMenuItem(
+                            text = { Text(if (showHidden) "Don't show hidden transactions" else "Show hidden transactions") },
+                            onClick = { menuOpen = false; vm.showHidden.value = !showHidden },
+                        )
                         if (advanced.hasAdvanced || query.isNotEmpty() || filter != null) {
                             DropdownMenuItem(text = { Text("Clear all filters") }, onClick = { menuOpen = false; vm.clearFilters() })
                         }
@@ -134,6 +142,20 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                         label = { Text(c.name) },
                         leadingIcon = { ColorDot(Color(c.color), 10) },
                     )
+                }
+            }
+            if (usedLabels.isNotEmpty()) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    usedLabels.forEach { l ->
+                        FilterChip(
+                            selected = labelFilter == l,
+                            onClick = { vm.labelFilter.value = if (labelFilter == l) null else l },
+                            label = { Text("#$l") },
+                        )
+                    }
                 }
             }
 
@@ -169,7 +191,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                         HorizontalDivider()
                     }
                     items(list, key = { it.id }) { t ->
-                        TransactionRow(t, colorOf[t.category] ?: fallback) { onOpen(t.id) }
+                        TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), meta.hidden(t)) { onOpen(t.id) }
                     }
                 }
             }

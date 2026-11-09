@@ -21,6 +21,8 @@ import com.myfinance.core.AutoDebitTotals
 import com.myfinance.core.AutoDebits
 import com.myfinance.core.BalanceReading
 import com.myfinance.core.DebitRecord
+import com.myfinance.core.GroupTotal
+import com.myfinance.core.Labels
 import com.myfinance.core.TxnType
 import com.myfinance.core.BillParser
 import com.myfinance.core.FinanceSummary
@@ -54,7 +56,7 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 
-enum class GroupBy(val label: String) { CATEGORY("Category"), MERCHANT("Merchant"), ACCOUNT("Account"), PERSON("Person") }
+enum class GroupBy(val label: String) { CATEGORY("Category"), LABEL("Label"), MERCHANT("Merchant"), ACCOUNT("Account"), PERSON("Person") }
 
 data class ImportState(
     val running: Boolean = false,
@@ -76,7 +78,20 @@ data class ReportsData(
     val modes: List<ModeShare> = emptyList(),
     val financialYears: List<FySummary> = emptyList(),
     val unusual: List<UnusualSpend> = emptyList(),
+    /** Spending per label over the report window. */
+    val byLabel: List<GroupTotal> = emptyList(),
 )
+
+/** Labels and the "hide from lists" flag, by transaction uid and by row id. */
+data class TxnMeta(
+    val hiddenUids: Set<String> = emptySet(),
+    val labelsByUid: Map<String, List<String>> = emptyMap(),
+    val hiddenIds: Set<Long> = emptySet(),
+    val labelsById: Map<Long, List<String>> = emptyMap(),
+) {
+    fun labels(t: TransactionEntity): List<String> = labelsByUid[t.uid].orEmpty()
+    fun hidden(t: TransactionEntity): Boolean = t.uid in hiddenUids
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinanceViewModel(app: Application) : AndroidViewModel(app) {
@@ -124,6 +139,35 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val allTransactions: StateFlow<List<TransactionEntity>> =
         repo.allTransactions().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Labels and hidden flags. Hidden transactions still count in every total; they just aren't listed. */
+    val txnMeta: StateFlow<TxnMeta> =
+        combine(allTransactions, repo.v13.observeHiddenTxns(), repo.v13.observeLabels()) { all, hidden, labels ->
+            val hiddenUids = hidden.mapTo(HashSet()) { it.uid }
+            val byUid = labels.groupBy({ it.uid }, { it.label }).mapValues { (_, v) -> v.sorted() }
+            val idOf = all.associate { it.uid to it.id }
+            TxnMeta(
+                hiddenUids = hiddenUids,
+                labelsByUid = byUid,
+                hiddenIds = hiddenUids.mapNotNullTo(HashSet()) { idOf[it] },
+                labelsById = byUid.mapNotNull { (uid, l) -> idOf[uid]?.let { it to l } }.toMap(),
+            )
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, TxnMeta())
+
+    /** Labels in use, then the suggestions. */
+    val labelChoices: StateFlow<List<String>> =
+        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten()) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, Labels.suggestions)
+
+    /** Labels in use, for the filter chips. */
+    val usedLabels: StateFlow<List<String>> =
+        txnMeta.map { m -> m.labelsByUid.values.flatten().distinct().sortedBy { it.lowercase() } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val labelFilter = MutableStateFlow<String?>(null)
+    val showHidden = MutableStateFlow(false)
+
     /** Every transaction as the reports see it, including ones left out of totals. */
     private val allLiteWithExcluded: StateFlow<List<TxnLite>> =
         combine(allTransactions, ownerName, mergedModes) { list, me, modes -> list.map { it.toLite(me, modes) } }
@@ -148,6 +192,12 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** This month's spending per label, for "Where it went" on the Overview. */
+    val labelGroups: StateFlow<List<GroupTotal>> =
+        combine(monthTransactions, ownerName, txnMeta) { list, me, meta ->
+            Labels.spendByLabel(list.filterNot { it.excluded }.map { it.toLite(me) }, meta.labelsById)
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     val summary: StateFlow<FinanceSummary> = combine(monthTransactions, repo.ownerName) { list, me ->
         FinanceSummary.of(list.filterNot { it.excluded }.map { it.toLite(me) })
     }
@@ -163,9 +213,21 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
      * after the search and filters.
      */
     val filteredTransactions: StateFlow<List<TransactionEntity>> =
-        combine(monthTransactions, allTransactions, effectiveFilter, mergedModes, ownerName) { month, all, f, modes, me ->
+        combine(
+            combine(monthTransactions, allTransactions, effectiveFilter) { m, a, f -> Triple(m, a, f) },
+            combine(mergedModes, ownerName) { modes, me -> modes to me },
+            combine(txnMeta, labelFilter, showHidden) { meta, label, showH -> Triple(meta, label, showH) },
+        ) { (month, all, f), (modes, me), (meta, label, showH) ->
             val source = if (f.hasDateRange) all else month
-            source.filter { t -> f.matches(t.toLite(me, modes), t.note) }
+            source.filter { t ->
+                (showH || !meta.hidden(t)) &&
+                    (label == null || label in meta.labels(t)) &&
+                    t.toLite(me, modes).let { lite ->
+                        f.matches(lite, t.note) ||
+                            // The search box also finds labels.
+                            (f.text.isNotBlank() && meta.labels(t).any { it.contains(f.text.trim(), ignoreCase = true) } && f.copy(text = "").matches(lite, t.note))
+                    }
+            }
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -177,12 +239,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<String>() to emptyList())
 
     val reports: StateFlow<ReportsData> =
-        combine(allLite, _month, reportMonths, monthCycle) { txns, end, count, cycle ->
+        combine(allLite, _month, reportMonths, monthCycle, txnMeta) { txns, end, count, cycle, meta ->
             val zone = ZoneId.systemDefault()
             val months = Reports.months(end, count)
             val inWindow = months.toSet()
             val window = txns.filter { cycle.periodOf(it, zone) in inWindow }
-            val (byAmount, byCount) = Reports.topMerchants(window, 10)
+            // Hidden payments count in the totals and trends but are not named in the lists.
+            val shown = window.filterNot { it.id in meta.hiddenIds }
+            val (byAmount, byCount) = Reports.topMerchants(shown, 10)
             ReportsData(
                 months = months,
                 monthly = Reports.monthly(txns, end, count, zone, cycle),
@@ -192,7 +256,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
                 topByCount = byCount,
                 modes = Reports.paymentModes(window),
                 financialYears = Reports.financialYears(txns, zone),
-                unusual = Reports.unusual(window).take(20),
+                unusual = Reports.unusual(shown).take(20),
+                byLabel = Labels.spendByLabel(window, meta.labelsById, includeUnlabelled = false),
             )
         }
             .flowOn(Dispatchers.Default)
@@ -361,7 +426,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     private val hiddenAuto = repo.v13.observeHidden()
 
     /** EMIs, auto debits, SIPs, insurance and subscriptions with their next expected date, soonest first. */
-    val autoDebits: StateFlow<List<AutoDebitItem>> =
+    private val autoDebitsWithHidden: StateFlow<Pair<List<AutoDebitItem>, Set<String>>> =
         combine(autoPlans, allTransactions, recurring, openBills, hiddenAuto) { plans, all, rec, bills, hidden ->
             val me = ownerName.value
             val debits = all.filter { !it.excluded && it.type == TxnType.DEBIT }.map { DebitRecord(it.toLite(me), it.rawSms) }
@@ -370,15 +435,26 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
                 debits = debits,
                 recurring = rec,
                 emiBills = bills.map { it.toBill() },
-                hidden = hidden.mapTo(HashSet()) { it.key },
+                hidden = emptySet(),
                 today = LocalDate.now(),
-            )
+            ) to hidden.mapTo(HashSet()) { it.key }
         }
             .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<AutoDebitItem>() to emptySet())
+
+    /** Rows shown in the list; hidden ones are left out unless [showHiddenAutoDebits] is on. */
+    val showHiddenAutoDebits = MutableStateFlow(false)
+
+    val autoDebits: StateFlow<List<AutoDebitItem>> =
+        combine(autoDebitsWithHidden, showHiddenAutoDebits) { (all, hidden), show -> if (show) all else all.filter { it.key !in hidden } }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    val hiddenAutoDebitKeys: StateFlow<Set<String>> =
+        autoDebitsWithHidden.map { it.second }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
+
+    /** Totals include hidden rows: hiding only takes them off the list. */
     val autoDebitTotals: StateFlow<AutoDebitTotals> =
-        autoDebits.map { AutoDebits.totals(it, LocalDate.now()) }
+        autoDebitsWithHidden.map { AutoDebits.totals(it.first, LocalDate.now()) }
             .stateIn(viewModelScope, SharingStarted.Lazily, AutoDebitTotals(0, 0, 0))
 
     suspend fun autoPlan(id: String): AutoDebitPlan? =
@@ -388,6 +464,38 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteAutoPlan(id: String) = viewModelScope.launch { repo.v13.deletePlan(id) }
     fun hideAutoDebit(key: String) = viewModelScope.launch { repo.v13.hide(HiddenAutoDebitEntity(key)) }
     fun unhideAutoDebits() = viewModelScope.launch { repo.v13.unhideAll() }
+    fun unhideAutoDebit(key: String) = viewModelScope.launch { repo.v13.unhide(key) }
+
+    // ---- Labels, hiding and payee names ----
+
+    suspend fun labelsOf(uid: String): List<String> = repo.labelsOf(uid)
+
+    /**
+     * Saves the extras set on the edit screen: labels, hidden flag, and a payee name for all of this payee's
+     * transactions when [renameFrom] (the row as it was before editing) is given. Saves [txn] first, in the same
+     * coroutine, so the rename never races the edit.
+     */
+    fun saveWithExtras(
+        txn: TransactionEntity,
+        learnRule: Boolean,
+        labels: List<String>,
+        hidden: Boolean,
+        labelAll: Boolean,
+        renameFrom: TransactionEntity?,
+    ) =
+        viewModelScope.launch {
+            repo.save(txn, learnRule)
+            val name = txn.merchant
+            if (renameFrom != null && name != null) repo.renamePayee(renameFrom, name)
+            repo.setLabels(txn, labels, hidden, labelAll)
+        }
+
+    fun setHidden(txn: TransactionEntity, hidden: Boolean) = viewModelScope.launch {
+        repo.setLabels(txn, repo.labelsOf(txn.uid), hidden, forMerchant = false)
+    }
+
+    fun renameLabel(from: String, to: String) = viewModelScope.launch { repo.renameLabel(from, to) }
+    fun deleteLabel(label: String) = viewModelScope.launch { repo.deleteLabel(label) }
 
     fun addCategory(name: String, budgetMinor: Long?) = viewModelScope.launch { repo.addCategory(name, budgetMinor) }
     fun updateCategory(c: CategoryEntity) = viewModelScope.launch { repo.updateCategory(c) }

@@ -74,6 +74,13 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Rescan messages** (Manage tab): re-read the SMS inbox for the last 1, 3, 6 or 12 months or all of
   it. Nothing is added twice, edited transactions keep your changes, and deleted ones stay deleted
   unless you tick "bring back".
+- **Labels**: tap a transaction to add labels like EMI, SIP, Food, Grocery or Vegetables (several per
+  transaction). Choose to label every payment to that payee, now and in future. Group by label on the
+  Overview, filter by label on Transactions, see "By label" in Reports, and rename or delete labels in Manage.
+- **Payee names**: rename a payee on any transaction (e.g. a UPI id to "Vegetable seller Ravi") and tick
+  the box to use that name for all their payments, past and future.
+- **Hide from lists**: hide a transaction or an auto debit / EMI. It disappears from lists and report
+  lists but still counts in every total. Transactions > ⋮ > Show hidden brings them back into view.
 
 ## Install
 
