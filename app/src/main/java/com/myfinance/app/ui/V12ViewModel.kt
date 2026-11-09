@@ -281,7 +281,7 @@ class V12ViewModel(app: Application) : AndroidViewModel(app) {
 
     /** How many stored SMS transactions [rule] would match, as a live preview while editing. */
     fun previewCount(rule: CustomRule): Int = allTxns.value.count { t ->
-        t.source == com.myfinance.app.data.TxnSource.SMS &&
+        t.source != com.myfinance.app.data.TxnSource.MANUAL &&
             CustomRules.matches(rule, RuleInput(null, t.rawSms, t.merchant, t.type, t.amountMinor))
     }
 

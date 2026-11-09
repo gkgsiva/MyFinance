@@ -39,6 +39,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -86,7 +88,9 @@ fun ReportsScreen(vm: FinanceViewModel) {
         uri?.let(vm::exportPdf)
     }
 
-    val labels = data.months.map { it.format(shortMonth) }
+    // Long ranges (several years of imported statements) label every few months so the axis stays readable.
+    val step = (data.months.size + 11) / 12
+    val labels = data.months.mapIndexed { i, m -> if ((data.months.size - 1 - i) % step == 0) m.format(shortMonth) else "" }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -103,9 +107,9 @@ fun ReportsScreen(vm: FinanceViewModel) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(6, 12).forEach { n ->
-                    FilterChip(selected = count == n, onClick = { vm.reportMonths.value = n }, label = { Text("$n months") })
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(6 to "6 months", 12 to "1 year", 36 to "3 years", 60 to "5 years").forEach { (n, label) ->
+                    FilterChip(selected = count == n, onClick = { vm.reportMonths.value = n }, label = { Text(label) })
                 }
             }
         }
@@ -286,6 +290,17 @@ fun ReportsScreen(vm: FinanceViewModel) {
         item {
             ReportCard("Financial year (April to March)", accent = Indigo) {
                 if (data.financialYears.isEmpty()) Empty()
+                if (data.financialYears.size >= 2) {
+                    val years = data.financialYears.reversed()
+                    GroupedBarChart(
+                        listOf(
+                            ChartSeries("Income", years.map { it.incomeMinor }, IncomeGreen),
+                            ChartSeries("Spent", years.map { it.expenseMinor }, Coral),
+                        ),
+                        years.map { "FY" + (it.startYear % 100).toString().padStart(2, '0') },
+                    )
+                    ChartLegend(listOf("Income" to IncomeGreen, "Spent" to Coral))
+                }
                 data.financialYears.forEach { fy ->
                     Text(fy.label, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
                     Text(

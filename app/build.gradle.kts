@@ -47,6 +47,13 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // The BouncyCastle jars used by pdfbox-android each carry this file.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 kotlin {
@@ -85,6 +92,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
+
+    // Reads text from PDF statements, including password-protected ones.
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
 }

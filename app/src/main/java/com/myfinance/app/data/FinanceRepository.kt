@@ -13,6 +13,8 @@ import com.myfinance.core.BudgetAlerts
 import com.myfinance.core.Categorizer
 import com.myfinance.core.CsvCodec
 import com.myfinance.core.Dedupe
+import com.myfinance.core.ExistingTxn
+import com.myfinance.core.ImportCandidate
 import com.myfinance.core.DefaultCategories
 import com.myfinance.core.RecurringDetector
 import com.myfinance.core.SmsParser
@@ -143,7 +145,7 @@ class FinanceRepository(
         v12.invalidateRules()
         val changed = ArrayList<TransactionEntity>()
         for (t in db.transactions().allOnce()) {
-            if (t.userEdited || t.source != TxnSource.SMS) continue
+            if (t.userEdited || t.source == TxnSource.MANUAL) continue
             val r = v12.ruleFor(null, t.rawSms, t.merchant, t.type, t.amountMinor) ?: continue
             val updated = r.applyTo(t).let { if (r.ignore) it.copy(excluded = true) else it }
             r.taxSection?.let { v12.dao.upsertTaxTag(TaxTagEntity(t.uid, it.name)) }
@@ -514,6 +516,37 @@ class FinanceRepository(
         db.transactions().renameCategory(name, DefaultCategories.OTHER)
         db.merchantRules().renameCategory(name, DefaultCategories.OTHER)
         db.categories().deleteCustom(name)
+    }
+
+    // ---- Bank / card statement import ----
+
+    /** Every stored transaction, in the shape the statement matcher compares against. */
+    suspend fun existingForImport(): List<ExistingTxn> = withContext(Dispatchers.IO) {
+        db.transactions().allOnce().map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey) }
+    }
+
+    /** Stores the statement rows the user chose to import, categorised like SMS. Returns how many were added. */
+    suspend fun addImported(rows: List<ImportCandidate>): Int = withContext(Dispatchers.IO) {
+        val cat = categorizer()
+        var added = 0
+        for (c in rows) {
+            val r = c.row
+            val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
+            if (rule?.ignore == true) continue
+            val base = TransactionEntity(
+                amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,
+                category = cat.categorize(c.merchant, r.type, r.description),
+                accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
+                smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
+            )
+            val row = rule?.applyTo(base) ?: base
+            if (db.transactions().insert(row) != -1L) {
+                added++
+                runCatching { v12.onNewTransaction(row, rule) }
+            }
+        }
+        onDataChanged()
+        added
     }
 
     companion object {

@@ -232,7 +232,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
             original?.rawSms?.let { sms ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
-                        Text("Original SMS", style = MaterialTheme.typography.labelMedium)
+                        Text(if (original.source == TxnSource.STATEMENT) "From statement" else "Original SMS", style = MaterialTheme.typography.labelMedium)
                         Text(sms, style = MaterialTheme.typography.bodySmall)
                     }
                 }

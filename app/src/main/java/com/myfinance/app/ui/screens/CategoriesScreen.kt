@@ -50,7 +50,7 @@ import java.time.format.DateTimeFormatter
 
 /** Family sharing plus category & budget management. */
 @Composable
-fun CategoriesScreen(vm: FinanceViewModel) {
+fun CategoriesScreen(vm: FinanceViewModel, onImportStatement: () -> Unit = {}) {
     val categories by vm.categories.collectAsState()
     val summary by vm.summary.collectAsState()
     val owner by vm.ownerName.collectAsState()
@@ -86,6 +86,21 @@ fun CategoriesScreen(vm: FinanceViewModel) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bank and card statements", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Fill in past years from downloaded bank statements and credit card bills (PDF, Excel or CSV). " +
+                            "Entries already added from SMS are skipped.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = onImportStatement, modifier = Modifier.fillMaxWidth()) { Text("Import statements") }
+                }
+            }
+        }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
