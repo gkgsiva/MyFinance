@@ -44,6 +44,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import com.myfinance.app.ui.v13.AutoDebitsScreen
+import com.myfinance.app.ui.v13.RescanScreen
+import com.myfinance.app.ui.v13.TrashScreen
 import com.myfinance.app.security.AppLock
 import com.myfinance.app.share.FamilyShare
 import com.myfinance.app.ui.V12ViewModel
@@ -242,7 +249,22 @@ private fun MyFinanceRoot() {
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
+    // "Transaction deleted · Undo" after any delete. Restoring later is in Manage > Recently deleted.
+    val snackbar = remember { SnackbarHostState() }
+    val justDeleted by vm.justDeleted.collectAsState()
+    LaunchedEffect(justDeleted) {
+        val t = justDeleted ?: return@LaunchedEffect
+        val r = snackbar.showSnackbar(
+            message = "Deleted ${t.merchant ?: t.category}",
+            actionLabel = "Undo",
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+        )
+        if (r == SnackbarResult.ActionPerformed) vm.undoDelete() else vm.clearJustDeleted()
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (tabs.any { it.route == currentRoute }) {
                 NavigationBar {
@@ -278,7 +300,14 @@ private fun MyFinanceRoot() {
                     onOpenUpcoming = { nav.navigate("upcoming") },
                 )
             }
-            composable("upcoming") { UpcomingScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("upcoming") {
+                UpcomingScreen(vm = vm, onBack = { nav.popBackStack() }, onOpenAutoDebits = { nav.navigate("autodebits") })
+            }
+            composable("autodebits") { AutoDebitsScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("trash") { TrashScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("rescan") {
+                RescanScreen(vm = vm, smsGranted = smsGranted, onAskPermission = requestSms, onBack = { nav.popBackStack() })
+            }
             composable("reports") { ReportsScreen(vm = vm) }
             composable("transactions") {
                 TransactionsScreen(
@@ -287,7 +316,7 @@ private fun MyFinanceRoot() {
                     onAdd = { nav.navigate("edit/0") },
                 )
             }
-            composable("categories") { CategoriesScreen(vm = vm) }
+            composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
             composable("plan") { PlanScreen(v12) { route -> nav.navigate(route) } }
             val back = { nav.popBackStack(); Unit }
             val openTxn = { id: Long -> nav.navigate("edit/$id") }

@@ -264,7 +264,7 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete transaction?") },
-            text = { Text("This removes it from your records on this phone.") },
+            text = { Text("You can undo this, or restore it later from Manage > Recently deleted.") },
             confirmButton = {
                 TextButton(onClick = {
                     original?.let { vm.delete(it) }

@@ -55,7 +55,7 @@ fun relativeDay(date: LocalDate, today: LocalDate = LocalDate.now()): String {
 /** Card bills and EMIs, recurring payments and account balances. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UpcomingScreen(vm: FinanceViewModel, onBack: () -> Unit) {
+fun UpcomingScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpenAutoDebits: () -> Unit = {}) {
     val bills by vm.openBills.collectAsState()
     val recurring by vm.recurring.collectAsState()
     val balances by vm.balances.collectAsState()
@@ -82,6 +82,9 @@ fun UpcomingScreen(vm: FinanceViewModel, onBack: () -> Unit) {
             items(bills, key = { "b${it.id}" }) { b -> BillCard(b, onPaid = { vm.markBillPaid(b.id) }, onRemove = { vm.deleteBill(b.id) }) }
 
             item { SectionTitle("Recurring payments") }
+            item {
+                TextButton(onClick = onOpenAutoDebits) { Text("See all auto debits & EMIs with next dates") }
+            }
             if (recurring.isEmpty()) {
                 item { Hint("Subscriptions, rent, SIPs and other payments that repeat every week, month, quarter or year appear here once they have been paid a few times.") }
             }
