@@ -76,6 +76,8 @@ import androidx.navigation.navArgument
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.screens.CategoriesScreen
 import com.myfinance.app.ui.screens.EditTransactionScreen
+import com.myfinance.app.ui.screens.ImportStatementScreen
+import com.myfinance.app.ui.screens.AccountsScreen
 import com.myfinance.app.ui.screens.OverviewScreen
 import com.myfinance.app.ui.screens.ReportsScreen
 import com.myfinance.app.ui.screens.TransactionsScreen
@@ -317,6 +319,16 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
+            composable("accounts") { AccountsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
+            composable("import-statement") {
+                ImportStatementScreen(
+                    onBack = { nav.popBackStack() },
+                    onDone = {
+                        nav.popBackStack()
+                        nav.navigate("transactions") { launchSingleTop = true }
+                    },
+                )
+            }
             composable("plan") { PlanScreen(v12) { route -> nav.navigate(route) } }
             val back = { nav.popBackStack(); Unit }
             val openTxn = { id: Long -> nav.navigate("edit/$id") }

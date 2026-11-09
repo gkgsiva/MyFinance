@@ -47,6 +47,11 @@ object Dedupe {
         val gap = abs(a.timestamp - b.timestamp)
         if (a.accountTail != null && a.accountTail == b.accountTail && gap <= SMS_WINDOW_MS) return true
 
+        // A statement line and the SMS for the same payment: statements carry only the date.
+        if ((a.source == "STATEMENT") != (b.source == "STATEMENT") && a.accountTail != null && a.accountTail == b.accountTail &&
+            gap <= 2 * DAY_MS
+        ) return true
+
         if (a.source == "MANUAL" || b.source == "MANUAL") {
             val ma = a.merchant?.let(Categorizer::merchantKey)
             val mb = b.merchant?.let(Categorizer::merchantKey)
@@ -68,7 +73,7 @@ object Dedupe {
         for (t in incoming) {
             val clash = t.uid in uids ||
                 (t.smsKey != null && t.smsKey in smsKeys) ||
-                byTime.subMap(t.timestamp - DAY_MS, true, t.timestamp + DAY_MS, true)
+                byTime.subMap(t.timestamp - 2 * DAY_MS, true, t.timestamp + 2 * DAY_MS, true)
                     .values.any { bucket -> bucket.any { isDuplicate(it, t) } }
             if (!clash) {
                 kept += t

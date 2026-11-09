@@ -109,6 +109,25 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bank accounts, cards and statements", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Fill in past years from downloaded bank statements and credit card bills (PDF, Excel or CSV), " +
+                            "without duplicating SMS entries. See every account and card together or one at a time, " +
+                            "by month, quarter or year.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { open("import-statement") }, modifier = Modifier.weight(1f)) { Text("Import statements") }
+                        FilledTonalButton(onClick = { open("accounts") }, modifier = Modifier.weight(1f)) { Text("Accounts & cards") }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Family", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Export from each phone, then merge the files on one phone to see the whole family's " +

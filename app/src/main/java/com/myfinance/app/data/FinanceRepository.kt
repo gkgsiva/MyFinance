@@ -13,6 +13,9 @@ import com.myfinance.core.BudgetAlerts
 import com.myfinance.core.Categorizer
 import com.myfinance.core.CsvCodec
 import com.myfinance.core.Dedupe
+import com.myfinance.core.ExistingTxn
+import com.myfinance.core.ImportCandidate
+import com.myfinance.core.StatementImport
 import com.myfinance.core.DefaultCategories
 import com.myfinance.core.RecurringDetector
 import com.myfinance.core.SmsParser
@@ -161,6 +164,8 @@ class FinanceRepository(
         // A name the user gave this payee ("Vegetable seller Ravi") replaces the raw UPI id / merchant text.
         val nick = parsed.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
         val row = (rule?.applyTo(base) ?: base).let { r -> if (nick != null && rule?.merchant == null) r.copy(merchant = nick) else r }
+        // Already imported from a bank / card statement: link the SMS to that line, never a second entry.
+        if (runCatching { linkToStatementLine(row) }.getOrDefault(false)) return Ingest.ALREADY_HERE
         val added = db.transactions().insert(row) != -1L
         if (added) {
             runCatching { v12.onNewTransaction(row, rule) }
@@ -177,7 +182,7 @@ class FinanceRepository(
         v12.invalidateRules()
         val changed = ArrayList<TransactionEntity>()
         for (t in db.transactions().allOnce()) {
-            if (t.userEdited || t.source != TxnSource.SMS) continue
+            if (t.userEdited || t.source == TxnSource.MANUAL) continue
             val r = v12.ruleFor(null, t.rawSms, t.merchant, t.type, t.amountMinor) ?: continue
             val updated = r.applyTo(t).let { if (r.ignore) it.copy(excluded = true) else it }
             r.taxSection?.let { v12.dao.upsertTaxTag(TaxTagEntity(t.uid, it.name)) }
@@ -680,6 +685,118 @@ class FinanceRepository(
         db.transactions().renameCategory(name, DefaultCategories.OTHER)
         db.merchantRules().renameCategory(name, DefaultCategories.OTHER)
         db.categories().deleteCustom(name)
+    }
+
+    // ---- Bank / card statement import ----
+
+    /** Every stored transaction, in the shape the statement matcher compares against. */
+    suspend fun existingForImport(): List<ExistingTxn> = withContext(Dispatchers.IO) {
+        val stored = db.transactions().allOnce().map {
+            ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, it.source == TxnSource.STATEMENT)
+        }
+        // Statement lines the user deleted count as already imported, so they stay deleted.
+        val deleted = v13.keys().mapNotNull { k -> k.smsKey?.takeIf { it.startsWith("STMT|") } }
+            .map { ExistingTxn(-1, TxnType.DEBIT, 0, null, null, it) }
+        stored + deleted
+    }
+
+    data class ImportResult(val added: Int, val updated: Int)
+
+    /**
+     * Stores the statement lines the user chose to import. New lines are categorised like SMS (custom
+     * rules, payee names and label rules apply). A line that is the same payment as a stored SMS or
+     * typed entry updates that entry instead: the statement is the official record, so its amount,
+     * date and details win, while the user's category, labels, notes and payee name are kept.
+     */
+    suspend fun addImported(rows: List<ImportCandidate>): ImportResult = withContext(Dispatchers.IO) {
+        val cat = categorizer()
+        val deletedUids = v13.keys().mapTo(HashSet()) { it.uid }
+        val nicknames = runCatching { v13.payeeNames().mapTo(HashSet()) { it.name } }.getOrDefault(HashSet())
+        var added = 0
+        var updated = 0
+        for (c in rows) {
+            val r = c.row
+            val nick = c.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
+            if (c.updatesExisting) {
+                val t = db.transactions().get(c.matchedId!!) ?: continue
+                val keepName = t.userEdited || t.merchant in nicknames
+                db.transactions().update(
+                    t.copy(
+                        amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
+                        merchant = if (keepName) t.merchant else nick ?: c.merchant ?: t.merchant,
+                        accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
+                        reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
+                        source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
+                    ),
+                )
+                updated++
+                continue
+            }
+            if (c.duplicateOf != null || c.uid in deletedUids) continue
+            val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
+            if (rule?.ignore == true) continue
+            val base = TransactionEntity(
+                amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,
+                category = cat.categorize(c.merchant, r.type, r.description),
+                accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
+                smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
+            )
+            val row = (rule?.applyTo(base) ?: base).let { x -> if (nick != null && rule?.merchant == null) x.copy(merchant = nick) else x }
+            if (db.transactions().insert(row) != -1L) {
+                added++
+                runCatching { v12.onNewTransaction(row, rule) }
+                runCatching { applyLabelRules(row, c.merchant) }
+            }
+        }
+        onDataChanged()
+        ImportResult(added, updated)
+    }
+
+    /**
+     * An SMS (new, or found by a rescan) for a payment already imported from a statement: links the
+     * SMS to that statement line and keeps the statement's details, instead of adding it twice.
+     * Returns true when it found the line.
+     */
+    private suspend fun linkToStatementLine(sms: TransactionEntity): Boolean {
+        if (db.transactions().bySmsKey(sms.smsKey ?: return false) != null) return false
+        val window = 3 * 24 * 60 * 60 * 1000L
+        val lines = db.transactions().rangeOnce(sms.timestamp - window, sms.timestamp + window)
+            .filter { it.source == TxnSource.STATEMENT && it.smsKey?.startsWith("STMT|") != false && it.amountMinor == sms.amountMinor && it.type == sms.type }
+        if (lines.isEmpty()) return false
+        val i = StatementImport.lineForSms(
+            ExistingTxn(sms.amountMinor, sms.type, sms.timestamp, sms.accountTail, sms.reference, sms.smsKey),
+            lines.map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, true) },
+        ) ?: return false
+        val line = lines[i]
+        db.transactions().update(
+            line.copy(
+                smsKey = sms.smsKey, rawSms = statementText(line.rawSms.orEmpty(), sms.rawSms),
+                reference = line.reference ?: sms.reference, accountTail = line.accountTail ?: sms.accountTail,
+                bank = line.bank ?: sms.bank,
+            ),
+        )
+        return true
+    }
+
+    /** The statement's date, keeping the SMS's time of day when there is one. */
+    private fun statementTime(date: java.time.LocalDate, smsTimestamp: Long): Long {
+        val zone = ZoneId.systemDefault()
+        val sms = java.time.Instant.ofEpochMilli(smsTimestamp).atZone(zone)
+        return if (sms.toLocalDate() == date) smsTimestamp else date.atTime(sms.toLocalTime()).atZone(zone).toInstant().toEpochMilli()
+    }
+
+    /** "Statement: <narration>" plus the SMS text, so rules and payment-mode detection see both. */
+    private fun statementText(narration: String, existing: String?): String {
+        val narr = narration.removePrefix("Statement: ").substringBefore("\n\nSMS: ")
+        val sms = existing?.let { e ->
+            when {
+                e.contains("\n\nSMS: ") -> e.substringAfter("\n\nSMS: ")
+                e.startsWith("Statement: ") -> null
+                e == narration -> null
+                else -> e
+            }
+        }?.ifBlank { null }
+        return "Statement: $narr" + (sms?.let { "\n\nSMS: $it" } ?: "")
     }
 
     companion object {

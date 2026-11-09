@@ -8,7 +8,8 @@ import com.myfinance.core.SharedTxn
 import com.myfinance.core.TxnLite
 import com.myfinance.core.TxnType
 
-enum class TxnSource { SMS, MANUAL }
+/** Where a transaction came from: an SMS alert, typed in, or a downloaded bank / card statement. */
+enum class TxnSource { SMS, MANUAL, STATEMENT }
 
 @Entity(
     tableName = "transactions",
@@ -30,7 +31,7 @@ data class TransactionEntity(
     val timestamp: Long,
     val note: String? = null,
     val source: TxnSource,
-    /** Dedupe key for SMS imports: sender + timestamp + body hash. Null for manual entries. */
+    /** Dedupe key: sender + body hash for SMS, "STMT|…" for statement lines. Null for manual entries. */
     val smsKey: String? = null,
     val rawSms: String? = null,
     val reference: String? = null,
@@ -72,7 +73,7 @@ fun TransactionEntity.toShared(defaultOwner: String?, mergedModes: Map<String, S
 fun SharedTxn.toEntity() = TransactionEntity(
     amountMinor = amountMinor, type = type, merchant = merchant, category = category, accountTail = accountTail,
     bank = bank, timestamp = timestamp, note = note,
-    source = if (source == "SMS") TxnSource.SMS else TxnSource.MANUAL,
+    source = TxnSource.entries.firstOrNull { it.name == source } ?: TxnSource.MANUAL,
     // Keep the other phone's SMS key so the same message arriving here later is recognised.
     smsKey = smsKey, reference = reference, excluded = excluded, uid = uid, owner = owner,
     userEdited = true,

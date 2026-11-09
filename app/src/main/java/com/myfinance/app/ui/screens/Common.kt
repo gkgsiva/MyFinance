@@ -64,7 +64,7 @@ fun TransactionRow(txn: TransactionEntity, categoryColor: Color, labels: List<St
                 txn.owner,
                 txn.accountLabel,
                 txn.timestamp.toLocalDateTime().format(timeFormat),
-                if (txn.source == TxnSource.MANUAL) "manual" else null,
+                when (txn.source) { TxnSource.MANUAL -> "manual"; TxnSource.STATEMENT -> "statement"; else -> null },
                 if (txn.excluded) "excluded" else null,
                 if (hidden) "hidden" else null,
             ).joinToString(" · ")
