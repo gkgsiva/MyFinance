@@ -110,6 +110,13 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
             }
         }
         item { com.myfinance.app.ui.v13.LabelsCard(vm) }
+        item { com.myfinance.app.ui.v14.LabelBudgetsCard(vm) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { open("label-suggestions") }) { Text("Label suggestions") }
+                FilledTonalButton(onClick = { open("statement-reminders") }) { Text("Statement reminders") }
+            }
+        }
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

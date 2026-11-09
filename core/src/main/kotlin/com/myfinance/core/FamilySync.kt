@@ -27,6 +27,8 @@ data class SharedTxn(
     val excluded: Boolean,
     /** Payment mode name ([PaymentMode]); older exports do not have it. */
     val mode: String? = null,
+    /** The sender's labels (Vegetables, EMI…), so the family label view works on the main phone. Older exports have none. */
+    val labels: List<String> = emptyList(),
 )
 
 object Dedupe {
@@ -92,7 +94,7 @@ object Dedupe {
 object CsvCodec {
     val header = listOf(
         "uid", "date", "amount", "type", "merchant", "category", "account", "bank",
-        "note", "owner", "source", "sms_key", "reference", "excluded", "mode",
+        "note", "owner", "source", "sms_key", "reference", "excluded", "mode", "labels",
     )
 
     fun encode(rows: List<SharedTxn>): String = buildString {
@@ -106,6 +108,7 @@ object CsvCodec {
                     r.type.name,
                     r.merchant, r.category, r.accountTail, r.bank, r.note, r.owner, r.source,
                     r.smsKey, r.reference, r.excluded.toString(), r.mode,
+                    r.labels.joinToString("|").ifEmpty { null },
                 ).joinToString(",") { quote(it) },
             )
         }
@@ -139,6 +142,7 @@ object CsvCodec {
                     reference = get("reference"),
                     excluded = get("excluded")?.toBooleanStrictOrNull() ?: false,
                     mode = get("mode"),
+                    labels = get("labels")?.split('|')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty(),
                 )
             } catch (e: Exception) {
                 bad++

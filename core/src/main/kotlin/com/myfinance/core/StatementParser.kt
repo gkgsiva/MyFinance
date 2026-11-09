@@ -26,6 +26,10 @@ data class ParsedStatement(
     val bank: String?,
     /** Last 4 digits of the account or card the statement is for, when it says. */
     val accountTail: String?,
+    /** Card statements: the bill printed at the top (total due, minimum due, due date), when it could be read. */
+    val billTotalMinor: Long? = null,
+    val billMinMinor: Long? = null,
+    val billDueDate: LocalDate? = null,
 ) {
     val from: LocalDate? get() = rows.minOfOrNull { it.date }
     val to: LocalDate? get() = rows.maxOfOrNull { it.date }
@@ -227,7 +231,15 @@ object StatementParser {
         }.filter { it.amountMinor > 0 }
         if (rows.isEmpty()) return null
         val head = headerText.toString()
-        return ParsedStatement(rows, if (isBank) StatementKind.BANK else StatementKind.CARD, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)))
+        val kind = if (isBank) StatementKind.BANK else StatementKind.CARD
+        val bill = if (kind == StatementKind.CARD) runCatching { CardBills.summaryFromText(text, rows.maxOf { it.date }) }.getOrNull()
+            // A due date far from the statement's last line is a misread.
+            ?.takeIf { b -> rows.maxOf { it.date }.let { last -> !b.third.isBefore(last.minusDays(3)) && !b.third.isAfter(last.plusDays(60)) } }
+        else null
+        return ParsedStatement(
+            rows, kind, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)),
+            billTotalMinor = bill?.first, billMinMinor = bill?.second, billDueDate = bill?.third,
+        )
     }
 
     /**

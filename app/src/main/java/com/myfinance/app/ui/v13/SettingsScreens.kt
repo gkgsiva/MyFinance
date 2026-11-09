@@ -66,6 +66,11 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { Group("Statements & accounts") }
         item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
+        item {
+            val day by vm.v14.statementReminderDay.collectAsState()
+            SettingTile("Statement reminders", if (day == 0) "Off" else "Day $day", "A monthly nudge to import the latest bank and card statements") { open("statement-reminders") }
+        }
+        item { SettingTile("Card bill check", "", "Card statements against what you paid") { open("card-bills") } }
 
         item { Group("Messages") }
         item { SettingTile("Rescan messages", "", "Read the SMS inbox again without making duplicates") { open("rescan") } }
@@ -80,7 +85,8 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         }
 
         item { Group("Organise") }
-        item { SettingTile("Labels", if (labels.isEmpty()) "None yet" else "${labels.size}", "EMI, SIP, Grocery… rename or delete") { open("labels") } }
+        item { SettingTile("Labels & label budgets", if (labels.isEmpty()) "None yet" else "${labels.size}", "Rename or delete labels, and set a monthly limit per label") { open("labels") } }
+        item { SettingTile("Label suggestions", "", "Payments that look like ones you already labelled") { open("label-suggestions") } }
         item { SettingTile("Payee names", if (payees.isEmpty()) "None yet" else "${payees.size}", "Names like \"Vegetable seller Ravi\" used for all payments") { open("payees") } }
         item { SettingTile("Categories & budgets", "", "Add categories and monthly budgets") { open("categories") } }
         item { SettingTile("Auto debits & EMIs", "", "Your EMIs, SIPs and autopay with next dates") { open("autodebits") } }
@@ -246,6 +252,7 @@ fun PayeeNamesScreen(vm: FinanceViewModel, onBack: () -> Unit) {
 fun LabelsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
     SimpleScreen(title = "Labels", onBack = onBack) {
         item { LabelsCard(vm) }
+        item { com.myfinance.app.ui.v14.LabelBudgetsCard(vm) }
     }
 }
 

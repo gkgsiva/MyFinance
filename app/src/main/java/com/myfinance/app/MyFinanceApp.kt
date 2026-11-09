@@ -9,6 +9,7 @@ import com.myfinance.app.data.FinanceDatabase
 import com.myfinance.app.data.FinanceRepository
 import com.myfinance.app.data.V12Database
 import com.myfinance.app.data.V13Database
+import com.myfinance.app.data.V14Database
 import com.myfinance.app.data.V12Repository
 import com.myfinance.app.notify.Notifier
 import com.myfinance.app.notify.ReminderWorker
@@ -25,7 +26,7 @@ class MyFinanceApp : Application() {
     val repository: FinanceRepository by lazy {
         // A restore chosen last time is swapped in before any database is opened.
         V12Repository.applyPendingRestore(this)
-        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this), V12Database.create(this), V13Database.create(this))
+        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this), V12Database.create(this), V13Database.create(this), V14Database.create(this))
     }
 
     override fun onCreate() {

@@ -74,7 +74,7 @@ private val shortMonth: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
 private val monthYear: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM yyyy")
 
 @Composable
-fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}) {
+fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (String) -> Unit = {}) {
     val data by vm.reports.collectAsState()
     val month by vm.month.collectAsState()
     val currentMonth by vm.currentMonth.collectAsState()
@@ -117,6 +117,7 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}) {
 
         item { com.myfinance.app.ui.v13.FactsCard(vm) }
         item { com.myfinance.app.ui.v13.ExploreCard(onExplore) }
+        item { com.myfinance.app.ui.v14.YearReviewEntry { open("year-review") } }
 
         // 9. Shareable PDF
         item {
@@ -378,6 +379,8 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}) {
         }
 
         item { com.myfinance.app.ui.v13.IncomeYearsCard(vm) }
+        item { com.myfinance.app.ui.v14.SalaryBreakdownCard(vm) }
+        item { com.myfinance.app.ui.v14.FamilyLabelsCard(vm) }
 
         // 8. Unusual spends
         item {

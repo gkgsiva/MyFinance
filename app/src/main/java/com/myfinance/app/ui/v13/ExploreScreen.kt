@@ -12,6 +12,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,7 +67,16 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
     val colorOf = categories.associate { it.name to Color(it.color) }
     val fallback = MaterialTheme.colorScheme.outline
 
-    var kind by remember { mutableStateOf(if (labels.isNotEmpty()) ExploreKind.LABEL else ExploreKind.PAYEE) }
+    // Opened from a pinned report on the Overview: start with its settings.
+    val pin = remember { vm.v14.pendingExplore.value }
+    LaunchedEffect(Unit) { vm.v14.pendingExplore.value = null }
+    val pinRange = remember { pin?.let { com.myfinance.app.ui.V14State.rangeOf(it) } }
+    var kind by remember {
+        mutableStateOf(
+            pin?.let { p -> ExploreKind.entries.firstOrNull { it.name == p.kind } }
+                ?: if (labels.isNotEmpty()) ExploreKind.LABEL else ExploreKind.PAYEE,
+        )
+    }
     val values = when (kind) {
         ExploreKind.LABEL -> labels
         ExploreKind.PAYEE -> payees
@@ -73,15 +84,17 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
         ExploreKind.ACCOUNT -> options.second
         ExploreKind.PERSON -> options.first
     }
-    var value by remember(kind) { mutableStateOf(values.firstOrNull()) }
+    var value by remember(kind) { mutableStateOf(pin?.takeIf { it.kind == kind.name }?.value ?: values.firstOrNull()) }
     if (value == null && values.isNotEmpty()) value = values.first()
     // null = net: what went out minus what came back (refunds, cancellations, cashback).
-    var type by remember { mutableStateOf<TxnType?>(null) }
-    var by by remember { mutableStateOf(Granularity.MONTH) }
+    var type by remember { mutableStateOf(pin?.type?.let { t -> TxnType.entries.firstOrNull { it.name == t } }) }
+    var by by remember { mutableStateOf(pin?.let { p -> Granularity.entries.firstOrNull { it.name == p.granularity } } ?: Granularity.MONTH) }
+    var pinning by remember { mutableStateOf(false) }
+    var pinnedId by remember { mutableStateOf(pin?.id) }
     val byYear = by == Granularity.YEAR
     val earliest = all.minOfOrNull { it.timestamp }?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
-    var from by remember { mutableStateOf(LocalDate.now().minusMonths(11).withDayOfMonth(1)) }
-    var to by remember { mutableStateOf(LocalDate.now()) }
+    var from by remember { mutableStateOf(pinRange?.first?.let { f -> if (pin?.range == "all") earliest ?: f else f } ?: LocalDate.now().minusMonths(11).withDayOfMonth(1)) }
+    var to by remember { mutableStateOf(pinRange?.second ?: LocalDate.now()) }
 
     val zone = ZoneId.systemDefault()
     val both = remember(all, meta, kind, value, from, to) {
@@ -101,7 +114,15 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
     val total = when (type) { TxnType.DEBIT -> spent; TxnType.CREDIT -> received; null -> spent - received }
     val shown = matches.filterNot { meta.hidden(it) }
 
-    SimpleScreen(title = "Explore spending", onBack = onBack) {
+    SimpleScreen(
+        title = "Explore spending",
+        onBack = onBack,
+        actions = {
+            val id = pinnedId
+            if (id != null) TextButton(onClick = { vm.v14.deleteReport(id); pinnedId = null }) { Text("Unpin") }
+            else if (value != null) TextButton(onClick = { pinning = true }) { Text("Pin") }
+        },
+    ) {
         item {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExploreKind.entries.forEach { k -> FilterChip(selected = kind == k, onClick = { kind = k }, label = { Text(k.label) }) }
@@ -206,6 +227,33 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
         }
         items(shown.take(500), key = { it.id }) { t ->
             TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), false) { onOpen(t.id) }
+        }
+    }
+
+    if (pinning) {
+        val v = value
+        if (v == null) { pinning = false; return }
+        val now = LocalDate.now()
+        val presets = listOf(
+            "3m" to now.minusMonths(2).withDayOfMonth(1),
+            "1y" to now.minusMonths(11).withDayOfMonth(1),
+            "3y" to now.minusYears(3).plusMonths(1).withDayOfMonth(1),
+            "all" to (earliest ?: now.minusYears(1)),
+        )
+        val preset = presets.firstOrNull { it.second == from && to == now }?.first
+        val suggested = v + when (type) { TxnType.DEBIT -> " spent"; TxnType.CREDIT -> " received"; null -> " net" } +
+            " by " + by.label.lowercase()
+        com.myfinance.app.ui.v14.PinDialog(suggested, onDismiss = { pinning = false }) { name ->
+            vm.v14.saveReport(
+                com.myfinance.app.data.SavedReportEntity(
+                    id = java.util.UUID.randomUUID().toString(), title = name, kind = kind.name, value = v, type = type?.name,
+                    granularity = by.name, range = preset ?: "custom",
+                    fromEpochDay = if (preset == null) from.toEpochDay() else null,
+                    toEpochDay = if (preset == null) to.toEpochDay() else null,
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+            pinning = false
         }
     }
 }
