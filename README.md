@@ -81,6 +81,9 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   the box to use that name for all their payments, past and future.
 - **Hide from lists**: hide a transaction or an auto debit / EMI. It disappears from lists and report
   lists but still counts in every total. Transactions > ⋮ > Show hidden brings them back into view.
+- **Settings** (Manage > All settings, or Plan > All settings): everything in one place, including
+  Hidden items (unhide transactions and EMIs), Recently deleted, Rescan messages, SMS rules, labels,
+  payee names, month setting, app lock, backup, theme (light / dark / same as phone) and notifications.
 
 ## Install
 

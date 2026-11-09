@@ -227,6 +227,12 @@ interface V13Dao {
 
     @Upsert
     suspend fun putPayeeNames(n: List<PayeeNameEntity>)
+
+    @Query("SELECT * FROM payee_names ORDER BY name")
+    fun observePayeeNames(): Flow<List<PayeeNameEntity>>
+
+    @Query("DELETE FROM payee_names WHERE name = :name")
+    suspend fun deletePayeeName(name: String)
 }
 
 @Database(

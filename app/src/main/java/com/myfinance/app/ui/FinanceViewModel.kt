@@ -494,6 +494,27 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         repo.setLabels(txn, repo.labelsOf(txn.uid), hidden, forMerchant = false)
     }
 
+    /** Saved payee names: name -> the raw payee texts it replaces. */
+    val payeeNames: StateFlow<List<Pair<String, List<String>>>> =
+        repo.v13.observePayeeNames().map { list -> list.groupBy({ it.name }, { it.merchantKey }).toList() }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun renamePayeeName(old: String, new: String) = viewModelScope.launch { repo.renamePayeeName(old, new) }
+    fun forgetPayeeName(name: String) = viewModelScope.launch { repo.forgetPayeeName(name) }
+
+    /** Hidden auto debit / EMI rows with their names, for Settings > Hidden items. */
+    val hiddenAutoDebitItems: StateFlow<List<AutoDebitItem>> =
+        autoDebitsWithHidden.map { (all, hidden) -> all.filter { it.key in hidden } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** Hidden transactions, newest first. */
+    val hiddenTransactions: StateFlow<List<TransactionEntity>> =
+        combine(allTransactions, txnMeta) { all, meta -> all.filter { it.uid in meta.hiddenUids } }
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun unhideTxn(uid: String) = viewModelScope.launch { repo.v13.unhideTxn(uid) }
+    fun unhideAllTxns() = viewModelScope.launch { hiddenTransactions.value.forEach { repo.v13.unhideTxn(it.uid) } }
+
     fun renameLabel(from: String, to: String) = viewModelScope.launch { repo.renameLabel(from, to) }
     fun deleteLabel(label: String) = viewModelScope.launch { repo.deleteLabel(label) }
 

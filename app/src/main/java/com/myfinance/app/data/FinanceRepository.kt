@@ -355,6 +355,19 @@ class FinanceRepository(
 
     suspend fun labelsOf(uid: String): List<String> = v13.labelsOf(uid)
 
+    /** Renames a payee name everywhere: the saved name for new SMS and every transaction already using it. */
+    suspend fun renamePayeeName(old: String, new: String) = withContext(Dispatchers.IO) {
+        val name = new.trim()
+        if (name.isEmpty() || name == old) return@withContext
+        v13.putPayeeNames(v13.payeeNames().filter { it.name == old }.map { it.copy(name = name) })
+        val rows = db.transactions().allOnce().filter { it.merchant == old }
+        if (rows.isNotEmpty()) db.transactions().updateAll(rows.map { it.copy(merchant = name) })
+        onDataChanged()
+    }
+
+    /** Stops naming new SMS with [name]. Transactions already renamed keep the name (edit them to change it). */
+    suspend fun forgetPayeeName(name: String) = v13.deletePayeeName(name)
+
     suspend fun renameLabel(from: String, to: String) = withContext(Dispatchers.IO) {
         val t = to.trim()
         if (t.isEmpty() || t == from) return@withContext

@@ -90,13 +90,17 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Messages & deleted items", style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Messages & deleted items", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { open("settings") }) { Text("All settings") }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton(onClick = { open("rescan") }) { Text("Rescan messages") }
                         FilledTonalButton(onClick = { open("trash") }) {
                             Text(if (trash.isEmpty()) "Recently deleted" else "Recently deleted (${trash.size})")
                         }
                     }
+                    FilledTonalButton(onClick = { open("hidden") }) { Text("Hidden items") }
                     Text(
                         "Deleted a transaction by mistake? Restore it from Recently deleted.",
                         style = MaterialTheme.typography.bodySmall,
