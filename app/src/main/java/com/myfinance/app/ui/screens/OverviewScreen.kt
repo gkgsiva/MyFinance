@@ -81,6 +81,7 @@ fun OverviewScreen(
     onOpenGroup: (category: String?) -> Unit,
     onAdd: () -> Unit,
     onOpenUpcoming: () -> Unit,
+    open: (String) -> Unit = {},
 ) {
     val month by vm.month.collectAsState()
     val currentMonth by vm.currentMonth.collectAsState()
@@ -95,6 +96,11 @@ fun OverviewScreen(
     val balances by vm.balances.collectAsState()
     val trend by vm.reports.collectAsState()
     val labelGroups by vm.labelGroups.collectAsState()
+    val labelBudgets by vm.v14.labelBudgets.collectAsState()
+    val labelNet by vm.v14.labelMonthNet.collectAsState()
+    val pinned by vm.v14.pinned.collectAsState()
+    val refunds by vm.v14.refunds.collectAsState()
+    val suggestions by vm.v14.suggestions.collectAsState()
 
     val colorOf = categories.associate { it.name to Color(it.color) }
     val budgetOf = categories.associate { it.name to it.monthlyBudgetMinor }
@@ -212,6 +218,19 @@ fun OverviewScreen(
 
             item { com.myfinance.app.ui.v13.FactsCard(vm, max = 3) }
 
+            if (pinned.isNotEmpty()) item {
+                com.myfinance.app.ui.v14.PinnedReportsCard(vm) { r ->
+                    vm.v14.pendingExplore.value = r
+                    open("explore")
+                }
+            }
+            if (refunds.any { it.state == com.myfinance.core.RefundState.OVERDUE }) item {
+                com.myfinance.app.ui.v14.RefundsPrompt(vm) { open("refunds") }
+            }
+            if (suggestions.any { it.strength >= 2 }) item {
+                com.myfinance.app.ui.v14.SuggestionsPrompt(vm) { open("label-suggestions") }
+            }
+
             item {
                 Spacer(Modifier.height(4.dp))
                 Text("Where it went", style = MaterialTheme.typography.titleMedium)
@@ -237,7 +256,13 @@ fun OverviewScreen(
             itemsIndexed(groups, key = { _, g -> "${groupBy.name}:${g.key}" }) { i, g ->
                 val color = if (groupBy == GroupBy.CATEGORY) colorOf[g.key] ?: ChartPalette[i % ChartPalette.size]
                 else ChartPalette[i % ChartPalette.size]
-                val budget = if (groupBy == GroupBy.CATEGORY) budgetOf[g.key] else null
+                val budget = when (groupBy) {
+                    GroupBy.CATEGORY -> budgetOf[g.key]
+                    GroupBy.LABEL -> labelBudgets[g.key]
+                    else -> null
+                }
+                // Label budgets count refunds against the label, like the alerts do.
+                val used = if (groupBy == GroupBy.LABEL && budget != null) labelNet[g.key] ?: g.totalMinor else g.totalMinor
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -259,12 +284,12 @@ fun OverviewScreen(
                         Text(formatInr(g.totalMinor), fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(4.dp))
-                    val progress = if (budget != null && budget > 0) g.totalMinor.toFloat() / budget
+                    val progress = if (budget != null && budget > 0) used.toFloat() / budget
                     else g.totalMinor.toFloat() / maxGroup
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = if (budget != null && g.totalMinor > budget) ExpenseRed else color,
+                        color = if (budget != null && used > budget) ExpenseRed else color,
                         trackColor = color.copy(alpha = 0.18f),
                         strokeCap = StrokeCap.Round,
                         gapSize = 0.dp,
@@ -272,8 +297,8 @@ fun OverviewScreen(
                     )
                     if (budget != null && budget > 0) {
                         Text(
-                            if (g.totalMinor > budget) "Over budget by ${formatInr(g.totalMinor - budget)}"
-                            else "${formatInr(budget - g.totalMinor)} left of ${formatInr(budget)} budget",
+                            if (used > budget) "Over budget by ${formatInr(used - budget)}"
+                            else "${formatInr(budget - used)} left of ${formatInr(budget)} budget",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

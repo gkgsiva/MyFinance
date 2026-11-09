@@ -306,6 +306,7 @@ private fun MyFinanceRoot() {
                     },
                     onAdd = { nav.navigate("edit/0") },
                     onOpenUpcoming = { nav.navigate("upcoming") },
+                    open = { route -> nav.navigate(route) },
                 )
             }
             composable("upcoming") {
@@ -331,7 +332,16 @@ private fun MyFinanceRoot() {
             composable("rescan") {
                 RescanScreen(vm = vm, smsGranted = smsGranted, onAskPermission = requestSms, onBack = { nav.popBackStack() })
             }
-            composable("reports") { ReportsScreen(vm = vm, onExplore = { nav.navigate("explore") }) }
+            composable("reports") { ReportsScreen(vm = vm, onExplore = { nav.navigate("explore") }, open = { route -> nav.navigate(route) }) }
+            // v1.4
+            composable("label-suggestions") { com.myfinance.app.ui.v14.SuggestionsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
+            composable("card-bills") { com.myfinance.app.ui.v14.CardBillsScreen(vm = vm, onBack = { nav.popBackStack() }, onImport = { nav.navigate("import-statement") }) }
+            composable("loans") { com.myfinance.app.ui.v14.LoansScreen(vm = vm, onBack = { nav.popBackStack() }, onOpenAutoDebits = { nav.navigate("autodebits") }) }
+            composable("refunds") { com.myfinance.app.ui.v14.RefundsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
+            composable("year-review") { com.myfinance.app.ui.v14.YearReviewScreen(vm = vm, onBack = { nav.popBackStack() }) }
+            composable("statement-reminders") {
+                com.myfinance.app.ui.v14.StatementRemindersScreen(vm = vm, onBack = { nav.popBackStack() }, onImport = { nav.navigate("import-statement") })
+            }
             composable("explore") { com.myfinance.app.ui.v13.ExploreScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("transactions") {
                 TransactionsScreen(

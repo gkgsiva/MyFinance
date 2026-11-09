@@ -112,6 +112,28 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   Labelling a payee also labels refunds from the same seller under a slightly different name
   ("IRCTC REFUND", "Amazon Seller Services"), and Explore has a Net / Spent / Received switch.
 
+### New in 1.4
+
+- **Label suggestions**: after you label a couple of payments, similar ones are suggested: the same
+  seller, payees sharing a name word ("Murugan Vegetables" like "Sri Balaji Vegetables"), or the label's
+  own name in the payee ("ravi.veg@okicici"). Review them from the Overview card, Manage, or the edit screen.
+- **Label budgets**: a monthly limit per label (Labels screen or Manage), shown on the Overview's
+  "By label" rows, with alerts at 80% and 100%. Refunds on the label count against it.
+- **Card bill check** (Plan): each credit card bill, from the statement SMS or an imported card
+  statement PDF, against what was paid to the card. Flags late, partial, minimum-only and unpaid bills.
+- **EMIs & loan payoff** (Plan): when each EMI ends and what that frees up each month; enter the
+  interest rate to see principal still owed, interest paid and left, and what a prepayment saves.
+- **Salary breakdown** (Reports): raises, bonus months, and income vs spending growth by year.
+- **Refund tracker** (Plan, or "Waiting for refund" on a payment): matches refunds from the same
+  seller and flags ones not back after 10 days (adjustable), with a notification.
+- **Year in review** (Reports or Plan): totals, top sellers, record months and fun facts for a calendar
+  or financial year, shareable on WhatsApp.
+- **Statement reminders** (Settings): a monthly notification listing accounts and cards whose latest
+  imported statement is older than last month.
+- **Labels by person** (Reports): spending per label for each family member. Labels now travel in the
+  family export, so labels added on other phones show on the main phone after merging.
+- **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
+
 ## Install
 
 The app reads SMS, which Google Play only allows for default SMS apps, so it is installed directly:

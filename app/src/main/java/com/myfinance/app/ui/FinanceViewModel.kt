@@ -584,4 +584,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun addCategory(name: String, budgetMinor: Long?) = viewModelScope.launch { repo.addCategory(name, budgetMinor) }
     fun updateCategory(c: CategoryEntity) = viewModelScope.launch { repo.updateCategory(c) }
     fun deleteCategory(name: String) = viewModelScope.launch { repo.deleteCategory(name) }
+
+    /** v1.4 insights: label suggestions and budgets, card bills, loans, salary, refunds, year in review and more. */
+    val v14 = V14State(viewModelScope, repo, allTransactions, allLite, txnMeta, ownerName, autoDebitsWithHidden, ::explore, monthTransactions)
 }

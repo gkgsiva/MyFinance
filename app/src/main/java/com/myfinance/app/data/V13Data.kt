@@ -198,6 +198,9 @@ interface V13Dao {
     @Query("SELECT * FROM txn_labels")
     fun observeLabels(): Flow<List<TxnLabelEntity>>
 
+    @Query("SELECT * FROM txn_labels")
+    suspend fun allLabels(): List<TxnLabelEntity>
+
     @Query("SELECT label FROM txn_labels WHERE uid = :uid ORDER BY label")
     suspend fun labelsOf(uid: String): List<String>
 
