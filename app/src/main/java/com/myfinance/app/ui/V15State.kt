@@ -307,8 +307,23 @@ class V15State(
             .filter { !it.date.isBefore(from) && !it.date.isAfter(to) }
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
 
-    /** Marks a payment reminder ("bill:<id>") paid: a repeating one moves to its next date, a one-time one is done. */
+    /** True for the commitments the user can mark as already paid: payment reminders and card bills. */
+    fun canMarkPaid(ref: String?): Boolean = ref != null && (ref.startsWith("bill:") || ref.startsWith("card:"))
+
+    /**
+     * Marks a commitment already paid. A payment reminder ("bill:<id>") that repeats moves to its next
+     * date and a one-time one is done; a card bill ("card:<bank>|<tail>|<due date>") is closed.
+     */
     fun markReminderPaid(ref: String) = work {
+        if (ref.startsWith("card:")) {
+            val (bank, tail, due) = ref.removePrefix("card:").split('|').let { Triple(it.getOrNull(0), it.getOrNull(1), it.getOrNull(2)) }
+            val bill = openBills.value.firstOrNull { b ->
+                val d = b.toBill()
+                d.bank.toString() == bank && d.accountTail.toString() == tail && d.dueDate.toString() == due
+            } ?: return@work null
+            repo.markBillPaid(bill.id, true)
+            return@work "Card bill marked paid"
+        }
         val id = ref.removePrefix("bill:")
         val b = v12.dao.bills().firstOrNull { it.id == id } ?: return@work null
         v12.markBillPaid(b)
@@ -372,14 +387,19 @@ class V15State(
     // ---- Quick adds: payment due, past investment, property, EPF ----
 
     /** A payment due on [date]. [everyMonths] 0 = only once. */
-    fun addPaymentDue(name: String, amountMinor: Long?, date: LocalDate, everyMonths: Int, kind: ReminderKind) = work {
-        v12.dao.upsertBill(
-            BillReminderEntity(
-                name = name.trim(), kind = kind.name, amountMinor = amountMinor, nextDueEpochDay = date.toEpochDay(),
-                everyMonths = everyMonths, remindDaysBefore = 2, matchWords = "",
-            ),
+    /** A payment due on [date]; [alreadyPaid] records this one as paid (a repeating one starts from its next date). */
+    fun addPaymentDue(name: String, amountMinor: Long?, date: LocalDate, everyMonths: Int, kind: ReminderKind, alreadyPaid: Boolean = false) = work {
+        val entity = BillReminderEntity(
+            name = name.trim(), kind = kind.name, amountMinor = amountMinor, nextDueEpochDay = date.toEpochDay(),
+            everyMonths = everyMonths, remindDaysBefore = 2, matchWords = "",
         )
-        "Payment due on ${date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))} added"
+        if (alreadyPaid) v12.markBillPaid(entity) else v12.dao.upsertBill(entity)
+        val day = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")
+        when {
+            !alreadyPaid -> "Payment due on ${date.format(day)} added"
+            everyMonths == 0 -> "Added as already paid"
+            else -> "Added as paid; next one ${com.myfinance.core.BillReminders.markPaid(entity.toBill()).nextDue.format(day)}"
+        }
     }
 
     /** An investment made in the past (e.g. an FD in 2019), so Net worth and goals include it. */

@@ -127,7 +127,8 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 if (today.upcomingOutMinor > 0) Text(formatInr(today.upcomingOutMinor), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Amber)
             }
             today.late.forEach { e ->
-                DueLine("Missed?", e.title.substringBefore(" (was due"), e.amountMinor?.let { formatInr(it) }.orEmpty(), ExpenseRed)
+                DueLine("Missed?", e.title.substringBefore(" (was due"), e.amountMinor?.let { formatInr(it) }.orEmpty(), ExpenseRed,
+                    onPaid = e.ref?.takeIf { vm.v15.canMarkPaid(it) }?.let { r -> { vm.v15.markReminderPaid(r) } })
             }
             val ahead = today.upcoming.filter { !it.late }
             if (ahead.isEmpty() && today.late.isEmpty()) Text("Nothing due", style = small, color = muted)
@@ -137,6 +138,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                     e.title,
                     e.amountMinor?.let { (if (e.incoming) "+" else "") + formatInr(it) }.orEmpty(),
                     if (e.incoming) IncomeGreen else if (e.date == now) ExpenseRed else Amber,
+                    onPaid = e.ref?.takeIf { !e.incoming && vm.v15.canMarkPaid(it) }?.let { r -> { vm.v15.markReminderPaid(r) } },
                 )
             }
             if (ahead.size > 5) Text("+${ahead.size - 5} more", style = small, color = muted)
@@ -161,11 +163,34 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
 }
 
 @Composable
-private fun DueLine(whenText: String, title: String, amount: String, color: androidx.compose.ui.graphics.Color) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun DueLine(
+    whenText: String, title: String, amount: String, color: androidx.compose.ui.graphics.Color,
+    /** Set for payment reminders and card bills: shows an "Already paid?" choice on tap. */
+    onPaid: (() -> Unit)? = null,
+) {
+    var ask by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().then(if (onPaid != null) Modifier.clickable { ask = true } else Modifier).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(whenText, style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.width(84.dp), maxLines = 1)
         Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Text(amount, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = color)
+        if (onPaid != null) {
+            Text(
+                "Paid", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { ask = true }.padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+            )
+        }
+    }
+    if (ask && onPaid != null) {
+        AlertDialog(
+            onDismissRequest = { ask = false },
+            title = { Text("Already paid?") },
+            text = { Text("$title\n\nA repeating payment moves to its next date; a one-time one is done and stops showing as due or missed.") },
+            confirmButton = { TextButton(onClick = { onPaid(); ask = false }) { Text("Yes, already paid") } },
+            dismissButton = { TextButton(onClick = { ask = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -216,6 +241,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
     var billKind by remember { mutableStateOf(ReminderKind.OTHER) }
     var kind by remember { mutableStateOf(AssetKind.FD) }
     var error by remember { mutableStateOf(false) }
+    var alreadyPaid by remember { mutableStateOf(false) }
 
     val title = when (what) {
         QuickAdd.PAYMENT_DUE -> "Payment due"
@@ -235,6 +261,10 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
                         DateButton("Due on", date, { d -> d?.let { date = it } })
                         Dropdown("Repeats", every, repeatOptions.map { it.first }, { v -> repeatOptions.first { it.first == v }.second }, { every = it })
                         Dropdown("Kind", billKind, ReminderKind.entries, { it.name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase) }, { billKind = it })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.Checkbox(checked = alreadyPaid, onCheckedChange = { alreadyPaid = it })
+                            Text(if (every == 0) "Already paid" else "This one is already paid (remind from the next)")
+                        }
                         Hint12("Shows in Today, the calendar and Bill reminders, with a reminder 2 days before.")
                     }
                     QuickAdd.INVESTMENT -> {
@@ -264,7 +294,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
                 val a = parseAmountToMinor(amount)
                 val b = parseAmountToMinor(second)
                 when (what) {
-                    QuickAdd.PAYMENT_DUE -> { if (name.isBlank()) { error = true; return@TextButton }; s.addPaymentDue(name, a, date, every, billKind) }
+                    QuickAdd.PAYMENT_DUE -> { if (name.isBlank()) { error = true; return@TextButton }; s.addPaymentDue(name, a, date, every, billKind, alreadyPaid) }
                     QuickAdd.INVESTMENT -> { if (name.isBlank() || a == null || a <= 0) { error = true; return@TextButton }; s.addPastInvestment(name, kind, date, a, b) }
                     QuickAdd.PROPERTY -> { if (name.isBlank() || (a == null && b == null)) { error = true; return@TextButton }; s.addProperty(name, a ?: b ?: 0, b ?: a ?: 0) }
                     QuickAdd.EPF -> { if (a == null || a <= 0) { error = true; return@TextButton }; s.setEpf(a, b) }

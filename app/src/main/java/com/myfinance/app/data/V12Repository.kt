@@ -128,7 +128,7 @@ class V12Repository(
             if (key in sent) continue
             val days = java.time.temporal.ChronoUnit.DAYS.between(today, b.nextDue)
             val amount = b.amountMinor?.let { " ${formatInr(it)}" }.orEmpty()
-            Notifier.reminder(context, key.hashCode(), "${b.name} due in $days days", "Heads-up: yearly payment$amount due on ${b.nextDue.format(DAY)}. Time to set the money aside.")
+            Notifier.reminder(context, key.hashCode(), "${b.name} due in $days days", "Heads-up: yearly payment$amount due on ${b.nextDue.format(DAY)}. Time to set the money aside.", paidBillId = b.id)
             fresh += key
         }
         for (s in BillReminders.needingAttention(all, today)) {
@@ -141,9 +141,9 @@ class V12Repository(
                 BillState.DUE_TODAY -> "${s.bill.name} is due today"
                 else -> "${s.bill.name} due in ${s.daysLeft} days"
             }
-            val text = if (s.state == BillState.OVERDUE) "No payment$amount seen yet. If you paid another way, mark it paid in Payments ahead."
+            val text = if (s.state == BillState.OVERDUE) "No payment$amount seen yet. If you paid another way, tap Already paid."
                 else "Payment$amount due on ${s.bill.nextDue.format(DAY)}."
-            Notifier.reminder(context, key.hashCode(), title, text)
+            Notifier.reminder(context, key.hashCode(), title, text, paidBillId = s.bill.id)
             fresh += key
         }
         if (fresh.isNotEmpty()) {
