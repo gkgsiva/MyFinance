@@ -213,7 +213,7 @@ fun QuickAddFab(vm: FinanceViewModel, open: (String) -> Unit) {
             fun pick(action: () -> Unit) { menu = false; action() }
             DropdownMenuItem(text = { Text("Spend (any date)") }, onClick = { pick { open("edit/0") } })
             DropdownMenuItem(text = { Text("Income") }, onClick = { pick { open("edit-income") } })
-            DropdownMenuItem(text = { Text("Payment due / reminder") }, onClick = { pick { dialog = QuickAdd.PAYMENT_DUE } })
+            DropdownMenuItem(text = { Text("Future payment (once or repeating)") }, onClick = { pick { dialog = QuickAdd.PAYMENT_DUE } })
             DropdownMenuItem(text = { Text("Lent / borrowed") }, onClick = { pick { open("lending") } })
             DropdownMenuItem(text = { Text("Past investment") }, onClick = { pick { dialog = QuickAdd.INVESTMENT } })
             DropdownMenuItem(text = { Text("Property") }, onClick = { pick { dialog = QuickAdd.PROPERTY } })
@@ -244,7 +244,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
     var alreadyPaid by remember { mutableStateOf(false) }
 
     val title = when (what) {
-        QuickAdd.PAYMENT_DUE -> "Payment due"
+        QuickAdd.PAYMENT_DUE -> "Future payment"
         QuickAdd.INVESTMENT -> "Past investment"
         QuickAdd.PROPERTY -> "Property"
         QuickAdd.EPF -> "EPF balance"
@@ -265,7 +265,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
                             androidx.compose.material3.Checkbox(checked = alreadyPaid, onCheckedChange = { alreadyPaid = it })
                             Text(if (every == 0) "Already paid" else "This one is already paid (remind from the next)")
                         }
-                        Hint12("Shows in Today, the calendar and Bill reminders, with a reminder 2 days before.")
+                        Hint12(if (every == 0) "Once: shows on Home and in Payments ahead, the calendar and the forecast, with a reminder 2 days before." else "Repeats: each time it is paid (or you tap Already paid) it moves to the next date. Shows on Home and in Payments ahead, the calendar and the forecast, with a reminder 2 days before. Stop it from Bill reminders.")
                     }
                     QuickAdd.INVESTMENT -> {
                         OutlinedTextField(name, { name = it; error = false }, label = { Text("Name, e.g. SBI FD or Axis Bluechip") }, isError = error && name.isBlank(), singleLine = true, modifier = Modifier.fillMaxWidth())

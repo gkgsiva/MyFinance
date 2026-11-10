@@ -660,4 +660,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** v1.6: review inbox, family UPI, transfers, splits, monthly close, health check, rule tester, export, currencies, heavy spends. */
     val v16 = V16State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits)
+
+    /** 1.9: balances and card use, month compare, payment modes, fixed vs flexible, savings rate, family summary, meal card, FASTag. */
+    val v19 = V19State(viewModelScope, repo, allTransactions, allLite, month, monthCycle, ownerName, balances, myAccounts, recurring, dashPeriod)
 }

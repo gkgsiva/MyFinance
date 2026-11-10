@@ -855,6 +855,7 @@ class FinanceRepository(
 
         runCatching { checkStatementReminder(today) }
         runCatching { newKeys += checkRefunds(today, sent) }
+        runCatching { sendWeeklyDigest(today, all) }
 
         if (newKeys.isNotEmpty()) {
             // Forget keys older than ~2 months.
@@ -862,6 +863,28 @@ class FinanceRepository(
             val kept = sent.filter { k -> k.substringAfterLast('|').let { d -> parseKeyDate(d)?.isAfter(cutoff) ?: false } }
             prefs.edit().putStringSet(KEY_REMINDERS_SENT, (kept + newKeys).toSet()).apply()
         }
+    }
+
+    // ---- 1.9: weekly digest ----
+
+    val weeklyDigestOn: Boolean get() = prefs.getBoolean(KEY_WEEKLY_DIGEST, true)
+
+    fun setWeeklyDigest(on: Boolean) { prefs.edit().putBoolean(KEY_WEEKLY_DIGEST, on).apply() }
+
+    /** Once a week (from Monday): last week's spending against the week before, and what is due this week. */
+    private suspend fun sendWeeklyDigest(today: LocalDate, all: List<com.myfinance.core.TxnLite>) {
+        if (!weeklyDigestOn) return
+        val week = com.myfinance.core.Weekly.lastWeekStart(today).toEpochDay()
+        if (prefs.getLong(KEY_WEEKLY_SENT, 0L) >= week) return
+        if (all.none { it.type == TxnType.DEBIT }) return
+        val due = ArrayList<Triple<String, Long?, LocalDate>>()
+        runCatching {
+            v12.dao.bills().map { it.toBill() }.filterNot { it.done }.forEach { due += Triple(it.name, it.amountMinor, it.nextDue) }
+        }
+        openBills(today).forEach { b -> due += Triple(b.toBill().title, b.amountMinor, LocalDate.ofEpochDay(b.dueEpochDay)) }
+        val d = com.myfinance.core.Weekly.digest(all, today, due)
+        Notifier.reminder(context, "weekly|$week".hashCode(), d.title, d.body.ifBlank { "Open MyFinance for the details." })
+        prefs.edit().putLong(KEY_WEEKLY_SENT, week).apply()
     }
 
     // ---- v1.4: statement reminders, refunds, card statement bills ----
@@ -1133,6 +1156,8 @@ class FinanceRepository(
         private const val KEY_BACKFILLED = "backfilled_v11"
         private const val KEY_CYCLE_START = "month_start_day"
         private const val KEY_CARD_BILL_CLEANUP = "card_bill_cleanup_1_9"
+        private const val KEY_WEEKLY_DIGEST = "weekly_digest_on"
+        private const val KEY_WEEKLY_SENT = "weekly_digest_sent_week"
         private const val KEY_SALARY_FROM = "salary_next_month_from_day"
         private const val KEY_LAST_SCAN = "last_inbox_scan"
         private const val KEY_STMT_DAY = "statement_reminder_day"

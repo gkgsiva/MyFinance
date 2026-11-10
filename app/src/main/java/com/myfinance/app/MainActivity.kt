@@ -378,6 +378,21 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
+            composable("balances") { com.myfinance.app.ui.v19.BalancesScreen(vm, { nav.popBackStack() }) { route -> nav.navigate(route) } }
+            composable("compare") {
+                com.myfinance.app.ui.v19.CompareScreen(vm, { nav.popBackStack() }) { category ->
+                    vm.labelFilter.value = null
+                    vm.categoryFilter.value = category
+                    goTo("transactions")
+                }
+            }
+            composable("spend-types") { com.myfinance.app.ui.v19.SpendTypesScreen(vm) { nav.popBackStack() } }
+            composable("savings") { com.myfinance.app.ui.v19.SavingsScreen(vm) { nav.popBackStack() } }
+            composable("family-summary") { com.myfinance.app.ui.v19.FamilySummaryScreen(vm) { nav.popBackStack() } }
+            composable("instrument/{which}") { entry ->
+                val which = com.myfinance.core.Instrument.entries.firstOrNull { it.name == entry.arguments?.getString("which") } ?: com.myfinance.core.Instrument.MEAL_CARD
+                com.myfinance.app.ui.v19.InstrumentScreen(vm, which, { nav.popBackStack() }) { id -> nav.navigate("edit/$id") }
+            }
             composable("my-accounts") { com.myfinance.app.ui.screens.MyAccountsScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable("accounts") { AccountsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("import-statement") {
