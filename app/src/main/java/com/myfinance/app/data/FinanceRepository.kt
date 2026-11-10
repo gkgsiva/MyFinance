@@ -1112,7 +1112,7 @@ class FinanceRepository(
                 }
             }
             // Other databases: written once per chunk.
-            runCatching { for (n in nicks) if (v17.nicknameOf(n.uid) == null) v17.putNickname(n) }
+            runCatching { for (n in nicks) if (v17.nicknameOf(n.txnUid) == null) v17.putNickname(n) }
             if (labels.isNotEmpty()) runCatching { v13.addLabels(labels) }
             for ((row, rule) in newRows) {
                 if (row.timestamp >= recentFrom || rule?.taxSection != null) runCatching { v12.onNewTransaction(row, rule) }

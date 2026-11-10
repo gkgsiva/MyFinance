@@ -73,7 +73,7 @@ data class StatementImportState(
 class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = (app as MyFinanceApp).repository
     /** Reading and importing run in the app's scope: leaving the screen doesn't stop them. */
-    private val scope = app.appScope
+    private val scope = (app as MyFinanceApp).appScope
 
     private val _state = shared
     val state: StateFlow<StatementImportState> = _state.asStateFlow()
