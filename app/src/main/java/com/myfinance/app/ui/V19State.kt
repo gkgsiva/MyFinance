@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
@@ -57,8 +58,10 @@ class V19State(
 ) {
     private val zone get() = ZoneId.systemDefault()
 
+    // A view that fails to work out shows nothing (and the error is kept for a crash report) instead of closing the app.
     private fun <T> state(initial: T, flow: kotlinx.coroutines.flow.Flow<T>, scope: CoroutineScope): StateFlow<T> =
-        flow.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, initial)
+        flow.catch { e -> com.myfinance.app.diag.CrashLog.recovered("views", e); emit(initial) }
+            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, initial)
 
     val balancesOverview: StateFlow<BalancesOverview> = state(
         BalancesOverview(emptyList(), emptyList()),
@@ -198,12 +201,16 @@ class V19State(
         scope,
     )
 
+    private val triedSalaryIds = HashSet<Long>()
+
     init {
         // Salary already in the Salary category: switch it on straight away (the Home card says so and can undo it).
         // Kept up to date while it is the app's own choice: an earlier start day when salary came early, and the
         // payer's credits that didn't say "salary" put in the Salary category, so they count for the next month.
         scope.launch {
-            combine(salaryGuess, cycle, _salaryState) { g, c, st -> Triple(g, c, st) }.collect { (g, c, st) ->
+            combine(salaryGuess, cycle, _salaryState) { g, c, st -> Triple(g, c, st) }
+                .catch { e -> com.myfinance.app.diag.CrashLog.recovered("salary month", e) }
+                .collect { (g, c, st) ->
                 if (g == null || !g.alreadySalary || st == "user" || st == "dismissed") return@collect
                 val fresh = st == null && c.salaryFromDay == null
                 val ours = st == "applied" || st == "ok"
@@ -216,10 +223,9 @@ class V19State(
         }
     }
 
-    private val triedSalaryIds = HashSet<Long>()
-
     /** Count salary from [g]'s day for the next month; credits not in the Salary category yet are put there. */
     fun useSalaryDay(g: com.myfinance.core.SalaryGuess, keepState: Boolean = false) = scope.launch {
+      runCatching {
         val ids = if (g.alreadySalary) g.toCategorise else g.ids
         if (ids.isNotEmpty()) runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
         val day = minOf(g.fromDay, repo.monthCycle.value.salaryFromDay ?: g.fromDay)
@@ -228,6 +234,7 @@ class V19State(
             repo.salaryAutoState = "applied"
             _salaryState.value = "applied"
         }
+      }.onFailure { com.myfinance.app.diag.CrashLog.recovered("salary month", it) }
     }
 
     fun salaryNoteDone(keep: Boolean) {

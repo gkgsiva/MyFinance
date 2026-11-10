@@ -22,7 +22,11 @@ import kotlinx.coroutines.launch
 
 class MyFinanceApp : Application() {
 
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Work that outlives a screen. An error in it is noted for the crash report, never a crash. */
+    val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e -> com.myfinance.app.diag.CrashLog.recovered("background work", e) },
+    )
 
     val repository: FinanceRepository by lazy {
         // A restore chosen last time is swapped in before any database is opened.
@@ -32,6 +36,7 @@ class MyFinanceApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.myfinance.app.diag.CrashLog.init(this)
         AppLock.init(this)
         com.myfinance.app.ui.theme.ThemePref.init(this)
         Notifier.createChannels(this)
@@ -39,7 +44,7 @@ class MyFinanceApp : Application() {
         com.myfinance.app.backup.AutoBackup.init(this)
         com.myfinance.app.backup.AutoBackup.schedule(this)
         appScope.launch {
-            repository.ensureDefaults()
+            runCatching { repository.ensureDefaults() }.onFailure { com.myfinance.app.diag.CrashLog.recovered("start-up", it) }
             runCatching { repository.purgeOldTrash() }
             // After upgrading from v1.0, read the inbox once more to pick up bills and balances.
             val canRead = ContextCompat.checkSelfPermission(this@MyFinanceApp, Manifest.permission.READ_SMS) ==

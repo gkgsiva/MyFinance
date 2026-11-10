@@ -67,6 +67,8 @@ fun HomeScreen(
     val backupDays = remember(allTxns.size) { vm.v19.backupDaysAgo() }
     val salaryNote by vm.v19.salaryNote.collectAsState()
     val cycle by vm.monthCycle.collectAsState()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var crash by remember { androidx.compose.runtime.mutableStateOf(com.myfinance.app.diag.CrashLog.last(ctx)) }
     var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     if (addDue) com.myfinance.app.ui.v15.QuickAddDialog(vm, com.myfinance.app.ui.v15.QuickAdd.PAYMENT_DUE) { addDue = false }
 
@@ -142,6 +144,20 @@ fun HomeScreen(
                             Text("Save one so a lost phone doesn't lose your history.", style = MaterialTheme.typography.bodySmall)
                         }
                         Text("Back up ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            // The app closed by itself last time: offer to send the details so it can be fixed.
+            if (crash != null) item {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("MyFinance closed unexpectedly last time", style = MaterialTheme.typography.titleSmall)
+                        Text("Share the details (on WhatsApp, for example) so it can be fixed. Only the error is sent, no transactions.", style = MaterialTheme.typography.bodySmall)
+                        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                            TextButton(onClick = { com.myfinance.app.diag.CrashLog.share(ctx) }) { Text("Share details") }
+                            TextButton(onClick = { com.myfinance.app.diag.CrashLog.clear(ctx); crash = null }) { Text("Dismiss") }
+                        }
                     }
                 }
             }
