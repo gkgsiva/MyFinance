@@ -59,6 +59,11 @@ object SelfTransfers {
 
     fun isCardPayment(r: CheckRow): Boolean = isCardPayment(r.merchant, r.text)
 
+    private val ownTransferWords = Regex("""\binft\b|\binf/|\bmmt/|fund\s*transfer|\bto\s+self\b|\bsweep|\bown\s+a/?c""", RegexOption.IGNORE_CASE)
+
+    /** A narration that reads like money moved to or from another account (NEFT, IMPS, UPI, transfer, sweep). */
+    fun looksLikeTransfer(text: String?): Boolean = text != null && (selfWords.containsMatchIn(text) || ownTransferWords.containsMatchIn(text))
+
     /** A payment received on a card statement ("PAYMENT RECEIVED - THANK YOU", "BBPS PAYMENT", autopay). */
     private val cardStatementPayment = Regex(
         """payment|thank\s*you|autopay|auto\s*debit|\bbbps\b|\bneft\b|\bimps\b|\brtgs\b|\bupi\b|\bcred\b|billdesk""",

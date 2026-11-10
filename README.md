@@ -134,7 +134,13 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
-### New in the next release (after 1.9)
+### New in 1.10.1
+
+- **Statements with several cards or accounts.** A consolidated card statement lists each card under its own "Card Number" heading, and a bank statement can hold savings and current accounts. Each line now goes to its own card or account, and so to its owner (add-on or family cards from My cards & accounts). The preview lists every card with its line count, and Change account lets you correct each card's last 4 digits.
+- **Repeated tables left out.** When a consolidated file prints the same statement twice, the repeat is skipped (card lines are recognised by their reference numbers, bank lines by their running balance).
+- **Transfers between your own accounts.** Savings to current and back, seen on both sides, is no longer counted as spending or income. The preview's spent and received totals also leave out card bill payments, and show them separately.
+
+### New in 1.10
 
 - **Old statements import fast**: lines are written in batches, a progress bar shows pages read and lines imported, with Stop, and the import keeps running if you leave the screen (a notification says when it's done). Fixed: ICICI savings statements with a "B/F" opening line stopped the reader, and that line was read as an entry.
 - **Import history & undo**: every import is listed and can be undone as a whole.

@@ -38,7 +38,12 @@ data class StatementFile(
     /** While reading a PDF: pages read so far and in all. */
     val pagesRead: Int = 0,
     val pages: Int = 0,
+    /** The user's corrections of the cards / accounts the statement lists: printed last 4 → right last 4. */
+    val renames: Map<String, String> = emptyMap(),
 ) {
+    /** Cards / accounts the lines belong to (printed last 4, lines), when the statement lists more than one. */
+    val accounts: List<Pair<String, Int>> get() = statement?.let { StatementImport.accountsIn(it) }.orEmpty()
+
     enum class Status { READING, NEEDS_PASSWORD, FAILED, READY }
 
     val summary get() = StatementImport.summary(candidates)
@@ -53,6 +58,8 @@ data class StatementImportState(
     val importTotal: Int = 0,
     /** After an import: what it added per financial year. */
     val years: List<com.myfinance.core.YearTotals> = emptyList(),
+    /** Registered cards and accounts, to name whose each card in a statement is. */
+    val myAccounts: List<com.myfinance.core.MyAccount> = emptyList(),
 ) {
     val ready get() = files.filter { it.status == StatementFile.Status.READY }
     val newCount get() = ready.sumOf { it.summary.newCount }
@@ -128,8 +135,15 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The user corrected the bank or the account / card's last 4 digits. */
-    fun setAccount(uri: Uri, bank: String?, tail: String?) {
-        setFile(uri) { it.copy(bank = bank?.trim()?.ifBlank { null }, accountTail = tail?.filter(Char::isDigit)?.takeLast(4)?.ifBlank { null }, matched = null) }
+    fun setAccount(uri: Uri, bank: String?, tail: String?, renames: Map<String, String> = emptyMap()) {
+        val t = tail?.filter(Char::isDigit)?.takeLast(4)?.ifBlank { null }
+        setFile(uri) { f ->
+            val printed = f.accounts.map { it.first }
+            // One card printed on the statement: the corrected digits replace it on every line.
+            val fixed = renames.mapValues { it.value.filter(Char::isDigit).takeLast(4) }.filter { (k, v) -> v.length == 4 && v != k } +
+                (if (printed.size == 1 && t != null && t != printed[0] && f.kind == StatementKind.CARD) mapOf(printed[0] to t) else emptyMap())
+            f.copy(bank = bank?.trim()?.ifBlank { null }, accountTail = t, matched = null, renames = fixed)
+        }
         scope.launch { recompute() }
     }
 
@@ -228,20 +242,32 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun recompute() = lock.withLock {
         val stored = existing ?: repo.existingForImport().also { existing = it }
+        val mine = runCatching { repo.myAccounts.first() }.getOrDefault(emptyList())
         val files = _state.value.files
         val updated = withContext(Dispatchers.Default) {
             val seen = ArrayList(stored)
-            files.map { f ->
+            val marked = files.map { f ->
                 val st = f.statement
                 if (f.status != StatementFile.Status.READY || st == null) return@map f
-                val marked = StatementImport.markDuplicates(StatementImport.candidates(st, f.bank, f.accountTail), seen)
+                val marked = StatementImport.markDuplicates(StatementImport.candidates(st, f.bank, f.accountTail, renames = f.renames), seen)
                 marked.filter { it.duplicateOf == null }.forEach { c ->
                     seen += ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key, fromStatement = true, text = c.row.description)
                 }
                 f.copy(candidates = marked)
             }
+            // Money moved between own accounts (savings to current, in one file or two): both sides left out of totals.
+            val all = marked.flatMap { it.candidates }
+            val own = all.mapNotNullTo(HashSet()) { it.accountTail } + mine.map { it.tail }
+            val paired = StatementImport.markOwnTransfers(all, own)
+            var at = 0
+            marked.map { f -> f.copy(candidates = paired.subList(at, at + f.candidates.size).also { at += f.candidates.size }) }
         }
-        _state.update { s -> s.copy(files = s.files.map { f -> updated.firstOrNull { it.uri == f.uri && it.statement === f.statement && it.bank == f.bank && it.accountTail == f.accountTail } ?: f }) }
+        _state.update { s ->
+            s.copy(
+                myAccounts = mine,
+                files = s.files.map { f -> updated.firstOrNull { it.uri == f.uri && it.statement === f.statement && it.bank == f.bank && it.accountTail == f.accountTail && it.renames == f.renames } ?: f },
+            )
+        }
     }
 
     private fun setFile(uri: Uri, change: (StatementFile) -> StatementFile) {
