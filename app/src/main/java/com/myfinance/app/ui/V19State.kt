@@ -176,15 +176,23 @@ class V19State(
      */
     data class SalaryNote(val guess: com.myfinance.core.SalaryGuess, val applied: Boolean)
 
+    /** The salary as found now, while the salary month is the app's own (not set or turned off by the user). */
+    private val salaryGuess: StateFlow<com.myfinance.core.SalaryGuess?> = state(
+        null,
+        combine(allLite, _salaryState) { txns, st ->
+            if (st == "user" || st == "dismissed") null else com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)
+        },
+        scope,
+    )
+
     val salaryNote: StateFlow<SalaryNote?> = state(
         null,
-        combine(allLite, cycle, _salaryState) { txns, c, st ->
+        combine(salaryGuess, cycle, _salaryState) { g, c, st ->
             when {
                 st == "applied" && c.salaryFromDay != null ->
-                    com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, true) }
-                    ?: c.salaryFromDay?.let { d -> SalaryNote(com.myfinance.core.SalaryGuess(d, null, emptyList(), 0, true, d), true) }
+                    g?.let { SalaryNote(it, true) } ?: c.salaryFromDay?.let { d -> SalaryNote(com.myfinance.core.SalaryGuess(d, null, emptyList(), 0, true, d), true) }
                 st != null || c.salaryFromDay != null -> null
-                else -> com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, false) }
+                else -> g?.let { SalaryNote(it, false) }
             }
         },
         scope,
@@ -192,17 +200,34 @@ class V19State(
 
     init {
         // Salary already in the Salary category: switch it on straight away (the Home card says so and can undo it).
+        // Kept up to date while it is the app's own choice: an earlier start day when salary came early, and the
+        // payer's credits that didn't say "salary" put in the Salary category, so they count for the next month.
         scope.launch {
-            salaryNote.collect { n -> if (n != null && !n.applied && n.guess.alreadySalary) useSalaryDay(n.guess) }
+            combine(salaryGuess, cycle, _salaryState) { g, c, st -> Triple(g, c, st) }.collect { (g, c, st) ->
+                if (g == null || !g.alreadySalary || st == "user" || st == "dismissed") return@collect
+                val fresh = st == null && c.salaryFromDay == null
+                val ours = st == "applied" || st == "ok"
+                val newIds = g.toCategorise.filterNot { it in triedSalaryIds }
+                if (fresh || (ours && ((c.salaryFromDay ?: 99) > g.fromDay || newIds.isNotEmpty()))) {
+                    triedSalaryIds += g.toCategorise
+                    useSalaryDay(g, keepState = !fresh)
+                }
+            }
         }
     }
 
+    private val triedSalaryIds = HashSet<Long>()
+
     /** Count salary from [g]'s day for the next month; credits not in the Salary category yet are put there. */
-    fun useSalaryDay(g: com.myfinance.core.SalaryGuess) = scope.launch {
-        if (!g.alreadySalary && g.ids.isNotEmpty()) runCatching { repo.categorise(g.ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
-        repo.setMonthCycle(repo.monthCycle.value.copy(salaryFromDay = g.fromDay), byUser = false)
-        repo.salaryAutoState = "applied"
-        _salaryState.value = "applied"
+    fun useSalaryDay(g: com.myfinance.core.SalaryGuess, keepState: Boolean = false) = scope.launch {
+        val ids = if (g.alreadySalary) g.toCategorise else g.ids
+        if (ids.isNotEmpty()) runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
+        val day = minOf(g.fromDay, repo.monthCycle.value.salaryFromDay ?: g.fromDay)
+        repo.setMonthCycle(repo.monthCycle.value.copy(salaryFromDay = day), byUser = false)
+        if (!keepState) {
+            repo.salaryAutoState = "applied"
+            _salaryState.value = "applied"
+        }
     }
 
     fun salaryNoteDone(keep: Boolean) {

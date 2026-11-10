@@ -497,16 +497,24 @@ object StatementParser {
             val seen = HashSet<List<Any?>>()
             return rows.filter { r -> r.balanceMinor == null || seen.add(listOf(r.cardTail, r.date, r.amountMinor, r.type, r.balanceMinor, r.description)) }
         }
-        fun key(r: StatementRow) = listOf(r.cardTail, r.serial, r.date, r.amountMinor, r.type)
+        // A serial number belongs to one transaction, whichever card's table it is printed under.
+        fun key(r: StatementRow) = listOf(r.serial, r.date, r.amountMinor, r.type)
+        fun plain(r: StatementRow) = listOf(r.date, r.amountMinor, r.type, r.description.lowercase())
         val seenBefore = HashSet<List<Any?>>()
+        val plainBefore = HashSet<List<Any?>>()
         val bySection = rows.indices.groupBy { sections[it] }
         val keep = BooleanArray(rows.size) { true }
         for ((_, idx) in bySection.entries.sortedBy { it.key }) {
             val numbered = idx.filter { rows[it].serial != null }
             val repeats = numbered.filter { key(rows[it]) in seenBefore }
             if (numbered.isNotEmpty() && repeats.size == numbered.size) idx.forEach { keep[it] = false }
-            else repeats.forEach { keep[it] = false }
+            else {
+                repeats.forEach { keep[it] = false }
+                // A table that repeats numbered lines also repeats the fee and interest lines beside them.
+                if (repeats.isNotEmpty()) idx.filter { rows[it].serial == null && plain(rows[it]) in plainBefore }.forEach { keep[it] = false }
+            }
             numbered.forEach { seenBefore += key(rows[it]) }
+            idx.forEach { plainBefore += plain(rows[it]) }
         }
         return rows.filterIndexed { i, _ -> keep[i] }
     }

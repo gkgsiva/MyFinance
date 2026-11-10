@@ -134,6 +134,12 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in 1.11.1
+
+- **Card bill paid from the bank, both sides seen.** A payment from your bank account and the same amount received on your card within a few days are both left out of spending and income, even when the messages only say "Payment" and "Money received". Entries already stored are fixed when you open the app.
+- **Salary month.** Salary that came a few days early (the 25th on a weekend) still counts for the next month, and the payer's credits that didn't say "salary" are put in the Salary category. Home shows the latest salary and the month it counts for.
+- **Repeated statement lines.** A line printed under two cards' tables in one statement is imported once. Lines that earlier imports stored under two card numbers are moved to Recently deleted (you can restore them), keeping the latest import's card.
+
 ### New in 1.11
 
 - **More room on Transactions.** Search opens from a small button, and categories and labels are two drop-downs on one line, so the list gets the screen.
