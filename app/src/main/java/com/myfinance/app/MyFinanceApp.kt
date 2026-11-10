@@ -27,7 +27,7 @@ class MyFinanceApp : Application() {
     val repository: FinanceRepository by lazy {
         // A restore chosen last time is swapped in before any database is opened.
         V12Repository.applyPendingRestore(this)
-        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this), V12Database.create(this), V13Database.create(this), V14Database.create(this), V15Database.create(this), com.myfinance.app.data.V16Database.create(this), com.myfinance.app.data.V17Database.create(this))
+        FinanceRepository(this, FinanceDatabase.create(this), ExtrasDatabase.create(this), V12Database.create(this), V13Database.create(this), V14Database.create(this), V15Database.create(this), com.myfinance.app.data.V16Database.create(this), com.myfinance.app.data.V17Database.create(this), com.myfinance.app.data.V18Database.create(this))
     }
 
     override fun onCreate() {

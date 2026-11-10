@@ -304,6 +304,31 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, ReportsData())
 
+    /** The family's own cards and accounts by number (Manage > My cards & accounts). */
+    val myAccounts: StateFlow<List<com.myfinance.core.MyAccount>> =
+        repo.myAccounts.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** A short note after saving a card or account, e.g. how many past entries moved to that person. */
+    val myAccountsMessage = MutableStateFlow<String?>(null)
+
+    fun saveMyAccount(a: com.myfinance.core.MyAccount) = viewModelScope.launch {
+        val n = runCatching { repo.saveMyAccount(a) }.getOrElse { e -> myAccountsMessage.value = "Could not save: ${e.message}"; return@launch }
+        myAccountsMessage.value = "Saved ${a.label}." + if (n > 0) " $n past entries updated." else ""
+    }
+
+    fun deleteMyAccount(id: Long) = viewModelScope.launch { runCatching { repo.deleteMyAccount(id) } }
+
+    /** Dashboard: the period (ending at the month shown) and the account or card it is filtered to. */
+    val dashPeriod = MutableStateFlow(com.myfinance.core.DashPeriod.MONTH)
+    val dashAccount = MutableStateFlow<String?>(null)
+
+    val dashboard: StateFlow<com.myfinance.core.DashboardData> =
+        combine(combine(allLite, txnMeta) { t, m -> t to m }, _month, monthCycle, dashPeriod, dashAccount) { (txns, meta), end, cycle, period, account ->
+            com.myfinance.core.Dashboard.compute(txns, end, period, account, ZoneId.systemDefault(), cycle, meta.hiddenIds)
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, com.myfinance.core.DashboardData())
+
     val recurring: StateFlow<List<RecurringPayment>> =
         allLite.map { RecurringDetector.detect(it, LocalDate.now()) }
             .flowOn(Dispatchers.Default)

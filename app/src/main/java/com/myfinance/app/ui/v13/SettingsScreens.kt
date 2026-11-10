@@ -67,6 +67,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { Group("Statements & accounts") }
         item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
+        item { SettingTile("My cards & accounts", "", "Your and your family's card and account numbers, so statements and SMS go to the right person") { open("my-accounts") } }
         item {
             val day by vm.v14.statementReminderDay.collectAsState()
             SettingTile("Statement reminders", if (day == 0) "Off" else "Day $day", "A monthly nudge to import the latest bank and card statements") { open("statement-reminders") }

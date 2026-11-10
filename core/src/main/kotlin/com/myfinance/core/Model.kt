@@ -20,6 +20,8 @@ data class ParsedTransaction(
     /** Set when the payment was in another currency; [amountMinor] is then the rupee estimate. */
     val foreign: ForeignAmount? = null,
     val fxRate: Double? = null,
+    /** The other account named in a transfer ("Acct XX144 debited … & Acct XX848 credited"): its last digits. */
+    val counterTail: String? = null,
 )
 
 /** Formats minor units as an Indian-rupee string, e.g. 123456 -> "₹1,234.56". */

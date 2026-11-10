@@ -124,7 +124,7 @@ fun LabelsCard(vm: FinanceViewModel) {
             Text("Labels", style = MaterialTheme.typography.titleMedium)
             Muted(
                 if (used.isEmpty()) "Tap any transaction to add labels like EMI, SIP, Grocery or Vegetables. " +
-                    "Group by label on the Overview, filter by label on Transactions, and see totals in Reports."
+                    "Group by label on the Dashboard, filter by label on Transactions, and see totals in Reports."
                 else "Tap a label to rename or delete it.",
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -226,10 +226,25 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
     val s = f.summary
     val account = listOfNotNull(f.bank, f.accountTail?.let { "••$it" }).joinToString(" ").ifBlank { "Account not shown" }
     Text("${f.kind?.label ?: "Statement"} · $account", style = MaterialTheme.typography.bodyMedium)
+    f.matched?.let { m ->
+        Text(
+            "✓ Your registered " + m.label + (m.owner?.let { " ($it's)" } ?: ""),
+            style = MaterialTheme.typography.bodySmall, color = com.myfinance.app.ui.theme.IncomeGreen,
+        )
+    }
     val from = s.from
     val to = s.to
     if (from != null && to != null) {
         Text("${from.format(stmtDayFormat)} to ${to.format(stmtDayFormat)}", style = MaterialTheme.typography.bodySmall)
+    }
+    // Do the lines read add up to the statement's own totals?
+    f.statement?.check?.let { c ->
+        Text(
+            if (c.ok) "✓ Every line read: the totals match the statement"
+            else "Totals differ from the statement by ${formatInr(kotlin.math.abs(c.differenceMinor))}. A line may not have been read; check with Show lines.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (c.ok) com.myfinance.app.ui.theme.IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     if (f.candidates.isEmpty()) {
         Text("Checking for duplicates…", style = MaterialTheme.typography.bodySmall)
