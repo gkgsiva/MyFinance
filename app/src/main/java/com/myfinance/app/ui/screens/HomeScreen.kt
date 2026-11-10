@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +60,8 @@ fun HomeScreen(
     val month by vm.month.collectAsState()
     val summary by vm.summary.collectAsState()
     val balances by vm.balances.collectAsState()
+    var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    if (addDue) com.myfinance.app.ui.v15.QuickAddDialog(vm, com.myfinance.app.ui.v15.QuickAdd.PAYMENT_DUE) { addDue = false }
 
     Scaffold(floatingActionButton = { com.myfinance.app.ui.v15.QuickAddFab(vm, open) }) { inner ->
         LazyColumn(
@@ -104,6 +107,14 @@ fun HomeScreen(
             // Today's transactions, then payments due today and in the next few days, and missed ones.
             item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
 
+            // A payment you know is coming: once (school fees on the 15th) or repeating (rent every month).
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = { addDue = true }) { Text("+ Future payment") }
+                    androidx.compose.material3.OutlinedButton(onClick = { open("payments-ahead") }) { Text("Payments ahead") }
+                }
+            }
+
             // One line for the month so far; the details are on the Dashboard.
             item {
                 Card(Modifier.fillMaxWidth().clickable { open("dashboard") }) {
@@ -122,6 +133,7 @@ fun HomeScreen(
                             Text(
                                 "In your bank accounts: ${formatInr(Balances.totalBankMinor(balances))}",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable { open("balances") },
                             )
                         }
                     }
@@ -131,7 +143,7 @@ fun HomeScreen(
             item {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = { open("dashboard") }, label = { Text("Dashboard") })
-                    AssistChip(onClick = { open("payments-ahead") }, label = { Text("Payments ahead") })
+                    AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
                     AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
                     AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
                 }

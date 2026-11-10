@@ -29,11 +29,13 @@ data class MyAccountEntity(
     val name: String? = null,
     val owner: String? = null,
     val pdfPassword: String? = null,
+    /** Added in version 2 of this database. */
+    val creditLimitMinor: Long? = null,
 ) {
-    fun toCore() = MyAccount(id, tail, prefix, bank, isCard, name, owner, pdfPassword)
+    fun toCore() = MyAccount(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor)
 }
 
-fun MyAccount.toEntity() = MyAccountEntity(id, tail, prefix, bank, isCard, name, owner, pdfPassword)
+fun MyAccount.toEntity() = MyAccountEntity(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor)
 
 @Dao
 interface V18Dao {
@@ -43,7 +45,7 @@ interface V18Dao {
     @Query("DELETE FROM my_accounts WHERE id = :id") suspend fun deleteAccount(id: Long)
 }
 
-@Database(entities = [MyAccountEntity::class], version = 1, exportSchema = true)
+@Database(entities = [MyAccountEntity::class], version = 2, exportSchema = true)
 abstract class V18Database : RoomDatabase() {
     abstract fun dao(): V18Dao
 
@@ -51,6 +53,13 @@ abstract class V18Database : RoomDatabase() {
         const val FILE = "myfinance-v18.db"
 
         fun create(context: Context): V18Database =
-            Room.databaseBuilder(context, V18Database::class.java, FILE).build()
+            Room.databaseBuilder(context, V18Database::class.java, FILE).addMigrations(MIGRATION_1_2).build()
+
+        /** 1.9: a card's credit limit. */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE my_accounts ADD COLUMN creditLimitMinor INTEGER")
+            }
+        }
     }
 }

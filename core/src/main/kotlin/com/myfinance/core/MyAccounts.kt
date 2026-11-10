@@ -21,6 +21,8 @@ data class MyAccount(
     val owner: String? = null,
     /** Password that opens this card's or account's PDF statements, when they are locked. */
     val pdfPassword: String? = null,
+    /** A card's credit limit, for card use (utilisation). */
+    val creditLimitMinor: Long? = null,
 ) {
     val label: String
         get() = listOfNotNull(name?.takeIf { it.isNotBlank() } ?: bank, (if (isCard) "card" else "a/c").takeIf { name.isNullOrBlank() && bank == null }, "••$tail")

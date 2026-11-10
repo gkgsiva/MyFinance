@@ -206,6 +206,9 @@ fun DashboardScreen(
                 }
             }
 
+            // More views, each on its own screen.
+            item { MoreViews(vm, open) }
+
             if (trend.monthly.size > 1 && trend.monthly.any { it.incomeMinor > 0 || it.expenseMinor > 0 }) {
                 item {
                     val last6 = trend.monthly.takeLast(6)
@@ -376,3 +379,23 @@ private fun ComingUpCard(
 }
 
 private val shortMonthFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
+
+
+/** Links to the views that each have their own screen: balances, month compare, fixed vs flexible, savings, family summary, meal card, FASTag. */
+@Composable
+private fun MoreViews(vm: FinanceViewModel, open: (String) -> Unit) {
+    val instruments by vm.v19.instruments.collectAsState()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("More views", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.AssistChip(onClick = { open("balances") }, label = { Text("Balances & card use") })
+            androidx.compose.material3.AssistChip(onClick = { open("compare") }, label = { Text("vs last month") })
+            androidx.compose.material3.AssistChip(onClick = { open("spend-types") }, label = { Text("Fixed vs flexible") })
+            androidx.compose.material3.AssistChip(onClick = { open("savings") }, label = { Text("Savings rate") })
+            androidx.compose.material3.AssistChip(onClick = { open("family-summary") }, label = { Text("Family summary") })
+        }
+        if (instruments.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            instruments.keys.forEach { i -> androidx.compose.material3.AssistChip(onClick = { open("instrument/${i.name}") }, label = { Text(i.label) }) }
+        }
+    }
+}

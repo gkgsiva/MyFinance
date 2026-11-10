@@ -395,3 +395,31 @@ class OpenSourceRulesTest {
         assertEquals("Snacks", Categorizer(mapOf("box8" to "Snacks")).categorize("BOX8", TxnType.DEBIT))
     }
 }
+
+class CardBillPaymentTest {
+    @Test fun bankSideDebitIsBillPayment() {
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.DEBIT, "ICICI Credit Card", "BIL/ONL/000123/ICICI Credit Card/CC payment 7002"))
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.DEBIT, null, "ICICI Bank Acct XX144 debited for Rs 25,000.00 on 05-Nov-26; ICICI Bank Credit Card XX7002 credited. UPI:117869245541."))
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.DEBIT, null, "Payment of Rs 25,000 towards ICICI Bank Credit Card XX7002 via CRED"))
+    }
+
+    @Test fun cardSideCreditOnCardStatement() {
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.CREDIT, null, "INFINITY PAYMENT RECEIVED, THANK YOU", cardStatement = true))
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.CREDIT, null, "BBPS PAYMENT RECEIVED", cardStatement = true))
+        assertFalse(SelfTransfers.isCardBillPayment(TxnType.CREDIT, null, "REFUND AMAZON PAYMENT", cardStatement = true))
+        assertFalse(SelfTransfers.isCardBillPayment(TxnType.CREDIT, null, "INFINITY PAYMENT RECEIVED, THANK YOU", cardStatement = false))
+    }
+
+    @Test fun cardSpendIsNotBillPayment() {
+        assertFalse(SelfTransfers.isCardBillPayment(TxnType.DEBIT, "HungerBo", "ICICI Bank Credit Card XX7002 debited for INR 40.00 on 03-Nov-26 for UPI-841795829162-HungerBo."))
+        assertFalse(SelfTransfers.isCardBillPayment(TxnType.DEBIT, "Swiggy", "UPI/P2M/1234/SWIGGY"))
+    }
+
+    @Test fun cardStatementCandidatesAreMarked() {
+        val st = ParsedStatement(
+            listOf(StatementRow(java.time.LocalDate.of(2026, 11, 5), null, "PAYMENT RECEIVED THANK YOU", 2500000, TxnType.CREDIT, null, null)),
+            StatementKind.CARD, "ICICI Bank", "7002",
+        )
+        assertTrue(StatementImport.candidates(st).single().cardStatement)
+    }
+}

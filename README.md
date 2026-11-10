@@ -134,7 +134,20 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
-### New in the next release (after 1.7)
+### New in the next release (after 1.8)
+
+- **Card bills never count twice**: paying a credit card bill from your bank account, and the "payment received" line on the card statement, are left out of spending and income by themselves (SMS and statements). The card's own purchases are the spending. They still mark the card bill as paid. Entries stored before this are cleaned up once; entries you edited are left alone.
+
+- **Balances & card use**: the newest balance of each bank account and how much of each card's limit is used (add limits under My cards & accounts), with a link to Net worth.
+- **This month vs last**: spending so far against last month by the same day, and by category.
+- **Fixed vs flexible**: rent, EMIs, bills, fees, investments and repeating payments against what you can cut; plus cash, UPI and card.
+- **Savings rate**: the share of money received that wasn't spent, month by month for a year.
+- **Family summary**: the month's totals, each person's spending and top categories, shared on WhatsApp in one tap.
+- **Meal card and FASTag pages**: balance from the newest SMS, this month's spends and where.
+- **Weekly digest**: a Monday notification with last week's spending against the week before and what is due this week (switch on the Family summary screen).
+- **Future payments from Home**: "+ Future payment" on Home adds a payment once or repeating (every day, week, 2 weeks, month, quarter, 6 months or year). It shows on Home, Payments ahead, the calendar and the forecast.
+
+### New in 1.8
 
 - **Simple Home:** today's transactions, payments due today and over the next few days (and missed ones), and one line for the month so far. Everything else moved to the next screens.
 - **Dashboard tab** (replaces the Overview charts; Reports open from it): filter by month, 3 months, 12 months or financial year and by account or card; tiles for spent, received, top category, transaction count and unpaid card bills; monthly spend trend, category breakdown, top merchants and spend by bank and card.

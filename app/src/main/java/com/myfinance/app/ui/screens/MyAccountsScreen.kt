@@ -78,6 +78,7 @@ fun MyAccountsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                                         if (a.isCard) "Card" else "Account",
                                         a.bank.takeIf { !a.name.isNullOrBlank() },
                                         (a.prefix?.let { "$it…" } ?: "••") + a.tail,
+                                        a.creditLimitMinor?.let { "limit ${com.myfinance.core.formatInr(it)}" },
                                         "PDF password saved".takeIf { !a.pdfPassword.isNullOrBlank() },
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -117,6 +118,7 @@ private fun MyAccountDialog(
     var name by remember { mutableStateOf(start.name.orEmpty()) }
     var owner by remember { mutableStateOf(start.owner.orEmpty()) }
     var password by remember { mutableStateOf(start.pdfPassword.orEmpty()) }
+    var limit by remember { mutableStateOf(start.creditLimitMinor?.let { (it / 100).toString() }.orEmpty()) }
     var error by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -148,6 +150,10 @@ private fun MyAccountDialog(
                     owner.takeIf { it != me }.orEmpty(), { owner = it },
                     label = { Text("Or type a name, e.g. your wife's") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
+                if (isCard) OutlinedTextField(
+                    limit, { limit = it.filter { c -> c.isDigit() || c == ',' } }, label = { Text("Credit limit (₹, optional), for card use") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
+                )
                 OutlinedTextField(
                     password, { password = it }, label = { Text("PDF statement password (optional)") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
@@ -166,6 +172,7 @@ private fun MyAccountDialog(
                         tail = parsed.second, prefix = parsed.first ?: start.prefix.takeIf { parsed.second == start.tail },
                         bank = bank.trim().ifBlank { null }, isCard = isCard, name = name.trim().ifBlank { null },
                         owner = owner.trim().takeIf { it.isNotBlank() && it != me }, pdfPassword = password.ifBlank { null },
+                        creditLimitMinor = if (isCard) com.myfinance.core.parseAmountToMinor(limit)?.takeIf { it > 0 } else null,
                     ),
                 )
             }) { Text("Save") }

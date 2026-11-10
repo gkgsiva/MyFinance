@@ -53,12 +53,33 @@ object SelfTransfers {
     )
     /** Words that only a bill payment uses, even when the SMS also says "debited". */
     private val billWords = Regex(
-        """payment\s+(?:of\s+.{0,20})?received|paid\s+towards|\btowards\b|bill\s*(?:payment|paid|pay)|card\s*bill|cc\s*(?:bill|payment)|\bcred\b|billdesk|payment\s+(?:to|for)\s+.{0,30}credit\s*card|card\s*payment""",
+        """payment\s+(?:of\s+.{0,20})?received|paid\s+towards|\btowards\b|bill\s*(?:payment|paid|pay)|card\s*bill|cc\s*(?:bill|payment)|\bcred\b|billdesk|payment\s+(?:to|for)\s+.{0,30}credit\s*card|card\s*payment|credit\s*card\s*(?:a/?c\s*)?(?:no\.?\s*)?[x*•]*\d{3,4}\s+(?:is\s+|has\s+been\s+)?credited""",
         RegexOption.IGNORE_CASE,
     )
 
-    fun isCardPayment(r: CheckRow): Boolean {
-        val texts = listOfNotNull(r.merchant, r.text)
+    fun isCardPayment(r: CheckRow): Boolean = isCardPayment(r.merchant, r.text)
+
+    /** A payment received on a card statement ("PAYMENT RECEIVED - THANK YOU", "BBPS PAYMENT", autopay). */
+    private val cardStatementPayment = Regex(
+        """payment|thank\s*you|autopay|auto\s*debit|\bbbps\b|\bneft\b|\bimps\b|\brtgs\b|\bupi\b|\bcred\b|billdesk""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val notPayment = Regex("""refund|reversal|reversed|cashback|cash\s*back|reward|surcharge\s*waiver|waiver|\bemi\b""", RegexOption.IGNORE_CASE)
+
+    /**
+     * True when this is paying a credit card bill, on either side: the debit from the bank account, or the
+     * payment received on the card. Neither is spending or income (the card's own purchases are the spending),
+     * so these are left out of totals when they are stored.
+     */
+    fun isCardBillPayment(type: TxnType, merchant: String?, text: String?, cardStatement: Boolean = false): Boolean {
+        if (isCardPayment(merchant, text)) return true
+        if (!cardStatement || type != TxnType.CREDIT) return false
+        val texts = listOfNotNull(merchant, text)
+        return texts.any { cardStatementPayment.containsMatchIn(it) } && texts.none { notPayment.containsMatchIn(it) }
+    }
+
+    fun isCardPayment(merchant: String?, text: String?): Boolean {
+        val texts = listOfNotNull(merchant, text)
         if (texts.none { cardPayment.containsMatchIn(it) }) return false
         // "INR 324 spent on Credit Card XX7002 via UPI": spending on the card, not paying its bill.
         val spend = texts.any { cardSpend.containsMatchIn(it) }

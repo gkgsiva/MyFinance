@@ -66,6 +66,8 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
 
         item { Group("Statements & accounts") }
         item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
+        item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
+        item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
         item { SettingTile("My cards & accounts", "", "Your and your family's card and account numbers, so statements and SMS go to the right person") { open("my-accounts") } }
         item {
