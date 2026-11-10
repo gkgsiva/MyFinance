@@ -182,7 +182,7 @@ class V19State(
             when {
                 st == "applied" && c.salaryFromDay != null ->
                     com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, true) }
-                    ?: SalaryNote(com.myfinance.core.SalaryGuess(c.salaryFromDay, null, emptyList(), 0, true, c.salaryFromDay), true)
+                    ?: c.salaryFromDay?.let { d -> SalaryNote(com.myfinance.core.SalaryGuess(d, null, emptyList(), 0, true, d), true) }
                 st != null || c.salaryFromDay != null -> null
                 else -> com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, false) }
             }
