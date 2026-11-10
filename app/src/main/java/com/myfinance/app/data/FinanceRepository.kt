@@ -238,17 +238,21 @@ class FinanceRepository(
                 )
             },
         ).toHashSet()
+        // Marked done first: if anything below fails, the app must not try (and fail) again at every start.
+        prefs.edit().putBoolean(KEY_STMT_REPEAT_CLEANUP, true).apply()
         if (ids.isNotEmpty()) {
             val now = System.currentTimeMillis()
-            for (t in all.filter { it.id in ids }) {
-                v13.putTrash(DeletedTxnEntity.from(t, now))
-                v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now))
-                db.transactions().delete(t)
+            val gone = all.filter { it.id in ids }
+            // Remembered first, so a removed line is never imported again; then removed in one go, so the
+            // screens refresh once instead of once per line.
+            for (t in gone) {
+                runCatching { v13.putTrash(DeletedTxnEntity.from(t, now)) }
+                runCatching { v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now)) }
             }
-            prefs.edit().putInt(KEY_STMT_REPEAT_REMOVED, ids.size).apply()
+            db.withTransaction { gone.map { it.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) } }
+            prefs.edit().putInt(KEY_STMT_REPEAT_REMOVED, gone.size).apply()
             onDataChanged()
         }
-        prefs.edit().putBoolean(KEY_STMT_REPEAT_CLEANUP, true).apply()
     }
 
     /**

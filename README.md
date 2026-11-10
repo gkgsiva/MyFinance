@@ -134,6 +134,11 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in 1.11.2
+
+- **Fix: the app could close on opening.** The one-time cleanup of repeated statement lines removed them one at a time, refreshing every screen after each, which could run the phone out of memory with years of statements. It now removes them in one go, and runs only once even if something goes wrong.
+- **If MyFinance ever closes by itself,** Home offers to share the error details (no transactions are included), and Manage > Settings has "Share error details". Errors in a view now show it empty instead of closing the app.
+
 ### New in 1.11.1
 
 - **Card bill paid from the bank, both sides seen.** A payment from your bank account and the same amount received on your card within a few days are both left out of spending and income, even when the messages only say "Payment" and "Money received". Entries already stored are fixed when you open the app.

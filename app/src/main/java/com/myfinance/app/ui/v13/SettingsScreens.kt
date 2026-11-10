@@ -98,6 +98,11 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Categories & budgets", "", "Add categories and monthly budgets") { open("categories") } }
         item { SettingTile("Auto debits & EMIs", "", "Your EMIs, SIPs and autopay with next dates") { open("autodebits") } }
 
+        item {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            SettingTile("Share error details", "", "If MyFinance closed by itself, send what happened (no transactions are included)") { com.myfinance.app.diag.CrashLog.share(ctx) }
+        }
+
         item { Group("Month") }
         item { SettingTile("Month for budgets and reports", "", "Count late salary in next month, or start the month on another day") { open("month-settings") } }
 
