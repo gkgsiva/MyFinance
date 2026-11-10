@@ -68,7 +68,17 @@ data class MonthCycle(val startDay: Int = 1, val salaryFromDay: Int? = null) {
     fun rangeLabel(period: YearMonth): String? =
         if (startDay == 1) null else "${start(period).format(dayMonth)} – ${end(period).format(dayMonth)}"
 
+    /** What [period] covers, when it isn't the plain calendar month: "25 Oct – 24 Nov · salary from 24 Oct". */
+    fun note(period: YearMonth): String? {
+        val parts = listOfNotNull(
+            rangeLabel(period),
+            salaryFromDay?.let { d -> val prev = period.minusMonths(1); "salary from ${minOf(d, prev.lengthOfMonth())} ${prev.format(monthShort)} counts here" },
+        )
+        return parts.joinToString(" · ").ifEmpty { null }
+    }
+
     companion object {
+        private val monthShort = DateTimeFormatter.ofPattern("MMM")
         /** Up to the 28th, so every month (February too) has the start day. */
         const val MAX_START_DAY = 28
         val CALENDAR = MonthCycle()

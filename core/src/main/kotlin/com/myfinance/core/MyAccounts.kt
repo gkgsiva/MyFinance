@@ -23,6 +23,10 @@ data class MyAccount(
     val pdfPassword: String? = null,
     /** A card's credit limit, for card use (utilisation). */
     val creditLimitMinor: Long? = null,
+    /** A card's statement (bill) day, e.g. 14: spends after it go on the next bill. */
+    val billDay: Int? = null,
+    /** The day of the month the user pays the bill by, e.g. 25 (for the payment reminder). */
+    val payDay: Int? = null,
 ) {
     val label: String
         get() = listOfNotNull(name?.takeIf { it.isNotBlank() } ?: bank, (if (isCard) "card" else "a/c").takeIf { name.isNullOrBlank() && bank == null }, "••$tail")

@@ -96,6 +96,7 @@ private fun UseBar(pct: Int) {
 @Composable
 fun BalancesScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     val o by vm.v19.balancesOverview.collectAsState()
+    val cycles by vm.v19.cardCycles.collectAsState()
     SimpleScreen("Balances & card use", onBack) {
         item {
             Muted("The newest balance each bank SMS gave, and how much of each card's limit is used. Add your cards' limits under My cards & accounts.")
@@ -119,6 +120,26 @@ fun BalancesScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String) -> U
         item { Text("Credit cards", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
         if (o.cards.isEmpty()) item { Muted("No cards yet. Add them under My cards & accounts.") }
         o.cards.forEach { c -> item { BalanceCard(c) } }
+        // Each card's bill by its statement day (spends still count in the month they were made).
+        item { Text("Card bills", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
+        if (cycles.isEmpty()) item { Muted("Set each card's bill day (e.g. 14) and the day you pay by (e.g. 25) under My cards & accounts, to see each bill and get a reminder before you pay.") }
+        cycles.forEach { v ->
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(v.card.label + (v.card.owner?.let { " ($it's)" } ?: ""), fontWeight = FontWeight.SemiBold)
+                        Line("Bill of ${v.billDate.format(dayFmt)}", formatInr(v.billedMinor), ExpenseRed)
+                        v.payBy?.let { Line("Pay by", it.format(dayFmt)) }
+                        Text(
+                            if (v.paid) "✓ Paid" else if (v.billedMinor > 0) "Not paid yet" else "Nothing to pay",
+                            color = if (v.paid || v.billedMinor == 0L) IncomeGreen else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Line("On the next bill so far", formatInr(v.unbilledMinor))
+                    }
+                }
+            }
+        }
         item {
             com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 OutlinedButton(onClick = { open("my-accounts") }) { Text("My cards & accounts") }

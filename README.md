@@ -134,6 +134,12 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in 1.11
+
+- **More room on Transactions.** Search opens from a small button, and categories and labels are two drop-downs on one line, so the list gets the screen.
+- **Salary month by itself.** A salary that comes in the last week of the month is found from your entries and counts for the next month: late October salary is November's income. Home says so once, and you can turn it off. A steady credit from one payer that isn't marked Salary yet is offered as salary. Home and Transactions show what the month covers ("salary from 25 Oct counts here").
+- **Card bills.** In My cards & accounts, set each card's bill day (e.g. 14) and the day you pay by (e.g. 25). Balances & card use shows each card's last bill, whether it was paid, and what's on the next bill so far. A reminder comes 3 days before the pay-by day if the bill isn't paid yet. Spends still count in the month you made them.
+
 ### New in 1.10.1
 
 - **Statements with several cards or accounts.** A consolidated card statement lists each card under its own "Card Number" heading, and a bank statement can hold savings and current accounts. Each line now goes to its own card or account, and so to its owner (add-on or family cards from My cards & accounts). The preview lists every card with its line count, and Change account lets you correct each card's last 4 digits.

@@ -57,7 +57,6 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val filter by vm.categoryFilter.collectAsState()
     val advanced by vm.advancedFilter.collectAsState()
     val categories by vm.categories.collectAsState()
-    var allCats by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     val options by vm.filterOptions.collectAsState()
     val sync by vm.syncState.collectAsState()
     val meta by vm.txnMeta.collectAsState()
@@ -119,41 +118,63 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                     }
                 }
             }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.query.value = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                placeholder = { Text("Search merchant, note, amount, person") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { vm.query.value = "" }) { Icon(Icons.Filled.Clear, contentDescription = "Clear") }
-                    }
-                },
-                singleLine = true,
-            )
-            com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), 8.dp) {
-                FilterChip(selected = filter == null, onClick = { vm.categoryFilter.value = null }, label = { Text("All") })
-                // A few categories at a time, so the chips take two lines at most; "More" shows the rest.
-                val shown = if (allCats) categories else categories.take(5) + categories.drop(5).filter { it.name == filter }
-                shown.forEach { c ->
-                    FilterChip(
-                        selected = filter == c.name,
-                        onClick = { vm.categoryFilter.value = if (filter == c.name) null else c.name },
-                        label = { Text(c.name) },
-                        leadingIcon = { ColorDot(Color(c.color), 10) },
-                    )
-                }
-                if (categories.size > 5) FilterChip(selected = false, onClick = { allCats = !allCats }, label = { Text(if (allCats) "Fewer" else "More…") })
+            val cycle by vm.monthCycle.collectAsState()
+            if (!advanced.hasDateRange) cycle.note(month)?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = 56.dp, bottom = 2.dp))
             }
-            if (usedLabels.isNotEmpty()) {
-                com.myfinance.app.ui.WrapRow(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), 8.dp) {
-                    usedLabels.forEach { l ->
+            // Kept small so the list gets the screen: search opens from the icon, filters are two drop-downs on one line.
+            var searchOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+            if (searchOpen || query.isNotEmpty()) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { vm.query.value = it },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    placeholder = { Text("Search", maxLines = 1) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        IconButton(onClick = { vm.query.value = ""; searchOpen = false }) { Icon(Icons.Filled.Clear, contentDescription = "Close search") }
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), 8.dp) {
+                if (!searchOpen && query.isEmpty()) {
+                    FilterChip(selected = false, onClick = { searchOpen = true }, label = { Text("Search") }, leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) })
+                }
+                var catMenu by remember { mutableStateOf(false) }
+                Box {
+                    FilterChip(
+                        selected = filter != null,
+                        onClick = { catMenu = true },
+                        label = { Text(filter ?: "All categories", maxLines = 1) },
+                        leadingIcon = if (filter != null) ({ ColorDot(colorOf[filter.orEmpty()] ?: fallback, 10) }) else null,
+                    )
+                    DropdownMenu(expanded = catMenu, onDismissRequest = { catMenu = false }) {
+                        DropdownMenuItem(text = { Text("All categories") }, onClick = { catMenu = false; vm.categoryFilter.value = null })
+                        categories.forEach { c ->
+                            DropdownMenuItem(
+                                text = { Text(c.name) },
+                                leadingIcon = { ColorDot(Color(c.color), 10) },
+                                onClick = { catMenu = false; vm.categoryFilter.value = c.name },
+                            )
+                        }
+                    }
+                }
+                if (usedLabels.isNotEmpty()) {
+                    var labelMenu by remember { mutableStateOf(false) }
+                    Box {
                         FilterChip(
-                            selected = labelFilter == l,
-                            onClick = { vm.labelFilter.value = if (labelFilter == l) null else l },
-                            label = { Text("#$l") },
+                            selected = labelFilter != null,
+                            onClick = { labelMenu = true },
+                            label = { Text(labelFilter?.let { "#$it" } ?: "All labels", maxLines = 1) },
                         )
+                        DropdownMenu(expanded = labelMenu, onDismissRequest = { labelMenu = false }) {
+                            DropdownMenuItem(text = { Text("All labels") }, onClick = { labelMenu = false; vm.labelFilter.value = null })
+                            usedLabels.forEach { l ->
+                                DropdownMenuItem(text = { Text("#$l") }, onClick = { labelMenu = false; vm.labelFilter.value = l })
+                            }
+                        }
                     }
                 }
             }
@@ -161,10 +182,12 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
             val spent = txns.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor }
             val received = txns.filter { it.type == TxnType.CREDIT && !it.excluded }.sumOf { it.amountMinor }
             Text(
-                "${txns.size} transactions · spent ${formatInr(spent)} · received ${formatInr(received)}",
-                style = MaterialTheme.typography.bodySmall,
+                "${txns.size} entries · spent ${formatInr(spent)} · in ${formatInr(received)}",
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             )
             sync.message?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
