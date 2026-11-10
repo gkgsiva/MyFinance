@@ -60,13 +60,13 @@ fun DashboardSection(vm: FinanceViewModel, onOpenCategory: (String) -> Unit) {
     val colorOf = categories.associate { it.name to Color(it.color) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
             DashPeriod.entries.forEach { p ->
                 FilterChip(selected = period == p, onClick = { vm.dashPeriod.value = p }, label = { Text(p.label) })
             }
         }
         if (d.accounts.size > 1) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilterChip(selected = account == null, onClick = { vm.dashAccount.value = null }, label = { Text("All accounts") })
                 d.accounts.forEach { a ->
                     FilterChip(selected = account == a, onClick = { vm.dashAccount.value = if (account == a) null else a }, label = { Text(a, maxLines = 1) })

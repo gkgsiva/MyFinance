@@ -57,6 +57,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val filter by vm.categoryFilter.collectAsState()
     val advanced by vm.advancedFilter.collectAsState()
     val categories by vm.categories.collectAsState()
+    var allCats by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     val options by vm.filterOptions.collectAsState()
     val sync by vm.syncState.collectAsState()
     val meta by vm.txnMeta.collectAsState()
@@ -131,12 +132,11 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 },
                 singleLine = true,
             )
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), 8.dp) {
                 FilterChip(selected = filter == null, onClick = { vm.categoryFilter.value = null }, label = { Text("All") })
-                categories.forEach { c ->
+                // A few categories at a time, so the chips take two lines at most; "More" shows the rest.
+                val shown = if (allCats) categories else categories.take(5) + categories.drop(5).filter { it.name == filter }
+                shown.forEach { c ->
                     FilterChip(
                         selected = filter == c.name,
                         onClick = { vm.categoryFilter.value = if (filter == c.name) null else c.name },
@@ -144,12 +144,10 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                         leadingIcon = { ColorDot(Color(c.color), 10) },
                     )
                 }
+                if (categories.size > 5) FilterChip(selected = false, onClick = { allCats = !allCats }, label = { Text(if (allCats) "Fewer" else "More…") })
             }
             if (usedLabels.isNotEmpty()) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                com.myfinance.app.ui.WrapRow(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), 8.dp) {
                     usedLabels.forEach { l ->
                         FilterChip(
                             selected = labelFilter == l,
@@ -172,9 +170,14 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
             }
 
-            if (txns.isEmpty()) {
+            val loaded by vm.loaded.collectAsState()
+            if (!loaded) {
+                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                Text("Loading your entries…", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (txns.isEmpty()) {
                 Text(
-                    "Nothing here. Import SMS from the Home tab, add an entry with +, or loosen the filters.",
+                    if (filter != null || labelFilter != null) "No entries match these filters this month. Tap All, or pick another month."
+                    else "No entries this month yet. They appear as bank SMS arrive; you can also import statements or add one with +.",
                     modifier = Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

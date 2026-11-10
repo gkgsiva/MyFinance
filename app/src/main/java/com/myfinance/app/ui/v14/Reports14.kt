@@ -52,7 +52,7 @@ fun SalaryBreakdownCard(vm: FinanceViewModel) {
     val r = both?.let { if (fy) it.second else it.first } ?: return
     if (r.years.isEmpty()) return
     ChartCard("Salary breakdown", accent = Teal, subtitle = "Raises, bonuses, and income vs spending growth") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
             FilterChip(selected = fy, onClick = { fy = true }, label = { Text("Financial year") })
             FilterChip(selected = !fy, onClick = { fy = false }, label = { Text("Calendar year") })
         }
@@ -125,7 +125,7 @@ fun FamilyLabelsCard(vm: FinanceViewModel) {
     var period by remember { mutableStateOf(1) }
     val (people, rows) = remember(all, meta, period) { vm.v14.familyLabels(periods[period].second, today) }
     ChartCard("Labels by person", accent = Pink, subtitle = "What each of you spent per label, refunds taken off") {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
             periods.forEachIndexed { i, (name, _) -> FilterChip(selected = period == i, onClick = { period = i }, label = { Text(name) }) }
         }
         if (rows.isEmpty()) {

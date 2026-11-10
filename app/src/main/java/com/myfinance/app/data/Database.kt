@@ -32,6 +32,12 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun get(id: Long): TransactionEntity?
 
+    @Query("DELETE FROM transactions WHERE uid IN (:uids)")
+    suspend fun deleteByUids(uids: List<String>): Int
+
+    @Query("SELECT COUNT(*) FROM transactions")
+    suspend fun countAll(): Int
+
     @Query("SELECT * FROM transactions WHERE smsKey = :key LIMIT 1")
     suspend fun bySmsKey(key: String): TransactionEntity?
 

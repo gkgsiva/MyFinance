@@ -32,8 +32,9 @@ data class StatementCheck(
             val newestFirst = rows.first().date.isAfter(rows.last().date) ||
                 (rows.first().date == rows.last().date && looksNewestFirst(rows))
             val ordered = if (newestFirst) rows.reversed() else rows
-            val first = ordered.first()
-            val start = opening ?: (first.balanceMinor!! - signed(first))
+            // The first line with a balance (an opening "B/F" line may have none of its own amount).
+            val i = ordered.indexOfFirst { it.balanceMinor != null }
+            val start = opening ?: (ordered[i].balanceMinor!! - ordered.take(i + 1).sumOf { signed(it) })
             val closing = ordered.last { it.balanceMinor != null }.balanceMinor!!
             val net = ordered.sumOf { signed(it) }
             return StatementCheck(closing, start + net)

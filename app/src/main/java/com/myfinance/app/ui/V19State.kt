@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -42,7 +43,7 @@ import java.time.ZoneId
  * the savings rate over time, the family summary to share, meal card and FASTag pages, weekly digest switch.
  */
 class V19State(
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val repo: FinanceRepository,
     allTransactions: StateFlow<List<TransactionEntity>>,
     allLite: StateFlow<List<TxnLite>>,
@@ -116,6 +117,46 @@ class V19State(
         },
         scope,
     )
+
+    // ---- 1.10: import history, missing statements, uncategorised cleanup, backup ----
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message
+    fun clearMessage() { _message.value = null }
+
+    val importBatches: StateFlow<List<com.myfinance.app.data.ImportBatchEntity>> = state(emptyList(), repo.importBatches, scope)
+
+    fun undoImport(id: Long) = scope.launch {
+        val n = runCatching { repo.undoImport(id) }.getOrElse { e -> _message.value = "Could not undo: ${e.message}"; return@launch }
+        _message.value = "Removed $n entries from that import. You can import the same files again."
+    }
+
+    val coverage: StateFlow<List<com.myfinance.core.AccountCoverage>> = state(
+        emptyList(),
+        combine(allTransactions, ownerName) { all, me ->
+            com.myfinance.core.MissingStatements.find(all.filter { it.source == com.myfinance.app.data.TxnSource.STATEMENT }.map { it.toLite(me) }, LocalDate.now(), zone)
+        },
+        scope,
+    )
+
+    val uncategorised: StateFlow<List<com.myfinance.core.UncategorisedGroup>> = state(
+        emptyList(),
+        combine(allLite, month) { txns, _ -> com.myfinance.core.Uncategorised.groups(txns) },
+        scope,
+    )
+
+    fun categorise(g: com.myfinance.core.UncategorisedGroup, category: String) = scope.launch {
+        val n = runCatching { repo.categorise(g.ids, g.name.takeIf { g.key.isNotBlank() }, category) }.getOrElse { e -> _message.value = "Could not save: ${e.message}"; return@launch }
+        _message.value = "$n entries from ${g.name} are now $category" + if (g.key.isNotBlank()) ", and future ones will be too." else "."
+    }
+
+    fun applyRulesToAll() = scope.launch {
+        val n = runCatching { repo.applyRulesToExisting() }.getOrDefault(0)
+        _message.value = if (n == 0) "Your rules already match every entry." else "Your rules changed $n older entries, statements included."
+    }
+
+    /** Days since the last backup or saved export (or since first use), for the Home nudge. */
+    fun backupDaysAgo(): Long = com.myfinance.core.BackupNudge.daysSince(repo.lastBackupAt, repo.firstUseAt, System.currentTimeMillis())
 
     private val _weekly = MutableStateFlow(repo.weeklyDigestOn)
     val weeklyDigest: StateFlow<Boolean> = _weekly

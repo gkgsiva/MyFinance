@@ -134,7 +134,19 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
-### New in the next release (after 1.8)
+### New in the next release (after 1.9)
+
+- **Old statements import fast**: lines are written in batches, a progress bar shows pages read and lines imported, with Stop, and the import keeps running if you leave the screen (a notification says when it's done). Fixed: ICICI savings statements with a "B/F" opening line stopped the reader, and that line was read as an entry.
+- **Import history & undo**: every import is listed and can be undone as a whole.
+- **Preview before importing**: the period covered, lines, new and already there, for all files together.
+- **Missing statements**: per card and account, the months with no statement.
+- **Per-year summary** after importing past years. Bank balances still come from each account's latest SMS.
+- **Uncategorised**: entries with no category grouped by payee; pick one and all of them (and future SMS and statements) get it.
+- **Backup reminder** after 30 days without a backup or saved export.
+- **Large fonts and small screens**: rows of chips and buttons wrap instead of scrolling sideways; tab names stay on one line.
+- **Loading and empty states** on Home and Transactions.
+
+### New in 1.9
 
 - **Card bills never count twice**: paying a credit card bill from your bank account, and the "payment received" line on the card statement, are left out of spending and income by themselves (SMS and statements). The card's own purchases are the spending. They still mark the card bill as paid. Entries stored before this are cleaned up once; entries you edited are left alone.
 

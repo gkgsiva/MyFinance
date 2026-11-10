@@ -111,3 +111,22 @@ class MoneyViewsTest {
         assertTrue(w.body.contains("₹700 more"), w.body)
     }
 }
+
+class OldStatementTest {
+    /** ICICI savings statement from 2018: a "B/F" opening line with only a balance, and a cheque line split over two lines. */
+    @Test fun broughtForwardLineDoesNotBreakReading() {
+        val text = """
+            Statement of Transactions in Savings Account XXXXXXXX4144 in INR for the period April 01, 2018 - March 31, 2019
+            DATE MODE PARTICULARS DEPOSITS WITHDRAWALS BALANCE
+            01-04-2018  B/F  1,75,321.70
+            03-04-2018 NET BANKING BIL/001422771321/ChgRs10 GSTRs1.80 IRCTC/10000121 5,711.80 1,69,609.90
+            04-04-2018 NET BANKING BIL/001425083379/RBI-NEFT/134410400002574 1,000.00 1,68,609.90
+            30-04-2018  SAL/Salary - Apr 2018 1,55,803.00  3,24,412.90
+        """.trimIndent()
+        val st = StatementParser.fromText(text)!!
+        assertEquals(StatementKind.BANK, st.kind)
+        assertEquals(3, st.rows.size)
+        assertEquals(TxnType.CREDIT, st.rows.last().type)
+        assertTrue(st.check?.ok == true, st.check.toString())
+    }
+}

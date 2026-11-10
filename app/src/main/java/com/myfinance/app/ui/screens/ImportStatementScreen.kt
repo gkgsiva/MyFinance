@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -65,7 +64,7 @@ private val stmtDayFormat = DateTimeFormatter.ofPattern("d MMM yyyy")
 /** Pick bank / credit card statements (several years at once), unlock, preview and import. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementImportViewModel = viewModel()) {
+fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, open: (String) -> Unit = {}, vm: StatementImportViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.addFiles(uris)
@@ -103,6 +102,10 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
                         FilledTonalButton(onClick = { picker.launch(statementTypes) }, enabled = !state.importing, modifier = Modifier.fillMaxWidth()) {
                             Text(if (state.files.isEmpty()) "Choose statement files" else "Add more files")
                         }
+                        com.myfinance.app.ui.WrapRow(Modifier, 0.dp) {
+                            TextButton(onClick = { open("import-history") }) { Text("Import history & undo") }
+                            TextButton(onClick = { open("missing-statements") }) { Text("Missing statements") }
+                        }
                     }
                 }
             }
@@ -112,7 +115,25 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(msg)
-                            Button(onClick = onDone) { Text("See transactions") }
+                            // Past years: what was added per financial year.
+                            if (state.years.isNotEmpty()) {
+                                Text("Added per year (April to March)", style = MaterialTheme.typography.titleSmall)
+                                state.years.forEach { y ->
+                                    Row(Modifier.fillMaxWidth()) {
+                                        Text(y.label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                        Text("−${formatInr(y.spentMinor)}  +${formatInr(y.receivedMinor)}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                Text(
+                                    "Bank balances still come from each account's latest SMS, so old statements don't change today's balance.",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                                Button(onClick = onDone) { Text("See transactions") }
+                                TextButton(onClick = { open("year-review") }) { Text("Year in review") }
+                                TextButton(onClick = { open("import-history") }) { Text("Undo") }
+                            }
                         }
                     }
                 }
@@ -127,6 +148,43 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
                 )
             }
 
+            // Reading or importing: how far it has got, and a way to stop.
+            if (state.busy) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (state.importing && state.importTotal > 0) {
+                                androidx.compose.material3.LinearProgressIndicator(progress = { state.importDone / state.importTotal.toFloat() }, modifier = Modifier.fillMaxWidth())
+                                Text("Importing ${state.importDone} of ${state.importTotal} lines…", style = MaterialTheme.typography.bodyMedium)
+                            } else {
+                                val reading = state.files.count { it.status == StatementFile.Status.READING }
+                                val done = state.files.size - reading
+                                androidx.compose.material3.LinearProgressIndicator(progress = { done / state.files.size.coerceAtLeast(1).toFloat() }, modifier = Modifier.fillMaxWidth())
+                                Text("Reading files: $done of ${state.files.size} done", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            androidx.compose.material3.OutlinedButton(onClick = vm::cancel) { Text("Stop") }
+                        }
+                    }
+                }
+            }
+
+            // One preview over all the files before importing.
+            if (state.ready.isNotEmpty() && !state.importing) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Before you import", style = MaterialTheme.typography.titleSmall)
+                            val from = state.from
+                            val to = state.to
+                            if (from != null && to != null) Text("Covers ${from.format(stmtDayFormat)} to ${to.format(stmtDayFormat)}", style = MaterialTheme.typography.bodySmall)
+                            Text("${state.lineCount} lines in ${state.ready.size} file${if (state.ready.size == 1) "" else "s"}", style = MaterialTheme.typography.bodySmall)
+                            Text("${state.newCount} new · ${state.alreadyCount} already here" + (if (state.updateCount > 0) " · ${state.updateCount} SMS will take the statement's details" else ""), style = MaterialTheme.typography.bodySmall)
+                            Text("You can undo the whole import later from Import history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
             if (state.ready.isNotEmpty()) {
                 item {
                     val n = state.newCount
@@ -136,7 +194,7 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, vm: StatementI
                         enabled = (n > 0 || u > 0) && !state.busy,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (state.importing) Text("Importing…")
                         else Text(
                             when {
                                 n == 0 && u == 0 -> "Nothing new to import"
@@ -187,9 +245,17 @@ private fun FileCard(f: StatementFile, onPassword: (String) -> Unit, onRemove: (
             }
             Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 when (f.status) {
-                    StatementFile.Status.READING -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("Reading…", style = MaterialTheme.typography.bodySmall)
+                    StatementFile.Status.READING -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (f.pages > 0) {
+                            androidx.compose.material3.LinearProgressIndicator(progress = { f.pagesRead / f.pages.toFloat() }, modifier = Modifier.fillMaxWidth())
+                            Text(
+                                if (f.pagesRead >= f.pages) "Read ${f.pages} pages, finding transactions…" else "Reading page ${f.pagesRead} of ${f.pages}…",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("Opening…", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     StatementFile.Status.FAILED -> Text(f.message.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     StatementFile.Status.NEEDS_PASSWORD -> PasswordBox(f.wrongPassword, onPassword)
@@ -263,7 +329,7 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    com.myfinance.app.ui.WrapRow(Modifier, 4.dp) {
         TextButton(onClick = toggleLines) { Text(if (showLines) "Hide lines" else "Show lines") }
         TextButton(onClick = onEditAccount) { Text("Change account") }
     }

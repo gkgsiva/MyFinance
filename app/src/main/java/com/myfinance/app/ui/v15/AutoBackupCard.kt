@@ -69,7 +69,7 @@ fun AutoBackupCard(vm: FinanceViewModel) {
             )
             st.lastError?.let { Text("Last try failed: $it", color = ExpenseRed, style = MaterialTheme.typography.bodySmall) }
             Dropdown("How often", st.frequency, BackupFrequency.entries, { it.label }, { s.setAutoBackupFrequency(it) })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 Button(onClick = { s.backupNow() }) { Text("Back up now") }
                 OutlinedButton(onClick = { asking = true }) { Text("Change file") }
                 TextButton(onClick = { s.disableAutoBackup() }) { Text("Turn off") }

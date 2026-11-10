@@ -83,7 +83,7 @@ fun FilterDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Label("Dates")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     OutlinedButton(onClick = { pickDates = true }) { Text(if (from == null && to == null) "This month (pick range)" else rangeLabel(from, to)) }
                     if (from != null || to != null) TextButton(onClick = { from = null; to = null }) { Text("Clear") }
                 }
@@ -195,7 +195,7 @@ private fun Label(text: String) {
 
 @Composable
 private fun <T> ChipRow(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    com.myfinance.app.ui.WrapRow(Modifier, 6.dp) {
         options.forEach { o ->
             FilterChip(selected = o == selected, onClick = { onSelect(o) }, label = { Text(label(o)) })
         }

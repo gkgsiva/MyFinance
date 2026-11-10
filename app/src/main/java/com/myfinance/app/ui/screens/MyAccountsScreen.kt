@@ -126,7 +126,7 @@ private fun MyAccountDialog(
         title = { Text(if (start.id == 0L) "Add card or account" else "Edit") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     FilterChip(isCard, { isCard = true }, label = { Text("Credit card") })
                     FilterChip(!isCard, { isCard = false }, label = { Text("Bank account") })
                 }
@@ -142,7 +142,7 @@ private fun MyAccountDialog(
                 }
                 OutlinedTextField(name, { name = it }, label = { Text("Name (optional), e.g. Amazon Pay card") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Text("Whose", style = MaterialTheme.typography.labelLarge)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier.fillMaxWidth(), 6.dp) {
                     FilterChip(owner.isBlank() || owner == me, { owner = "" }, label = { Text("Me") })
                     people.take(3).forEach { p -> FilterChip(owner == p, { owner = p }, label = { Text(p) }) }
                 }

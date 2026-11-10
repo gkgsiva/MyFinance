@@ -133,7 +133,7 @@ private fun SuggestionGroup(
                 }
             }
             if (!expanded) TextButton(onClick = { expanded = true }) { Text("Show all ${items.size}") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilledTonalButton(enabled = picked.isNotEmpty(), onClick = {
                     vm.v14.acceptSuggestions(items.filter { it.txnId in picked })
                     // The ones left unticked were wrong: don't suggest them again.

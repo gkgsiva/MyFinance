@@ -153,7 +153,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 )
             }
             val inbox by vm.v16.inbox.collectAsState()
-            Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            com.myfinance.app.ui.WrapRow(Modifier.padding(top = 2.dp), 0.dp) {
                 LinkText("Payments ahead") { open("payments-ahead") }
                 LinkText("Calendar") { open("calendar") }
                 if (inbox.isNotEmpty()) LinkText("${inbox.size} to review", Amber) { open("review") }
@@ -198,6 +198,7 @@ private fun DueLine(
 private fun LinkText(text: String, color: androidx.compose.ui.graphics.Color? = null, onClick: () -> Unit) {
     Text(
         text, style = MaterialTheme.typography.labelLarge, color = color ?: MaterialTheme.colorScheme.primary,
+        maxLines = 1, softWrap = false,
         modifier = Modifier.clickable(onClick = onClick).padding(end = 16.dp, top = 6.dp, bottom = 6.dp),
     )
 }

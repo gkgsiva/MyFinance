@@ -311,7 +311,8 @@ private fun MyFinanceRoot() {
                                 }
                             },
                             icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label) },
+                            // One line whatever the font size: long names shrink instead of breaking mid-word.
+                            label = { com.myfinance.app.ui.FitText(tab.label, style = androidx.compose.material3.MaterialTheme.typography.labelMedium) },
                         )
                     }
                 }
@@ -378,6 +379,9 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
+            composable("import-history") { com.myfinance.app.ui.v19.ImportHistoryScreen(vm, { nav.popBackStack() }) { route -> nav.navigate(route) } }
+            composable("missing-statements") { com.myfinance.app.ui.v19.MissingStatementsScreen(vm, { nav.popBackStack() }) { route -> nav.navigate(route) } }
+            composable("uncategorised") { com.myfinance.app.ui.v19.UncategorisedScreen(vm, { nav.popBackStack() }) { id -> nav.navigate("edit/$id") } }
             composable("balances") { com.myfinance.app.ui.v19.BalancesScreen(vm, { nav.popBackStack() }) { route -> nav.navigate(route) } }
             composable("compare") {
                 com.myfinance.app.ui.v19.CompareScreen(vm, { nav.popBackStack() }) { category ->
@@ -402,6 +406,7 @@ private fun MyFinanceRoot() {
                         nav.popBackStack()
                         nav.navigate("transactions") { launchSingleTop = true }
                     },
+                    open = { route -> nav.navigate(route) },
                 )
             }
             composable("plan") { PlanScreen(v12) { route -> nav.navigate(route) } }

@@ -94,7 +94,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                         Text("Messages & deleted items", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         TextButton(onClick = { open("settings") }) { Text("All settings") }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                         FilledTonalButton(onClick = { open("rescan") }) { Text("Rescan messages") }
                         FilledTonalButton(onClick = { open("trash") }) {
                             Text(if (trash.isEmpty()) "Recently deleted" else "Recently deleted (${trash.size})")
@@ -112,7 +112,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
         item { com.myfinance.app.ui.v13.LabelsCard(vm) }
         item { com.myfinance.app.ui.v14.LabelBudgetsCard(vm) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilledTonalButton(onClick = { open("label-suggestions") }) { Text("Label suggestions") }
                 FilledTonalButton(onClick = { open("statement-reminders") }) { Text("Statement reminders") }
             }
@@ -160,7 +160,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                             Text("Save")
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                         FilledTonalButton(
                             onClick = { exportLauncher.launch("myfinance-${owner.lowercase().replace(' ', '-')}-${LocalDate.now()}.csv") },
                             enabled = !sync.running,
@@ -204,7 +204,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                             FilledTonalButton(
                                 onClick = { newSharedLauncher.launch("myfinance-family.csv") },
                                 enabled = !sync.running,
@@ -225,7 +225,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                             Text("Sync automatically", modifier = Modifier.weight(1f))
                             Switch(checked = autoSync, onCheckedChange = vm::setAutoSync)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                             FilledTonalButton(onClick = vm::syncNow, enabled = !sync.running) { Text("Sync now") }
                             TextButton(onClick = vm::unlinkSyncFile, enabled = !sync.running) { Text("Stop syncing") }
                         }

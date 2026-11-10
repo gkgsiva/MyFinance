@@ -151,6 +151,10 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** False until the stored transactions have been read once, so screens show "Loading" rather than "Nothing here". */
+    val loaded: StateFlow<Boolean> = repo.allTransactions().map { true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** Labels and hidden flags. Hidden transactions still count in every total; they just aren't listed. */
     val txnMeta: StateFlow<TxnMeta> =
         combine(allTransactions, repo.v13.observeHiddenTxns(), repo.v13.observeLabels()) { all, hidden, labels ->

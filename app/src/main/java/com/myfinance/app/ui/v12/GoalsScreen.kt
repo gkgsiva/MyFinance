@@ -55,7 +55,7 @@ fun GoalsScreen(vm: V12ViewModel, onBack: () -> Unit, extra: @Composable (goalId
                 }
                 Text(text, color = color, style = MaterialTheme.typography.bodySmall)
                 extra(p.goal.id)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     TextButton(onClick = { addMoney = p }) { Text("Add money") }
                     TextButton(onClick = { editing = p }) { Text("Edit") }
                     TextButton(onClick = { vm.deleteGoal(p.goal.id) }) { Text("Delete") }

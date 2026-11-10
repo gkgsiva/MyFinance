@@ -125,7 +125,7 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
         },
     ) {
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 ExploreKind.entries.forEach { k -> FilterChip(selected = kind == k, onClick = { kind = k }, label = { Text(k.label) }) }
             }
         }
@@ -137,7 +137,7 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
             }
         }
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilterChip(selected = type == null, onClick = { type = null }, label = { Text("Net") })
                 FilterChip(selected = type == TxnType.DEBIT, onClick = { type = TxnType.DEBIT }, label = { Text("Spent") })
                 FilterChip(selected = type == TxnType.CREDIT, onClick = { type = TxnType.CREDIT }, label = { Text("Received") })
@@ -145,7 +145,7 @@ fun ExploreScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> Un
             }
         }
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 val now = LocalDate.now()
                 listOf(
                     "3 months" to now.minusMonths(2).withDayOfMonth(1),
