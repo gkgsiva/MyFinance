@@ -249,13 +249,13 @@ fun YearReviewScreen(vm: FinanceViewModel, onBack: () -> Unit) {
 
     SimpleScreen(title = "Year in review", onBack = onBack) {
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilterChip(selected = !fy, onClick = { fy = false }, label = { Text("Calendar year") })
                 FilterChip(selected = fy, onClick = { fy = true }, label = { Text("Financial year") })
             }
         }
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 years.forEach { y ->
                     FilterChip(selected = year == y, onClick = { year = y }, label = { Text(if (fy) com.myfinance.core.Dates.financialYearLabel(y) else "$y") })
                 }

@@ -94,7 +94,7 @@ fun LendingScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                     },
                     color = color, style = MaterialTheme.typography.bodySmall,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 4.dp) {
                     if (st.state != LendState.SETTLED) {
                         TextButton(onClick = { repaying = st }) { Text(if (lent) "Got some back" else "Paid some back") }
                         TextButton(onClick = { s.settle(st) }) { Text("Settled") }
@@ -126,7 +126,7 @@ fun LendingScreen(vm: FinanceViewModel, onBack: () -> Unit) {
             title = { Text(if (e == null) "Add" else "Edit") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                         FilterChip(lent, { lent = true }, label = { Text("I lent") })
                         FilterChip(!lent, { lent = false }, label = { Text("I borrowed") })
                     }

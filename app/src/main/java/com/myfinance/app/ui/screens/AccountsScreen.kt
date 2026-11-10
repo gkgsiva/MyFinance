@@ -101,12 +101,12 @@ fun AccountsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> U
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp), 8.dp) {
                         (listOf(ALL) + data.accounts).forEach { a ->
                             FilterChip(selected = account == a, onClick = { account = a }, label = { Text(a) })
                         }
                     }
-                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp), 8.dp) {
                         Period.entries.forEach { p ->
                             FilterChip(selected = period == p, onClick = { period = p }, label = { Text(p.label) })
                         }

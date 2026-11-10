@@ -130,7 +130,7 @@ fun TaxPackScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpenTaxHelper: () 
                 }
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     Button(onClick = {
                         AppLock.expectExternalActivity()
                         save.launch("MyFinance tax pack ${TaxHelper.fyLabel(fy).removePrefix("FY ")}.xlsx")

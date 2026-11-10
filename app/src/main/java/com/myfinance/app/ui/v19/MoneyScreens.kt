@@ -120,7 +120,7 @@ fun BalancesScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String) -> U
         if (o.cards.isEmpty()) item { Muted("No cards yet. Add them under My cards & accounts.") }
         o.cards.forEach { c -> item { BalanceCard(c) } }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 OutlinedButton(onClick = { open("my-accounts") }) { Text("My cards & accounts") }
                 OutlinedButton(onClick = { open("networth") }) { Text("Net worth") }
             }
@@ -300,7 +300,7 @@ fun FamilySummaryScreen(vm: FinanceViewModel, onBack: () -> Unit) {
             Card(Modifier.fillMaxWidth()) { Text(text.replace("*", ""), Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium) }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 Button(onClick = { share(true) }) { Text("Share on WhatsApp") }
                 TextButton(onClick = { share(false) }) { Text("Other apps") }
             }

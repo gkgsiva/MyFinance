@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +61,9 @@ fun HomeScreen(
     val month by vm.month.collectAsState()
     val summary by vm.summary.collectAsState()
     val balances by vm.balances.collectAsState()
+    val loaded by vm.loaded.collectAsState()
+    val allTxns by vm.allTransactions.collectAsState()
+    val backupDays = remember(allTxns.size) { vm.v19.backupDaysAgo() }
     var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     if (addDue) com.myfinance.app.ui.v15.QuickAddDialog(vm, com.myfinance.app.ui.v15.QuickAdd.PAYMENT_DUE) { addDue = false }
 
@@ -104,15 +108,47 @@ fun HomeScreen(
             }
             importState.error?.let { err -> item { Text(err, color = MaterialTheme.colorScheme.error) } }
 
+            if (!loaded) item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("Loading your entries…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            // A new phone with nothing yet: where to start.
+            if (loaded && allTxns.isEmpty()) item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Nothing here yet", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Read your bank SMS, import past bank and card statements, or add an entry with +. Everything stays on this phone.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                            FilledTonalButton(onClick = onImport) { Text("Read SMS") }
+                            androidx.compose.material3.OutlinedButton(onClick = { open("import-statement") }) { Text("Import statements") }
+                        }
+                    }
+                }
+            }
+            // No backup for a month: a gentle nudge.
+            if (loaded && allTxns.isNotEmpty() && backupDays >= 30) item {
+                Card(Modifier.fillMaxWidth().clickable { open("backup") }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("No backup in $backupDays days", style = MaterialTheme.typography.titleSmall)
+                            Text("Save one so a lost phone doesn't lose your history.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Back up ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
             // Today's transactions, then payments due today and in the next few days, and missed ones.
             item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
 
             // A payment you know is coming: once (school fees on the 15th) or repeating (rent every month).
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { addDue = true }) { Text("+ Future payment") }
-                    androidx.compose.material3.OutlinedButton(onClick = { open("payments-ahead") }) { Text("Payments ahead") }
-                }
+                FilledTonalButton(onClick = { addDue = true }, modifier = Modifier.fillMaxWidth()) { Text("+ Future payment (once or repeating)", maxLines = 1) }
             }
 
             // One line for the month so far; the details are on the Dashboard.
@@ -141,7 +177,7 @@ fun HomeScreen(
             }
 
             item {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     AssistChip(onClick = { open("dashboard") }, label = { Text("Dashboard") })
                     AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
                     AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })

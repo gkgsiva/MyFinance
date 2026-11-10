@@ -199,7 +199,7 @@ object StatementParser {
             if (line.isEmpty()) { lastWasTxn = false; continue }
             if (parsed.isEmpty() && headerText.length < 4000) headerText.append(line).append('\n')
             val low = line.lowercase()
-            if (openingBalance == null && (low.contains("opening balance") || low.contains("balance b/f") || low.contains("brought forward"))) {
+            if (openingBalance == null && (low.contains("opening balance") || low.contains("balance b/f") || low.contains("brought forward") || Regex("""\sb/f\s""").containsMatchIn(" $low "))) {
                 moneyRe.findAll(line).lastOrNull()?.let { openingBalance = parseMoney(it.value)?.first }
             }
             var start = lineStart.find(line)
@@ -254,7 +254,7 @@ object StatementParser {
             val desc = cleanDesc(l.desc.toString())
             if (isBank) {
                 val (amt, bal) = asBank[i]
-                val marker = l.amounts[l.amounts.size - 2].second
+                val marker = l.amounts.getOrNull(l.amounts.size - 2)?.second
                 StatementRow(l.date, l.time, desc, abs(amt), bankDirs!![i] ?: marker ?: guessType(desc, StatementKind.BANK), bal?.let { abs(it) }, referenceIn(l.raw))
             } else {
                 // Card bills: the transaction amount is the last money value; "Cr" marks payments and refunds.
@@ -274,8 +274,10 @@ object StatementParser {
             // A due date far from the statement's last line is a misread.
             ?.takeIf { b -> rows.maxOf { it.date }.let { last -> !b.third.isBefore(last.minusDays(3)) && !b.third.isAfter(last.plusDays(60)) } }
         else null
-        val check = if (kind == StatementKind.BANK) StatementCheck.bank(rows, openingBalance)
+        val check = runCatching {
+            if (kind == StatementKind.BANK) StatementCheck.bank(rows, openingBalance)
             else bill?.let { b -> previousBalanceIn(text)?.let { prev -> StatementCheck.card(rows, prev, b.first) } }
+        }.getOrNull()
         return ParsedStatement(
             rows, kind, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)),
             billTotalMinor = bill?.first, billMinMinor = bill?.second, billDueDate = bill?.third, check = check,
@@ -406,7 +408,7 @@ object StatementParser {
     // ---------------------------------------------------------------- text hints
 
     private val summaryWords = Regex(
-        """^\W*(opening|closing)\s+balance|^\W*total\b|balance\s+(b/f|c/f|brought|carried)|^\W*(previous|last)\s+(statement\s+)?balance|^\W*(minimum|total)\s+(amount\s+)?due|^\W*statement\s+(date|period)|^\W*payment\s+due\s+date""",
+        """^\W*(opening|closing)\s+balance|^\W*total\b|balance\s+(b/f|c/f|brought|carried)|^\W*(b/f|c/f|brought\s+forward|carried\s+forward)(\W|$)|^\W*(previous|last)\s+(statement\s+)?balance|^\W*(minimum|total)\s+(amount\s+)?due|^\W*statement\s+(date|period)|^\W*payment\s+due\s+date""",
         RegexOption.IGNORE_CASE,
     )
 

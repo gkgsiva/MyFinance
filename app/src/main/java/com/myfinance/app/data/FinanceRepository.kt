@@ -23,7 +23,9 @@ import com.myfinance.core.StatementExport
 import com.myfinance.core.TxnType
 import com.myfinance.core.XlsxWriter
 import com.myfinance.core.formatInr
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -546,6 +548,7 @@ class FinanceRepository(
         context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
             out.write(csv.toByteArray(Charsets.UTF_8))
         } ?: error("Could not open file for writing")
+        prefs.edit().putLong(KEY_LAST_EXPORT, System.currentTimeMillis()).apply()
         n
     }
 
@@ -856,6 +859,7 @@ class FinanceRepository(
         runCatching { checkStatementReminder(today) }
         runCatching { newKeys += checkRefunds(today, sent) }
         runCatching { sendWeeklyDigest(today, all) }
+        runCatching { checkBackupReminder() }
 
         if (newKeys.isNotEmpty()) {
             // Forget keys older than ~2 months.
@@ -1013,7 +1017,7 @@ class FinanceRepository(
         stored + deleted
     }
 
-    data class ImportResult(val added: Int, val updated: Int, val skippedClosed: Int = 0)
+    data class ImportResult(val added: Int, val updated: Int, val skippedClosed: Int = 0, val addedUids: List<String> = emptyList())
 
     /**
      * Stores the statement lines the user chose to import. New lines are categorised like SMS (custom
@@ -1022,10 +1026,17 @@ class FinanceRepository(
      * date, merchant name and details win, while the user's category, labels and notes are kept. A name
      * the user gave (a payee name or an edited merchant) moves to the payment's nickname.
      */
-    suspend fun addImported(rows: List<ImportCandidate>): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun addImported(
+        rows: List<ImportCandidate>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): ImportResult = withContext(Dispatchers.IO) {
         val cat = categorizer()
         val deletedUids = v13.keys().mapTo(HashSet()) { it.uid }
-        val nicknames = runCatching { v13.payeeNames().mapTo(HashSet()) { it.name } }.getOrDefault(HashSet())
+        // Read once, not once per line: years of statements are thousands of lines.
+        val payees = runCatching { v13.payeeNames() }.getOrDefault(emptyList())
+        val nicknames = payees.mapTo(HashSet()) { it.name }
+        val payeeByKey = payees.associate { it.merchantKey to it.name }
+        val labelRules = runCatching { v13.labelRules() }.getOrDefault(emptyList())
         var added = 0
         var updated = 0
         var skippedClosed = 0
@@ -1033,58 +1044,153 @@ class FinanceRepository(
         val zone = ZoneId.systemDefault()
         val accounts = myAccountsNow()
         val me = ownerName.value
+        // Only recent payments can be the one a payment reminder is waiting for.
+        val recentFrom = System.currentTimeMillis() - 45L * 24 * 60 * 60 * 1000
         fun ownerOf(tail: String?, bank: String?) = com.myfinance.core.MyAccounts.ownerOf(accounts, tail, bank)?.takeIf { it.isNotBlank() && it != me }
-        for (c in rows) {
-            val r = c.row
-            // Closed months stay as they were reviewed.
-            if (closed.isNotEmpty() && monthCycle.value.periodOf(c.timestamp, r.type, DefaultCategories.OTHER, zone) in closed) { skippedClosed++; continue }
-            val nick = c.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
-            if (c.updatesExisting) {
-                val t = db.transactions().get(c.matchedId!!) ?: continue
-                val official = c.merchant ?: t.merchant
-                // The statement's merchant replaces the SMS one; the user's own name for it becomes the nickname.
-                val userName = t.merchant?.takeIf { (t.userEdited || it in nicknames) && it != official }
-                runCatching {
-                    if (v17.nicknameOf(t.uid) == null) (userName ?: nick?.takeIf { it != official })?.let { v17.putNickname(NicknameEntity(t.uid, it)) }
+        fun nickFor(merchant: String?) = merchant?.let { payeeByKey[Categorizer.merchantKey(it)] }
+
+        val addedUids = ArrayList<String>()
+        val total = rows.size
+        var done = 0
+        onProgress(0, total)
+        // In chunks, each in one database transaction: the screens refresh once per chunk, not once per line.
+        for (chunk in rows.chunked(IMPORT_CHUNK)) {
+            kotlin.coroutines.coroutineContext.ensureActive()
+            val nicks = ArrayList<NicknameEntity>()
+            val labels = ArrayList<TxnLabelEntity>()
+            val newRows = ArrayList<Pair<TransactionEntity, com.myfinance.core.RuleOutcome?>>()
+            db.withTransaction {
+                for (c in chunk) {
+                    val r = c.row
+                    // Closed months stay as they were reviewed.
+                    if (closed.isNotEmpty() && monthCycle.value.periodOf(c.timestamp, r.type, DefaultCategories.OTHER, zone) in closed) { skippedClosed++; continue }
+                    val nick = nickFor(c.merchant)
+                    if (c.updatesExisting) {
+                        val t = db.transactions().get(c.matchedId!!) ?: continue
+                        val official = c.merchant ?: t.merchant
+                        // The statement's merchant replaces the SMS one; the user's own name for it becomes the nickname.
+                        val userName = t.merchant?.takeIf { (t.userEdited || it in nicknames) && it != official }
+                        (userName ?: nick?.takeIf { it != official })?.let { nicks += NicknameEntity(t.uid, it) }
+                        db.transactions().update(
+                            t.copy(
+                                amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
+                                merchant = official,
+                                accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
+                                owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
+                                reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
+                                source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
+                                excluded = t.excluded || (!t.userEdited && com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement)),
+                            ),
+                        )
+                        updated++
+                        continue
+                    }
+                    if (c.duplicateOf != null || c.uid in deletedUids) continue
+                    val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
+                    if (rule?.ignore == true) continue
+                    // A card bill payment (bank side or card side) is not spending or income: the card's purchases are.
+                    val billPayment = com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement)
+                    val base = TransactionEntity(
+                        excluded = billPayment,
+                        amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,
+                        category = if (billPayment) DefaultCategories.TRANSFERS else cat.categorize(c.merchant, r.type, r.description),
+                        accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
+                        smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
+                        owner = ownerOf(c.accountTail, c.bank),
+                    )
+                    // The statement's merchant name stays; a payee name the user gave becomes the nickname.
+                    val row = rule?.applyTo(base) ?: base
+                    if (db.transactions().insert(row) != -1L) {
+                        added++
+                        addedUids += row.uid
+                        if (nick != null && rule?.merchant == null && nick != row.merchant) nicks += NicknameEntity(row.uid, nick)
+                        val names = listOfNotNull(row.merchant, c.merchant)
+                        if (names.isNotEmpty()) labelRules.filter { lr -> names.any { com.myfinance.core.Labels.sameSeller(lr.merchantKey, it) } }
+                            .map { it.label }.distinct().forEach { labels += TxnLabelEntity(row.uid, it) }
+                        newRows += row to rule
+                    }
                 }
-                db.transactions().update(
-                    t.copy(
-                        amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
-                        merchant = official,
-                        accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
-                        owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
-                        reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
-                        source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
-                        excluded = t.excluded || (!t.userEdited && com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement)),
-                    ),
-                )
-                updated++
-                continue
             }
-            if (c.duplicateOf != null || c.uid in deletedUids) continue
-            val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
-            if (rule?.ignore == true) continue
-            // A card bill payment (bank side or card side) is not spending or income: the card's purchases are.
-            val billPayment = com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement)
-            val base = TransactionEntity(
-                excluded = billPayment,
-                amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,
-                category = if (billPayment) DefaultCategories.TRANSFERS else cat.categorize(c.merchant, r.type, r.description),
-                accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
-                smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
-                owner = ownerOf(c.accountTail, c.bank),
-            )
-            // The statement's merchant name stays; a payee name the user gave becomes the nickname.
-            val row = rule?.applyTo(base) ?: base
-            if (db.transactions().insert(row) != -1L) {
-                added++
-                if (nick != null && rule?.merchant == null && nick != row.merchant) runCatching { v17.putNickname(NicknameEntity(row.uid, nick)) }
-                runCatching { v12.onNewTransaction(row, rule) }
-                runCatching { applyLabelRules(row, c.merchant) }
+            // Other databases: written once per chunk.
+            runCatching { for (n in nicks) if (v17.nicknameOf(n.txnUid) == null) v17.putNickname(n) }
+            if (labels.isNotEmpty()) runCatching { v13.addLabels(labels) }
+            for ((row, rule) in newRows) {
+                if (row.timestamp >= recentFrom || rule?.taxSection != null) runCatching { v12.onNewTransaction(row, rule) }
             }
+            done += chunk.size
+            onProgress(done, total)
         }
         onDataChanged()
-        ImportResult(added, updated, skippedClosed)
+        ImportResult(added, updated, skippedClosed, addedUids)
+    }
+
+    // ---- 1.10: import history and undo ----
+
+    val importBatches: Flow<List<ImportBatchEntity>> get() = v18.observeBatches()
+
+    suspend fun recordImport(files: List<String>, result: ImportResult, from: LocalDate?, to: LocalDate?) = withContext(Dispatchers.IO) {
+        runCatching {
+            v18.putBatch(
+                ImportBatchEntity(
+                    at = System.currentTimeMillis(), files = files.joinToString("\n"), added = result.added, updated = result.updated,
+                    uids = result.addedUids.joinToString("\n"), fromDay = from?.toEpochDay() ?: 0, toDay = to?.toEpochDay() ?: 0,
+                ),
+            )
+        }
+    }
+
+    /**
+     * Takes out every entry a statement import added, so the same files can be imported again cleanly.
+     * Entries it updated (an SMS that took the statement's details) stay. Returns how many were removed.
+     */
+    suspend fun undoImport(batchId: Long): Int = withContext(Dispatchers.IO) {
+        val b = v18.batch(batchId) ?: return@withContext 0
+        if (b.undone) return@withContext 0
+        val uids = b.uids.split('\n').filter { it.isNotBlank() }
+        var removed = 0
+        db.withTransaction { for (chunk in uids.chunked(500)) removed += db.transactions().deleteByUids(chunk) }
+        v18.putBatch(b.copy(undone = true))
+        onDataChanged()
+        removed
+    }
+
+    // ---- 1.10: uncategorised cleanup ----
+
+    /**
+     * Gives entries [ids] the [category], and remembers it for their payee so new SMS and any statement
+     * imported later (old years too) get it by themselves.
+     */
+    suspend fun categorise(ids: List<Long>, merchant: String?, category: String): Int = withContext(Dispatchers.IO) {
+        var n = 0
+        db.withTransaction {
+            for (id in ids) {
+                val t = db.transactions().get(id) ?: continue
+                if (t.category != category) { db.transactions().update(t.copy(category = category)); n++ }
+            }
+            merchant?.takeIf { it.isNotBlank() }?.let { learn(it, category) }
+        }
+        onDataChanged()
+        n
+    }
+
+    // ---- 1.10: backup reminder ----
+
+    /** The newest backup (Manage > Backup, auto-backup) or saved export, if any. */
+    val lastBackupAt: Long?
+        get() = listOfNotNull(v12.lastBackup, prefs.getLong(KEY_LAST_EXPORT, 0).takeIf { it > 0 }).maxOrNull()
+
+    /** When this phone started using the app (first time this was asked), for counting days without a backup. */
+    val firstUseAt: Long
+        get() = prefs.getLong(KEY_FIRST_USE, 0).takeIf { it > 0 } ?: System.currentTimeMillis().also { prefs.edit().putLong(KEY_FIRST_USE, it).apply() }
+
+    private suspend fun checkBackupReminder() {
+        val now = System.currentTimeMillis()
+        val hasData = db.transactions().countAll() > 0
+        val last = prefs.getLong(KEY_BACKUP_NUDGE, 0).takeIf { it > 0 }
+        if (!com.myfinance.core.BackupNudge.isDue(lastBackupAt, firstUseAt, last, hasData, now)) return
+        val days = com.myfinance.core.BackupNudge.daysSince(lastBackupAt, firstUseAt, now)
+        Notifier.reminder(context, "backup".hashCode(), "Time for a backup", "No backup in $days days. Open Manage > Backup to save one, so a lost phone doesn't lose your history.")
+        prefs.edit().putLong(KEY_BACKUP_NUDGE, now).apply()
     }
 
     /**
@@ -1156,6 +1262,10 @@ class FinanceRepository(
         private const val KEY_BACKFILLED = "backfilled_v11"
         private const val KEY_CYCLE_START = "month_start_day"
         private const val KEY_CARD_BILL_CLEANUP = "card_bill_cleanup_1_9"
+        private const val IMPORT_CHUNK = 200
+        private const val KEY_LAST_EXPORT = "last_export_at"
+        private const val KEY_FIRST_USE = "first_use_at"
+        private const val KEY_BACKUP_NUDGE = "backup_nudge_at"
         private const val KEY_WEEKLY_DIGEST = "weekly_digest_on"
         private const val KEY_WEEKLY_SENT = "weekly_digest_sent_week"
         private const val KEY_SALARY_FROM = "salary_next_month_from_day"

@@ -66,6 +66,9 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
 
         item { Group("Statements & accounts") }
         item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
+        item { SettingTile("Import history & undo", "", "Every statement import; undo a whole import") { open("import-history") } }
+        item { SettingTile("Missing statements", "", "Months with no statement, per card and account") { open("missing-statements") } }
+        item { SettingTile("Uncategorised", "", "Give payees a category in one go, old statements included") { open("uncategorised") } }
         item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
         item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }

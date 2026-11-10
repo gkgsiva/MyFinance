@@ -67,7 +67,7 @@ fun PaymentsAheadScreen(vm: FinanceViewModel, onBack: () -> Unit, openTxn: (Long
 
     V15Screen("Payments ahead", s, onBack, onAdd = { adding = true }) {
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 6.dp) {
                 AheadView.entries.forEach { v -> FilterChip(selected = view == v, onClick = { view = v }, label = { Text(v.label) }) }
             }
         }

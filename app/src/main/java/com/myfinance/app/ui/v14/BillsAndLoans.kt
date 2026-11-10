@@ -107,7 +107,7 @@ fun CardBillsScreen(vm: FinanceViewModel, onBack: () -> Unit, onImport: () -> Un
             }
         }
         item {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 FilterChip(selected = onlyProblems, onClick = { onlyProblems = !onlyProblems }, label = { Text("Only problems") })
                 FilterChip(selected = card == null, onClick = { card = null }, label = { Text("All cards") })
                 cards.forEach { c -> FilterChip(selected = card == c, onClick = { card = c }, label = { Text(c) }) }

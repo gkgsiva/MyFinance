@@ -87,11 +87,11 @@ fun PhotosCard(vm: V12ViewModel, key: String, title: String, hint: String) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
             if (receipts.isNotEmpty()) {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     receipts.forEach { r -> Thumb(vm.receiptFile(r)) { viewing = r } }
                 }
             } else Hint12(hint)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 OutlinedButton(onClick = {
                     val f = vm.newReceiptFile()
                     cameraFile = f

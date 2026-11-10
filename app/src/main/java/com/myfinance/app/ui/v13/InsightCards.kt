@@ -64,7 +64,7 @@ fun IncomeYearsCard(vm: FinanceViewModel) {
     var financial by remember { mutableStateOf(true) }
     val years = if (financial) fy else calendar
     ChartCard("Income over the years", accent = IncomeGreen, subtitle = "Total income, salary and how it changed") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
             FilterChip(selected = financial, onClick = { financial = true }, label = { Text("Financial year") })
             FilterChip(selected = !financial, onClick = { financial = false }, label = { Text("Calendar year") })
         }

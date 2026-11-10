@@ -12,6 +12,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** Opens a downloaded bank or card statement (PDF, Excel or CSV) and reads its transactions. */
@@ -33,7 +34,8 @@ object StatementFiles {
             }
         }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Statement"
 
-    suspend fun read(context: Context, uri: Uri, password: String?): Result = withContext(Dispatchers.IO) {
+    /** [onPage] is told each page read (page, pages), for a progress bar. */
+    suspend fun read(context: Context, uri: Uri, password: String?, onPage: (Int, Int) -> Unit = { _, _ -> }): Result = withContext(Dispatchers.IO) {
         val bytes = try {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext Result.Failed("Could not open the file.")
         } catch (e: Exception) {
@@ -42,7 +44,7 @@ object StatementFiles {
         val type = SpreadsheetReader.detect(bytes)
         try {
             val statement = if (type == StatementFileType.PDF) {
-                val text = when (val t = pdfText(context, bytes, password)) {
+                val text = when (val t = pdfText(context, bytes, password, onPage)) {
                     null -> return@withContext Result.NeedsPassword(wrong = password != null)
                     else -> t
                 }
@@ -58,6 +60,8 @@ object StatementFiles {
             statement?.let { Result.Ok(it, type) } ?: Result.Failed(
                 "No transactions found. Make sure this is a bank account statement or credit card statement with dates and amounts.",
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: OutOfMemoryError) {
             Result.Failed("This file is too large to read. Try a statement covering a shorter period.")
         } catch (e: Exception) {
@@ -66,7 +70,7 @@ object StatementFiles {
     }
 
     /** The PDF's text, or null when it needs a (different) password. */
-    private fun pdfText(context: Context, bytes: ByteArray, password: String?): String? {
+    private suspend fun pdfText(context: Context, bytes: ByteArray, password: String?, onPage: (Int, Int) -> Unit): String? {
         if (!pdfReady) {
             PDFBoxResourceLoader.init(context.applicationContext)
             pdfReady = true
@@ -76,9 +80,20 @@ object StatementFiles {
         } catch (e: InvalidPasswordException) {
             return null
         }
-        return doc.use {
+        return doc.use { d ->
             // Bank statements print in columns: keep words in reading order across each line.
-            PDFTextStripper().apply { sortByPosition = true }.getText(it)
+            // Page by page, so a long multi-year statement shows its progress and can be stopped.
+            val stripper = PDFTextStripper().apply { sortByPosition = true }
+            val pages = d.numberOfPages
+            val out = StringBuilder()
+            for (p in 1..pages) {
+                kotlin.coroutines.coroutineContext.ensureActive()
+                stripper.startPage = p
+                stripper.endPage = p
+                out.append(stripper.getText(d))
+                onPage(p, pages)
+            }
+            out.toString()
         }
     }
 }

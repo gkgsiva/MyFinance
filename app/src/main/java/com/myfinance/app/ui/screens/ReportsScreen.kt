@@ -108,7 +108,7 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (Strin
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                 }
             }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                 listOf(6 to "6 months", 12 to "1 year", 36 to "3 years", 60 to "5 years").forEach { (n, label) ->
                     FilterChip(selected = count == n, onClick = { vm.reportMonths.value = n }, label = { Text(label) })
                 }
@@ -252,7 +252,7 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (Strin
         // 3. Top merchants
         item {
             ReportCard("Top merchants", accent = Amber) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     FilterChip(selected = !merchantsByCount, onClick = { merchantsByCount = false }, label = { Text("By amount") })
                     FilterChip(selected = merchantsByCount, onClick = { merchantsByCount = true }, label = { Text("By number of payments") })
                 }
