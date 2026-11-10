@@ -28,17 +28,51 @@ object SmsParser {
 
     private val ignoreRegex = Regex(
         listOf(
-            """\botp\b""", """one[\s-]time\s+password""", """verification\s+code""",
             """\bdeclined\b""", """\bfailed\b""", """\bunsuccessful\b""",
-            """will\s+be\s+(?:debited|credited|deducted)""", """\bis\s+due\b""", """\bdue\s+(?:on|by)\b""",
+            """will\s+be\s+(?:auto[\s-]?)?(?:debited|credited|deducted|charged)""", """\b(?:will|shall)\s+(?:auto[\s-]?)?debit\b""",
+            """\bis\s+due\b""", """\bdue\s+(?:on|by)\b""",
             """payment\s+request""", """\brequested\b""", """\bpre-?approved\b""", """\boffer\b""",
             """\bminimum\s+amount\s+due\b""", """\bauto-?pay\b.*\bscheduled\b""",
+            // Ideas from omoi-sms-parser (MIT) and kharcha (Apache-2.0): marketing and money that did not move.
+            """\b(?:coupon|voucher|lucky\s+draw|scratch\s+card|spin\s+(?:the\s+wheel|to\s+win)|refer\s*(?:and|&)\s*earn)\b""",
+            """\b(?:returned\s+unpaid|dishono(?:u)?red|bounced)\b""",
+            """\bmatures\s+on\b|\bmaturity\s+date\b""",
+            """(?:rs\.?|inr|₹)\s?[\d,]+(?:\.\d{1,2})?\s*off\b""",
+            """\b(?:get|earn|win|avail|assured|flat|upto|up\s+to)\s+(?:(?:rs\.?|inr|₹)\s?[\d,]+(?:\.\d{1,2})?\s+)?cashback\b|\bcashback\s+(?:offer|waiting)\b""",
+            """\b(?:flat|upto|up\s+to|at\s+just|starting\s+(?:at|from))\s+(?:rs\.?|inr|₹)""",
+            """\b(?:shop\s+now|buy\s+now|claim\s+now|apply\s+now|t\s*&\s*c\s+apply|tnc\s+apply)\b""",
+            """\b(?:congratulations|you\s+have\s+won|you've\s+won)\b""",
+            """\bspent\b.{0,80}\bthis\s+(?:month|week|year)\b""", """\bin\s+the\s+(?:last|past)\s+\d+\s+days\b""",
+            """\brefund\s+(?:has\s+been\s+|is\s+)?initiated\b""", """\bwill\s+(?:be\s+)?reflect""",
+            """\b(?:credit\s+)?limit\s+(?:has\s+been\s+)?(?:increased|enhanced|upgraded)\b""",
+            """\b(?:collect|mandate|autopay)\s+request\b""",
+            """\b(?:is|was|remains)\s+pending\b|\bin\s+progress\b|\bprocessing\s+(?:your\s+)?(?:payment|request|transaction)\b""",
         ).joinToString("|"),
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * An OTP message binds the word to a code ("123456 is your OTP", "OTP for txn of Rs 500 is 123456").
+     * The word alone is not enough: real debit alerts end with "Never share your OTP / CVV" (from omoi-sms-parser).
+     */
+    private val otpRegex = Regex(
+        listOf(
+            """\b\d{3,8}\s+is\s+(?:the\s+|your\s+|an?\s+)?(?:otp|one[\s-]time\s+password|verification\s+code|secret\s+code)\b""",
+            """\b(?:otp|one[\s-]time\s+password|verification\s+code)\b.{0,80}?(?:\bis\b|:)\s*\d{3,8}\b""",
+            """\b(?:use|enter)\s+(?:otp|one[\s-]time\s+password)\s*:?\s*\d{3,8}\b""",
+        ).joinToString("|"),
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Card bill / statement SMS: the spends in it were already counted (read by the bill reminders instead). */
+    private val cardBillRegex = Regex(
+        """\btotal\s+(?:amount\s+)?due\b|\bmin(?:imum)?\.?\s+(?:amt|amount)\s+(?:due|of)\b|\bbill\s+(?:has\s+been\s+|is\s+)?generated\b|\bstatement\s+(?:has\s+been\s+|is\s+)?generated\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val completedMoney = Regex("""\b(?:received|credited|thank\s+you|debited|spent)\b""", RegexOption.IGNORE_CASE)
+
     private val debitWords = Regex(
-        """\b(?:debited|debit|spent|paid|withdrawn|withdrawal|sent|purchase|purchased|deducted|txn\s+of|transferred\s+to|dr)\b""",
+        """\b(?:debited|debit|spent|paid|withdrawn|withdrawal|sent|purchase|purchased|deducted|txn\s+of|transferred\s+to|dr|charged|used\s+(?:for|at)|(?:a\s+)?transaction\s+of)\b""",
         RegexOption.IGNORE_CASE,
     )
     private val creditWords = Regex(
@@ -47,10 +81,10 @@ object SmsParser {
     )
 
     private val accountRegex = Regex(
-        """(?:a/c|acct|account|card|ac)\s*(?:no\.?|number)?\s*(?:ending\s*(?:with|in)?\s*)?[:\-]?\s*[xX*.]*\s?([0-9]{3,6})\b""",
+        """(?:a/c|acct|account|card|ac)\s*(?:no\.?|number)?\s*(?:ending\s*(?:with|in)?\s*)?[:\-]?\s*[xX*.•●]*\s?([0-9]{3,6})\b""",
         RegexOption.IGNORE_CASE,
     )
-    private val maskedRegex = Regex("""[xX*]{2,}\s?([0-9]{3,6})\b""")
+    private val maskedRegex = Regex("""[xX*•●]{2,}\s?([0-9]{3,6})\b""")
 
     private val refRegex = Regex(
         """(?:upi\s*ref(?:\.|erence)?\s*(?:no\.?)?|ref(?:\.|erence)?\s*(?:no\.?|number|#)?|rrn|txn\s*id|utr)\s*[:\-]?\s*([A-Za-z0-9]{6,})""",
@@ -76,6 +110,12 @@ object SmsParser {
         "FEDERAL" to "Federal Bank", "FEDBNK" to "Federal Bank", "AUBANK" to "AU Bank", "RBL" to "RBL Bank",
         "PAYTM" to "Paytm", "AMEX" to "Amex", "CITI" to "Citi", "SCB" to "Standard Chartered",
         "HSBC" to "HSBC", "IOB" to "Indian Overseas Bank", "INDBNK" to "Indian Bank", "BOI" to "Bank of India",
+        // More DLT header families (from omoi-sms-parser's sender list and transaction-sms-parser's cards).
+        "PAYZAP" to "HDFC Bank", "ICBANK" to "ICICI Bank", "IDBI" to "IDBI Bank", "BANDHN" to "Bandhan Bank",
+        "UCOBNK" to "UCO Bank", "KVBANK" to "Karur Vysya Bank", "SIBSMS" to "South Indian Bank", "DBSBNK" to "DBS Bank",
+        "CSBBNK" to "CSB Bank", "EQUTAS" to "Equitas Bank", "ONECRD" to "OneCard", "ONECARD" to "OneCard",
+        "SLCEIT" to "slice", "SLICE" to "slice", "SCAPIA" to "Scapia", "JUPITR" to "Jupiter",
+        "AMZPAY" to "Amazon Pay", "PHONPE" to "PhonePe", "MOBIKW" to "MobiKwik", "FRCHRG" to "Freecharge",
     )
 
     /** Words that mean the "merchant" we captured is really just account boilerplate. */
@@ -91,7 +131,9 @@ object SmsParser {
     fun parse(sender: String, body: String, timestamp: Long, rates: Map<String, Double> = Fx.defaultRates): ParsedTransaction? {
         val text = body.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
         if (text.isEmpty()) return null
+        if (otpRegex.containsMatchIn(text)) return null
         if (ignoreRegex.containsMatchIn(text)) return null
+        if (cardBillRegex.containsMatchIn(text) && !completedMoney.containsMatchIn(text)) return null
 
         val amountMatch = findTransactionAmount(text)
         // A foreign amount before any rupee amount ("Spent USD 12.99 on card ..."): convert it.
@@ -126,8 +168,32 @@ object SmsParser {
     /** Bank named by the sender id, or failing that by the message. */
     fun bank(sender: String, text: String): String? = bankFromSender(sender) ?: bankFromBody(text)
 
-    private fun findTransactionAmount(text: String): MatchResult? =
-        amountRegex.findAll(text).firstOrNull { !isBalance(text, it) } ?: bareAmountRegex.find(text)
+    /**
+     * The transaction amount is the leftmost amount once balance / limit / outstanding clauses are blanked
+     * out (idea from omoi-sms-parser, MIT). Blanking keeps every index in place, so "debited by 35.0 ... Avl Bal
+     * Rs 800.50" can only ever read 35.0.
+     */
+    private fun findTransactionAmount(text: String): MatchResult? {
+        val masked = maskBalances(text)
+        return listOfNotNull(
+            amountRegex.findAll(masked).firstOrNull { !isBalance(masked, it) },
+            bareAmountRegex.find(masked),
+            transactionOfRegex.find(masked),
+        ).minByOrNull { it.range.first }
+    }
+
+    private val balanceClauses = listOf(
+        Regex("""\b(?:avl|avbl|available|total|updated|remaining|current|curr|clr|ledger|closing)\.?\s*(?:credit\s+)?(?:bal(?:ance)?|lmt|limit)\b[^\d\n]{0,30}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:balance|credit\s+limit)\s*(?:is|:)[^\d\n]{0,20}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:total\s+)?outstanding\b[^\d\n]{0,20}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
+    )
+
+    /** Blanks balance and limit clauses with spaces, keeping the text's length. */
+    fun maskBalances(text: String): String =
+        balanceClauses.fold(text) { t, re -> re.replace(t) { m -> " ".repeat(m.value.length) } }
+
+    // HDFC reversals omit the currency: "Your UPI transaction of 50.00 has been reversed".
+    private val transactionOfRegex = Regex("""\btransaction\s+of\s+([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b""", RegexOption.IGNORE_CASE)
 
     private fun findBalance(text: String): Long? =
         amountRegex.findAll(text).firstOrNull { isBalance(text, it) }
@@ -158,14 +224,29 @@ object SmsParser {
             TxnType.DEBIT -> listOf(atRegex, toRegex, infoRegex)
             TxnType.CREDIT -> listOf(fromRegex, infoRegex, atRegex)
         }
+        // "UPI/P2M/431234567890/SWIGGY" style narrations quoted in the SMS (from kharcha, Apache-2.0).
+        upiNarration.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
         for (regex in ordered) {
             for (m in regex.findAll(text)) {
                 val cleaned = cleanName(m.groupValues[1]) ?: continue
+                // A whole narration was captured ("Info: UPI/DR/1234/RAVI KUMAR/YESB"): keep only the name in it.
+                if (cleaned.count { it == '/' } >= 2) return Narration.merchant(cleaned) ?: cleaned
                 return cleaned
             }
         }
+        // Last resort: any UPI id in the message (handles from transaction-sms-parser, MIT).
+        anyVpa.find(text)?.let { return cleanVpa(it.groupValues[1]) }
         return null
     }
+
+    private val upiNarration = Regex(
+        """\bUPI/(?:(?:DR|CR|P2A|P2M|P2P|REV)/)?\d{6,}/([A-Za-z][A-Za-z0-9 &.'\-]{1,40}?)(?=\s*/|\s*\.\s|\s*\.$|\s+(?:avl|available|bal|ref|upi|on|not|if|call|sms)\b|$)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val anyVpa = Regex(
+        """(?<![\w.@-])([A-Za-z0-9][A-Za-z0-9._\-]{1,40}@(?:ybl|ibl|axl|paytm|ptyes|ptaxis|pthdfc|ptsbi|okaxis|okhdfcbank|okicici|oksbi|upi|apl|yapl|icici|sbi|hdfcbank|axisbank|kotak|federal|indus|rbl|idfcbank|aubank|barodampay|uboi|unionbank|yesbank|jupiteraxis|fbl|airtel|freecharge|ikwik|naviaxis|slc|waaxis|wahdfcbank|wasbi|waicici))\b""",
+        RegexOption.IGNORE_CASE,
+    )
 
     private fun cleanVpa(vpa: String): String {
         val handle = vpa.substringBefore('@')
@@ -198,8 +279,10 @@ object SmsParser {
 
     /** True when the sender looks like a bank/financial DLT header rather than a person. */
     fun looksLikeFinancialSender(sender: String): Boolean {
-        val s = sender.uppercase()
-        if (s.replace("+", "").all { it.isDigit() }) return false
+        val s = sender.uppercase().trim()
+        if (s.replace("+", "").replace(" ", "").all { it.isDigit() }) return false
+        // TRAI DLT headers end "-P" for promotional traffic ("VM-HDFCBK-P"): never a transaction (omoi-sms-parser).
+        if (Regex("""^[A-Z]{2}-[A-Z0-9]{3,9}-P$""").matches(s)) return false
         return true
     }
 }

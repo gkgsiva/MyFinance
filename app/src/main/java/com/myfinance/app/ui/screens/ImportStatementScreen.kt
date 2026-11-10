@@ -231,6 +231,15 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
     if (from != null && to != null) {
         Text("${from.format(stmtDayFormat)} to ${to.format(stmtDayFormat)}", style = MaterialTheme.typography.bodySmall)
     }
+    // Do the lines read add up to the statement's own totals?
+    f.statement?.check?.let { c ->
+        Text(
+            if (c.ok) "✓ Every line read: the totals match the statement"
+            else "Totals differ from the statement by ${formatInr(kotlin.math.abs(c.differenceMinor))}. A line may not have been read; check with Show lines.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (c.ok) com.myfinance.app.ui.theme.IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     if (f.candidates.isEmpty()) {
         Text("Checking for duplicates…", style = MaterialTheme.typography.bodySmall)
         return

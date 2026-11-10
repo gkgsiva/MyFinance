@@ -304,6 +304,17 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, ReportsData())
 
+    /** Dashboard: the period (ending at the month shown) and the account or card it is filtered to. */
+    val dashPeriod = MutableStateFlow(com.myfinance.core.DashPeriod.MONTH)
+    val dashAccount = MutableStateFlow<String?>(null)
+
+    val dashboard: StateFlow<com.myfinance.core.DashboardData> =
+        combine(combine(allLite, txnMeta) { t, m -> t to m }, _month, monthCycle, dashPeriod, dashAccount) { (txns, meta), end, cycle, period, account ->
+            com.myfinance.core.Dashboard.compute(txns, end, period, account, ZoneId.systemDefault(), cycle, meta.hiddenIds)
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, com.myfinance.core.DashboardData())
+
     val recurring: StateFlow<List<RecurringPayment>> =
         allLite.map { RecurringDetector.detect(it, LocalDate.now()) }
             .flowOn(Dispatchers.Default)

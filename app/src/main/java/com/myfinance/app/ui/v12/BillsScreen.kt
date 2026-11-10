@@ -52,7 +52,7 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
             Hint12(
                 "You get a notification a few days before each due date. When a matching payment SMS arrives " +
                     "(e.g. BESCOM for electricity), the bill is marked paid and moves to its next due date. Card bills " +
-                    "and EMIs read from bank SMS are on the Overview's Bills screen.",
+                    "and EMIs read from bank SMS are on the Dashboard's Bills screen.",
             )
         }
         items(bills, key = { it.first.id }) { (b, s) ->

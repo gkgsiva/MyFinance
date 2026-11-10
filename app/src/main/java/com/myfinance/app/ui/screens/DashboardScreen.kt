@@ -73,8 +73,13 @@ import com.myfinance.core.formatInr
 import java.time.LocalDate
 import java.time.YearMonth
 
+/**
+ * The Dashboard tab: the month's analytics (filters, KPI tiles, trend, category mix, top merchants, spend by
+ * bank and card), then income vs spend, balances, insights and "Where it went" with budgets. Today's
+ * transactions and what is due live on the Home screen.
+ */
 @Composable
-fun OverviewScreen(
+fun DashboardScreen(
     vm: FinanceViewModel,
     smsGranted: Boolean,
     onImport: () -> Unit,
@@ -179,22 +184,25 @@ fun OverviewScreen(
                 item { Text(err, color = MaterialTheme.colorScheme.error) }
             }
 
-            if (month == currentMonth) item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
-
-            item { HeroCard(summary.incomeMinor, summary.expenseMinor, summary.netMinor, summary.savingsRatePercent) }
-
-            if (groups.isNotEmpty()) {
-                item {
-                    val slices = topSlices(
-                        groups.mapIndexed { i, g ->
-                            val c = if (groupBy == GroupBy.CATEGORY) colorOf[g.key] ?: ChartPalette[i % ChartPalette.size]
-                            else ChartPalette[i % ChartPalette.size]
-                            Slice(g.key, g.totalMinor, c)
-                        },
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Net this month " + (if (summary.netMinor < 0) "−" else "+") + formatInr(kotlin.math.abs(summary.netMinor)) +
+                            (summary.savingsRatePercent?.takeIf { it >= 0 }?.let { " · saved $it%" } ?: ""),
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f),
+                        color = if (summary.netMinor < 0) ExpenseRed else IncomeGreen,
                     )
-                    ChartCard("Spending mix", accent = Pink, subtitle = "By ${groupBy.label.lowercase()} this month") {
-                        DonutChart(slices, centerTitle = "Spent")
-                    }
+                    Text(
+                        "Detailed reports", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clickable { open("reports") }.padding(vertical = 6.dp),
+                    )
+                }
+            }
+
+            item {
+                DashboardSection(vm) { category ->
+                    vm.labelFilter.value = null
+                    onOpenGroup(category)
                 }
             }
 
@@ -216,8 +224,8 @@ fun OverviewScreen(
                 }
             }
 
-            // This month's Today card already lists what is due; keep only the bank balance line here.
-            val showDue = month != currentMonth
+            // Home lists what is due; keep only the bank balance line here.
+            val showDue = false
             if (showDue || balances.any { !it.isCardLimit }) item {
                 ComingUpCard(bills, recurring, balances, onOpenUpcoming, showDue)
             }
@@ -368,51 +376,3 @@ private fun ComingUpCard(
 }
 
 private val shortMonthFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM")
-
-/** Colourful month header: net in big type, income and spend in two tinted chips. */
-@Composable
-private fun HeroCard(incomeMinor: Long, expenseMinor: Long, netMinor: Long, savingsRate: Int?) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(HeroGradient)
-            .padding(20.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Column {
-                Text("Net this month", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f))
-                Text(
-                    (if (netMinor < 0) "−" else "") + formatInr(kotlin.math.abs(netMinor)),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
-                savingsRate?.let {
-                    Text(
-                        if (it >= 0) "You saved $it% of your income" else "You spent ${-it}% more than you earned",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f),
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HeroChip("Income", formatInr(incomeMinor), IncomeGradient, Modifier.weight(1f))
-                HeroChip("Spent", formatInr(expenseMinor), SpendGradient, Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun HeroChip(label: String, value: String, brush: Brush, modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(brush)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.9f))
-        Text(value, style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-    }
-}

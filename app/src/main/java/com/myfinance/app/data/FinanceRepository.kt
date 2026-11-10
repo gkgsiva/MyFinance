@@ -203,6 +203,8 @@ class FinanceRepository(
         val row = (rule?.applyTo(base) ?: base).let { r -> if (nick != null && rule?.merchant == null) r.copy(merchant = nick) else r }
         // Already imported from a bank / card statement: link the SMS to that line, never a second entry.
         if (runCatching { linkToStatementLine(row, nick) }.getOrDefault(false)) return Ingest.ALREADY_HERE
+        // The bank's alert and the UPI / wallet app's message for one payment: keep one.
+        if (runCatching { repeatsAnotherSms(row) }.getOrDefault(false)) return Ingest.ALREADY_HERE
         val added = db.transactions().insert(row) != -1L
         if (added) {
             runCatching { v12.onNewTransaction(row, rule) }
@@ -982,6 +984,17 @@ class FinanceRepository(
      * SMS to that statement line and keeps the statement's details, instead of adding it twice.
      * Returns true when it found the line.
      */
+    /** True when [sms] is the same payment as another SMS already stored (same reference, or wallet + bank). */
+    private suspend fun repeatsAnotherSms(sms: TransactionEntity): Boolean {
+        if (sms.smsKey != null && db.transactions().bySmsKey(sms.smsKey) != null) return false
+        val window = 3 * 24 * 60 * 60 * 1000L
+        val near = db.transactions().rangeOnce(sms.timestamp - window, sms.timestamp + window)
+            .filter { it.source == TxnSource.SMS && it.smsKey != sms.smsKey && it.amountMinor == sms.amountMinor && it.type == sms.type }
+        if (near.isEmpty()) return false
+        fun seen(t: TransactionEntity) = com.myfinance.core.SmsDedupe.Seen(t.amountMinor, t.type, t.timestamp, t.reference, t.bank)
+        return com.myfinance.core.SmsDedupe.duplicateOf(seen(sms), near.map(::seen)) != null
+    }
+
     private suspend fun linkToStatementLine(sms: TransactionEntity, nick: String? = null): Boolean {
         if (db.transactions().bySmsKey(sms.smsKey ?: return false) != null) return false
         val window = 3 * 24 * 60 * 60 * 1000L

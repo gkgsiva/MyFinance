@@ -134,6 +134,16 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
+### New in the next release (after 1.7)
+
+- **Simple Home:** today's transactions, payments due today and over the next few days (and missed ones), and one line for the month so far. Everything else moved to the next screens.
+- **Dashboard tab** (replaces the Overview charts; Reports open from it): filter by month, 3 months, 12 months or financial year and by account or card; tiles for spent, received, top category, transaction count and unpaid card bills; monthly spend trend, category breakdown, top merchants and spend by bank and card.
+- **Better SMS reading:** real alerts that end "never share your OTP" are kept; balances, limits and "outstanding" amounts are never read as the spend; promotions, cashback offers, limit increases, bounced cheques, refunds not yet credited and spend summaries are skipped; "card used for a transaction of", "charged", UPI narrations ("UPI/P2M/…/SWIGGY") and ••1234 account numbers are read; more bank and card senders (PayZapp, OneCard, slice, Scapia, Jupiter, IDBI, Bandhan, UCO and others); promotional senders ending "-P" are ignored.
+- **No double count from UPI apps:** when PhonePe, Paytm or Amazon Pay and your bank both send an SMS for one payment (same reference, or within 5 minutes), it is added once.
+- **Statements:** HDFC's newer card statement layout ("12/03/2025| 14:32 … C 450.00", "+" for credits), whole-rupee amounts ("Rs. 1,234"), and a check at import that the lines add up to the statement's closing balance or the card's total due.
+
+Parsing ideas came from these open-source projects (rewritten in Kotlin, no code copied): [kharcha](https://github.com/AkashPriyadarshii/kharcha) (Apache-2.0), [omoi-sms-parser](https://github.com/abhirajsinha/omoi-sms-parser) (MIT), [transaction-sms-parser](https://github.com/saurabhgupta050890/transaction-sms-parser) (MIT), [Card-Statement-Analyser](https://github.com/madhav921/Card-Statement-Analyser) (MIT) and [expense-analyser](https://github.com/juneja-varun/expense-analyser) (AGPL-3.0, ideas only).
+
 ### New in 1.6
 
 - **Auto debits are only what repeats.** A single "autopay mandate" SMS no longer makes something an auto debit. It has to have been paid at least twice, a similar amount, about a month, quarter or year apart. Family UPI / UPI Circle payments are left out. Tap a detected row and choose **Not recurring** to remove that payee for good; undo it under Settings > Hidden items.
