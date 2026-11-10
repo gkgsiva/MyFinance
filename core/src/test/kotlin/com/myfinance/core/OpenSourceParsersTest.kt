@@ -379,3 +379,19 @@ class SivaSmsTest {
         assertEquals("841795829162", t.reference)
     }
 }
+
+class OpenSourceRulesTest {
+    private val c = Categorizer()
+
+    @Test
+    fun `merchant rules from kharcha and Card-Statement-Analyser`() {
+        assertEquals(DefaultCategories.FOOD, c.categorize("BOX8", TxnType.DEBIT))
+        assertEquals(DefaultCategories.GROCERIES, c.categorize("LICIOUS", TxnType.DEBIT))
+        assertEquals(DefaultCategories.HEALTH, c.categorize("THYROCARE TECHNOLOGIES", TxnType.DEBIT))
+        assertEquals(DefaultCategories.SHOPPING, c.categorize("ZUDIO CHENNAI", TxnType.DEBIT))
+        // Short names stay whole words: MOTOROLA is not Ola, ACTIVE is not ACT.
+        assertEquals(DefaultCategories.SHOPPING, c.categorize("MOTOROLA STORE AMAZON", TxnType.DEBIT))
+        // Your own rule wins over every built-in one.
+        assertEquals("Snacks", Categorizer(mapOf("box8" to "Snacks")).categorize("BOX8", TxnType.DEBIT))
+    }
+}

@@ -115,6 +115,7 @@ object SmsParser {
         "UCOBNK" to "UCO Bank", "KVBANK" to "Karur Vysya Bank", "SIBSMS" to "South Indian Bank", "DBSBNK" to "DBS Bank",
         "CSBBNK" to "CSB Bank", "EQUTAS" to "Equitas Bank", "ONECRD" to "OneCard", "ONECARD" to "OneCard",
         "SLCEIT" to "slice", "SLICE" to "slice", "SCAPIA" to "Scapia", "JUPITR" to "Jupiter",
+        "AXSFIN" to "Axis Bank", "KTKREM" to "Kotak Bank", "CAANBK" to "Canara Bank", "FEDBK" to "Federal Bank",
         "AMZPAY" to "Amazon Pay", "PHONPE" to "PhonePe", "MOBIKW" to "MobiKwik", "FRCHRG" to "Freecharge",
     )
 
