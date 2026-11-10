@@ -70,6 +70,8 @@ class V14State(
     private val allTransactions: StateFlow<List<TransactionEntity>>,
     /** Transactions that count in totals. */
     private val allLite: StateFlow<List<TxnLite>>,
+    /** Including entries left out of totals: card bill payments are left out, but still pay the bill. */
+    private val allLiteWithExcluded: StateFlow<List<TxnLite>>,
     private val meta: StateFlow<TxnMeta>,
     private val ownerName: StateFlow<String>,
     private val autoDebits: StateFlow<Pair<List<AutoDebitItem>, Set<String>>>,
@@ -131,7 +133,7 @@ class V14State(
     // ---- Card bill check ----
 
     val cardChecks: StateFlow<List<CardBillCheck>> =
-        combine(repo.bills, allLite) { bills, lite ->
+        combine(repo.bills, allLiteWithExcluded) { bills, lite ->
             val list = bills.map { b ->
                 Triple(b.toBill(), com.myfinance.core.Dates.localDate(b.receivedAt, zone), b.markedPaid)
             }

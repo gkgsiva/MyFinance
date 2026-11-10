@@ -653,7 +653,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteCategory(name: String) = viewModelScope.launch { repo.deleteCategory(name) }
 
     /** v1.4 insights: label suggestions and budgets, card bills, loans, salary, refunds, year in review and more. */
-    val v14 = V14State(viewModelScope, repo, allTransactions, allLite, txnMeta, ownerName, autoDebitsWithHidden, ::explore, monthTransactions)
+    val v14 = V14State(viewModelScope, repo, allTransactions, allLite, allLiteWithExcluded, txnMeta, ownerName, autoDebitsWithHidden, ::explore, monthTransactions)
 
     /** v1.5: Ask, tax-time pack, vault, subscriptions, calendar, goal links, lending, auto-backup, Today card. */
     val v15 = V15State(viewModelScope, getApplication(), repo, allTransactions, allLite, txnMeta, ownerName, autoDebits, recurring, openBills)

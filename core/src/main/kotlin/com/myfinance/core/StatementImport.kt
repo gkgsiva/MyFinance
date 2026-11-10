@@ -23,6 +23,8 @@ data class ImportCandidate(
      * the official record, so importing updates that row with the statement's details.
      */
     val matchedId: Long? = null,
+    /** From a credit card statement (its "payment received" lines are bill payments, not income). */
+    val cardStatement: Boolean = false,
 ) {
     /** True when importing changes a stored SMS / manual row to the statement's details. */
     val updatesExisting: Boolean get() = matchedId != null && duplicateOf != DuplicateReason.SAME_STATEMENT
@@ -77,6 +79,7 @@ object StatementImport {
             ImportCandidate(
                 row = r, key = "STMT|$hash", uid = java.util.UUID.nameUUIDFromBytes("stmt|$hash".toByteArray()).toString(),
                 timestamp = ts, merchant = Narration.merchant(r.description), bank = bank, accountTail = rowTail,
+                cardStatement = statement.kind == StatementKind.CARD,
             )
         }
     }

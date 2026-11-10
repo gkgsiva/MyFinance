@@ -185,12 +185,31 @@ class FinanceRepository(
     suspend fun get(id: Long): TransactionEntity? = db.transactions().get(id)
 
     suspend fun ensureDefaults() {
+        runCatching { leaveOutCardBillPaymentsOnce() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
             DefaultCategories.all.mapIndexed { i, name ->
                 CategoryEntity(name = name, builtIn = true, color = palette[i % palette.size])
             },
         )
+    }
+
+    /**
+     * Once, for entries stored before card bill payments were left out automatically: the payment from the
+     * bank account and the "payment received" on the card stop counting as spending and income. Entries the
+     * user edited are left alone.
+     */
+    private suspend fun leaveOutCardBillPaymentsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_CARD_BILL_CLEANUP, false)) return@withContext
+        val cards = myAccountsNow().filter { it.isCard }
+        val changed = db.transactions().allOnce().filter { t ->
+            !t.excluded && !t.userEdited && t.source != TxnSource.MANUAL && run {
+                val onCard = t.source == TxnSource.STATEMENT && com.myfinance.core.MyAccounts.match(cards, t.accountTail, t.bank) != null
+                com.myfinance.core.SelfTransfers.isCardBillPayment(t.type, t.merchant, t.rawSms, onCard)
+            }
+        }.map { it.copy(excluded = true) }
+        if (changed.isNotEmpty()) db.transactions().updateAll(changed)
+        prefs.edit().putBoolean(KEY_CARD_BILL_CLEANUP, true).apply()
     }
 
     private suspend fun categorizer(): Categorizer =
@@ -232,7 +251,9 @@ class FinanceRepository(
         val rule = v12.ruleFor(sender, body, parsed.merchant, parsed.type, parsed.amountMinor)
         if (rule?.ignore == true) return Ingest.NOT_A_TRANSACTION
         // "Acct XX144 debited … & Acct XX848 credited": money moved to another account of the family is not spending.
-        val ownTransfer = parsed.counterTail?.let { t -> runCatching { isOwnAccount(t, parsed.bank) }.getOrDefault(false) } == true
+        // Paying a card bill from the bank, or the card saying the payment arrived: the card's purchases are the spending.
+        val ownTransfer = parsed.counterTail?.let { t -> runCatching { isOwnAccount(t, parsed.bank) }.getOrDefault(false) } == true ||
+            com.myfinance.core.SelfTransfers.isCardBillPayment(parsed.type, parsed.merchant, body)
         val cat = if (ownTransfer) com.myfinance.core.DefaultCategories.TRANSFERS
             else (categorizer ?: categorizer()).categorize(parsed.merchant, parsed.type, body)
         val base = TransactionEntity(
@@ -1011,6 +1032,7 @@ class FinanceRepository(
                         owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
                         reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                         source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
+                        excluded = t.excluded || (!t.userEdited && com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement)),
                     ),
                 )
                 updated++
@@ -1019,9 +1041,12 @@ class FinanceRepository(
             if (c.duplicateOf != null || c.uid in deletedUids) continue
             val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
             if (rule?.ignore == true) continue
+            // A card bill payment (bank side or card side) is not spending or income: the card's purchases are.
+            val billPayment = com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement)
             val base = TransactionEntity(
+                excluded = billPayment,
                 amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,
-                category = cat.categorize(c.merchant, r.type, r.description),
+                category = if (billPayment) DefaultCategories.TRANSFERS else cat.categorize(c.merchant, r.type, r.description),
                 accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
                 smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
                 owner = ownerOf(c.accountTail, c.bank),
@@ -1107,6 +1132,7 @@ class FinanceRepository(
         private const val KEY_REMINDERS_SENT = "reminders_sent"
         private const val KEY_BACKFILLED = "backfilled_v11"
         private const val KEY_CYCLE_START = "month_start_day"
+        private const val KEY_CARD_BILL_CLEANUP = "card_bill_cleanup_1_9"
         private const val KEY_SALARY_FROM = "salary_next_month_from_day"
         private const val KEY_LAST_SCAN = "last_inbox_scan"
         private const val KEY_STMT_DAY = "statement_reminder_day"

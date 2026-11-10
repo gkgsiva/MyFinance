@@ -134,7 +134,11 @@ builds a spending profile. Everything stays on the phone: there is no server or 
   family export, so labels added on other phones show on the main phone after merging.
 - **Pinned reports**: tap Pin in Explore to keep a view such as "IRCTC net by year" on the Overview.
 
-### New in the next release (after 1.7)
+### New in the next release (after 1.8)
+
+- **Card bills never count twice**: paying a credit card bill from your bank account, and the "payment received" line on the card statement, are left out of spending and income by themselves (SMS and statements). The card's own purchases are the spending. They still mark the card bill as paid. Entries stored before this are cleaned up once; entries you edited are left alone.
+
+### New in 1.8
 
 - **Simple Home:** today's transactions, payments due today and over the next few days (and missed ones), and one line for the month so far. Everything else moved to the next screens.
 - **Dashboard tab** (replaces the Overview charts; Reports open from it): filter by month, 3 months, 12 months or financial year and by account or card; tiles for spent, received, top category, transaction count and unpaid card bills; monthly spend trend, category breakdown, top merchants and spend by bank and card.
