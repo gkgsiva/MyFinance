@@ -129,7 +129,7 @@ object SmsParser {
      * with them, and the foreign amount is returned in [ParsedTransaction.foreign].
      */
     fun parse(sender: String, body: String, timestamp: Long, rates: Map<String, Double> = Fx.defaultRates): ParsedTransaction? {
-        val text = body.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
+        val text = body.replace('\n', ' ').replace("&amp;", "&").replace(Regex("\\s+"), " ").trim()
         if (text.isEmpty()) return null
         if (otpRegex.containsMatchIn(text)) return null
         if (ignoreRegex.containsMatchIn(text)) return null
@@ -145,21 +145,41 @@ object SmsParser {
 
         val type = detectType(text) ?: return null
 
-        val accountTail = accountTail(text)
+        val accountTail = fastagTag.find(text)?.takeIf { fastag.containsMatchIn(text) }?.groupValues?.get(1)?.uppercase() ?: accountTail(text)
 
         return ParsedTransaction(
             amountMinor = amount,
             type = type,
             merchant = extractMerchant(text, type),
             accountTail = accountTail,
-            bank = bankFromSender(sender) ?: bankFromBody(text),
-            reference = refRegex.find(text)?.groupValues?.get(1),
+            bank = instrument(text) ?: bankFromSender(sender) ?: bankFromBody(text),
+            reference = refRegex.find(text)?.groupValues?.get(1) ?: channelRef.find(text)?.groupValues?.get(1),
             balanceMinor = findBalance(text),
             timestamp = timestamp,
             foreign = foreign.takeIf { rate != null },
             fxRate = rate,
+            counterTail = (if (type == TxnType.DEBIT) toOwnAccount else fromOwnAccount).find(text)?.groupValues?.get(1),
         )
     }
+
+    // Meal cards and FASTag are their own instruments, whichever bank issues them.
+    private val mealCard = Regex("""\b(?:pluxee|sodexo)\b|\bmeal\s+card\b|\bzeta\b.*\bmeal\b""", RegexOption.IGNORE_CASE)
+    private val fastag = Regex("""\bfas\s*tag\b""", RegexOption.IGNORE_CASE)
+    private val fastagTag = Regex("""\btag\s*id\s*[:\-]?\s*([A-Za-z0-9]{4,})\b""", RegexOption.IGNORE_CASE)
+
+    private fun instrument(text: String): String? = when {
+        fastag.containsMatchIn(text) -> "FASTag"
+        mealCard.containsMatchIn(text) -> if (Regex("""\bpluxee\b""", RegexOption.IGNORE_CASE).containsMatchIn(text)) "Pluxee meal card" else "Meal card"
+        else -> null
+    }
+
+    /** "UPI:117869245541", "IMPS:630721708826", "UPI-841795829162-HungerBo": the 12-digit reference. */
+    private val channelRef = Regex("""\b(?:upi|imps|neft)\s*[:\-/]\s*(\d{12})\b""", RegexOption.IGNORE_CASE)
+
+    /** ICICI: "Acct XX144 debited with Rs 22,000.00 & Acct XX848 credited": the other account. */
+    private val toOwnAccount = Regex("""(?:&|\band\b)\s*(?:your\s+)?(?:a/c|acct|account)\s*(?:no\.?)?\s*[xX*•]*\s?(\d{3,6})\s+(?:is\s+)?credited""", RegexOption.IGNORE_CASE)
+    private val fromOwnAccount = Regex("""\bfrom\s+(?:your\s+)?(?:a/c|acct|account)\s*(?:no\.?)?\s*[xX*•]+\s?(\d{3,6})\b""", RegexOption.IGNORE_CASE)
+
 
     /** Last digits of the account or card the message is about, e.g. "1234" from "A/c XX1234". */
     fun accountTail(text: String): String? =
@@ -226,6 +246,9 @@ object SmsParser {
         }
         // "UPI/P2M/431234567890/SWIGGY" style narrations quoted in the SMS (from kharcha, Apache-2.0).
         upiNarration.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
+        // ICICI card: "for UPI-841795829162-HungerBo."
+        upiDash.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
+        if (type == TxnType.DEBIT) toOwnAccount.find(text)?.let { return "A/c ••" + it.groupValues[1] }
         // ICICI: "Acct XX123 debited for Rs 500.00 on 05-Nov-24; SWIGGY credited. UPI:431234567890."
         if (type == TxnType.DEBIT) iciciPayee.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
         for (regex in ordered) {
@@ -240,6 +263,8 @@ object SmsParser {
         anyVpa.find(text)?.let { return cleanVpa(it.groupValues[1]) }
         return null
     }
+
+    private val upiDash = Regex("""\bUPI-\d{6,}-([A-Za-z][A-Za-z0-9 &'._@\-]{1,40}?)(?=\s*\.\s|\s*\.$|\s*/|\s+(?:to|on|ref|avl)\b|$)""", RegexOption.IGNORE_CASE)
 
     private val iciciPayee = Regex(""";\s*([A-Za-z0-9][A-Za-z0-9 &'._@\-]{1,40}?)\s+credited\b""", RegexOption.IGNORE_CASE)
 

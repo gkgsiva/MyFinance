@@ -321,3 +321,61 @@ class MyAccountsTest {
         assertEquals(listOf("PRIY0101"), MyAccounts.passwords(all))
     }
 }
+
+/** Siva's own messages (2026-11-10). */
+class SivaSmsTest {
+    private fun parse(sender: String, body: String) = SmsParser.parse(sender, body, 1_700_000_000_000)
+
+    @Test
+    fun `Pluxee meal card spend`() {
+        val t = assertNotNull(parse("VM-PLUXEE", "Rs. 40.00 spent from Pluxee  Meal Card wallet, card no.xx2793 on 5-11-2026 8:42:3 at Southern De . Avl bal Rs.13137.00. Not you call 18002106919"))
+        assertEquals(4000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("Southern De", t.merchant)
+        assertEquals("2793", t.accountTail)
+        assertEquals("Pluxee meal card", t.bank)
+        assertEquals(1313700, t.balanceMinor)
+    }
+
+    @Test
+    fun `Equitas FASTag toll`() {
+        val t = assertNotNull(parse("VM-EQUTAS", "Equitas FasTag Toll charge debited for vehicle TN11AS9523 with TAG ID D7C0 for Rs.130.00 at Express avenue Mall parking . Avl Bal is Rs.100.00 NOV 09, 17:54 . Not u? SMS BLOCK FT D7C0 to 7045030000. Wear front &amp; rear seat belt. NHAI helpline - 1033"))
+        assertEquals(13000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("Express avenue Mall parking", t.merchant)
+        assertEquals("FASTag", t.bank)
+        assertEquals("D7C0", t.accountTail)
+        assertEquals(10000, t.balanceMinor)
+        assertEquals(DefaultCategories.TRANSPORT, Categorizer().categorize(t.merchant, t.type, "Equitas FasTag Toll charge"))
+    }
+
+    @Test
+    fun `ICICI account UPI debit`() {
+        val t = assertNotNull(parse("JD-ICICIT-S", "ICICI Bank Acct XX144 debited for Rs 888.00 on 07-Nov-26; Alifs Fish Bay credited. UPI:117869245541. Call 18002662 for dispute. SMS BLOCK 144 to 9215676766."))
+        assertEquals(88800, t.amountMinor)
+        assertEquals("Alifs Fish Bay", t.merchant)
+        assertEquals("144", t.accountTail)
+        assertEquals("117869245541", t.reference)
+        assertEquals("ICICI Bank", t.bank)
+    }
+
+    @Test
+    fun `ICICI IMPS to another own account`() {
+        val t = assertNotNull(parse("JD-ICICIT-S", "ICICI Bank Acct XX144 debited with Rs 22,000.00 on 03-Nov-26 &amp; Acct XX848 credited.IMPS:630721708826. Call 18002662 for dispute or SMS BLOCK 144 to 9215676766"))
+        assertEquals(2200000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("144", t.accountTail)
+        assertEquals("848", t.counterTail)
+        assertEquals("630721708826", t.reference)
+    }
+
+    @Test
+    fun `ICICI credit card UPI spend`() {
+        val t = assertNotNull(parse("JD-ICICIT-S", "ICICI Bank Credit Card XX7002 debited for INR 40.00 on 03-Nov-26 for UPI-841795829162-HungerBo. To dispute call 18001080/SMS BLOCK 7002 to 9215676766"))
+        assertEquals(4000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("7002", t.accountTail)
+        assertEquals("HungerBo", t.merchant)
+        assertEquals("841795829162", t.reference)
+    }
+}

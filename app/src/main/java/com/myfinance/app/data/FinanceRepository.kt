@@ -105,6 +105,14 @@ class FinanceRepository(
         changed.size
     }
 
+    /** True when [tail] is a registered account, or one this phone already has SMS for at the same bank. */
+    private suspend fun isOwnAccount(tail: String, bank: String?): Boolean {
+        if (com.myfinance.core.MyAccounts.match(myAccountsNow(), tail, bank) != null) return true
+        val since = System.currentTimeMillis() - 400L * 24 * 60 * 60 * 1000
+        return db.transactions().rangeOnce(since, System.currentTimeMillis() + 86_400_000L)
+            .any { it.source == TxnSource.SMS && it.accountTail != null && it.accountTail.takeLast(tail.length) == tail && com.myfinance.core.MyAccounts.sameBank(it.bank, bank) }
+    }
+
     /** The person a card / account number belongs to, when registered to someone other than this phone's owner. */
     private suspend fun ownerForNumber(tail: String?, bank: String?): String? =
         com.myfinance.core.MyAccounts.ownerOf(myAccountsNow(), tail, bank)?.takeIf { it.isNotBlank() && it != ownerName.value }
@@ -223,8 +231,12 @@ class FinanceRepository(
         // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
         val rule = v12.ruleFor(sender, body, parsed.merchant, parsed.type, parsed.amountMinor)
         if (rule?.ignore == true) return Ingest.NOT_A_TRANSACTION
-        val cat = (categorizer ?: categorizer()).categorize(parsed.merchant, parsed.type, body)
+        // "Acct XX144 debited … & Acct XX848 credited": money moved to another account of the family is not spending.
+        val ownTransfer = parsed.counterTail?.let { t -> runCatching { isOwnAccount(t, parsed.bank) }.getOrDefault(false) } == true
+        val cat = if (ownTransfer) com.myfinance.core.DefaultCategories.TRANSFERS
+            else (categorizer ?: categorizer()).categorize(parsed.merchant, parsed.type, body)
         val base = TransactionEntity(
+            excluded = ownTransfer,
             amountMinor = parsed.amountMinor,
             type = parsed.type,
             merchant = parsed.merchant,
