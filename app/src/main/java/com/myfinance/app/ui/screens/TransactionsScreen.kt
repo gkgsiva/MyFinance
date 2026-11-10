@@ -174,7 +174,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
 
             if (txns.isEmpty()) {
                 Text(
-                    "Nothing here. Import SMS from the Overview tab, add an entry with +, or loosen the filters.",
+                    "Nothing here. Import SMS from the Home tab, add an entry with +, or loosen the filters.",
                     modifier = Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

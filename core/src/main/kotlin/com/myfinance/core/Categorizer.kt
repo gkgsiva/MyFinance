@@ -67,7 +67,14 @@ class Categorizer(private val userRules: Map<String, String> = emptyMap()) {
         fun merchantKey(merchant: String): String =
             merchant.lowercase().replace(Regex("""[^a-z0-9@]+"""), " ").trim()
 
-        val keywordRules: List<Pair<String, List<String>>> = listOf(
+        /** The app's own keyword lists, then the open-source ones ([OpenSourceRules]) added to each category. */
+        val keywordRules: List<Pair<String, List<String>>> by lazy {
+            val extra = OpenSourceRules.merchants
+            val merged = baseRules.map { (cat, words) -> cat to (words + extra[cat].orEmpty()).distinct() }
+            merged + extra.filterKeys { k -> merged.none { it.first == k } }.map { it.key to it.value }
+        }
+
+        private val baseRules: List<Pair<String, List<String>>> = listOf(
             DefaultCategories.FOOD to listOf(
                 "swiggy", "zomato", "eatsure", "domino", "pizza", "mcdonald", "kfc", "burger", "starbucks",
                 "cafe", "restaurant", "hotel saravana", "chaayos", "haldiram", "biryani", "bakery", "eatclub",

@@ -32,6 +32,10 @@ data class ParsedStatement(
     val billTotalMinor: Long? = null,
     val billMinMinor: Long? = null,
     val billDueDate: LocalDate? = null,
+    /** Whether the lines read add up to the statement's own totals; null when the statement doesn't say. */
+    val check: StatementCheck? = null,
+    /** Card / account numbers printed near the top, as (first digits when shown, last 4). */
+    val numbersSeen: List<Pair<String?, String>> = emptyList(),
 ) {
     val from: LocalDate? get() = rows.minOfOrNull { it.date }
     val to: LocalDate? get() = rows.maxOfOrNull { it.date }
@@ -138,7 +142,7 @@ object StatementParser {
         val hasBalance = rows.count { it.balanceMinor != null } >= rows.size / 2
         val kind = if (hasBalance && !looksLikeCard(preamble)) StatementKind.BANK else StatementKind.CARD
         val fixed = if (pendingDirection.isEmpty()) rows else fixDirections(rows, pendingDirection.toSet(), kind)
-        return ParsedStatement(fixed, kind, bankIn(preamble), accountTailIn(preamble))
+        return ParsedStatement(fixed, kind, bankIn(preamble), accountTailIn(preamble), check = if (kind == StatementKind.BANK) StatementCheck.bank(fixed) else null, numbersSeen = numbersIn(preamble))
     }
 
     private fun amountsIn(rec: List<String>, cols: Map<Col, Int>): List<Long> =
@@ -161,11 +165,13 @@ object StatementParser {
         """(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{1,2}[\s\-/]?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s\-/,]*\d{2,4}|\d{4}-\d{2}-\d{2})"""
     /** A date further into a line, before a long serial / reference number ("69% 18/09/2026 14196250597 ..."). */
     private val midStart = Regex("""(?<=^|\s)$DATE_RE\s+(?=\d{8,}\s)""", RegexOption.IGNORE_CASE)
-    private val lineStart = Regex("""^\s*(?:\d{1,4}\s+)?$DATE_RE(?:\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?))?\s*""", RegexOption.IGNORE_CASE)
+    // HDFC's newer card statements print "12/03/2025| 14:32 SWIGGY ... C 450.00" (idea from Card-Statement-Analyser, MIT).
+    private val lineStart = Regex("""^\s*(?:\d{1,4}\s+)?$DATE_RE(?:\s*\|?\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?))?\s*\|?\s*""", RegexOption.IGNORE_CASE)
     private val dateAnywhere = Regex("""(?<![\d/])$DATE_RE(?![\d/])""", RegexOption.IGNORE_CASE)
     // Amounts in statements always carry paise: 1,234.56 / 450.00 / -12.00 / 1,234.56 Cr
+    // ... or, after "Rs." / "₹", whole rupees (CSB / Edge card statements print "Rs. 1,234").
     private val moneyRe = Regex(
-        """(?<![\w.,])(?:(?:rs\.?|inr|₹)\s*)?(\(?[+\-]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\)?)(?:\s*(cr|dr|c|d)\b)?(?![\w.]|,\d)""",
+        """(?<![\w.,])(?:(?:rs\.?|inr|₹)\s*)?(\(?[+\-]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\)?)(?:\s*(cr|dr|c|d)\b)?(?![\w.]|,\d)|(?<![\w.,])(?:rs\.?|inr|₹)\s*((?:\d{1,3}(?:,\d{2,3})+|\d+))(?:\s*(cr|dr)\b)?(?![\w.]|,\d)""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -253,8 +259,11 @@ object StatementParser {
             } else {
                 // Card bills: the transaction amount is the last money value; "Cr" marks payments and refunds.
                 val (amt, marker) = l.amounts.last()
-                val cardDesc = cleanDesc(l.cardDesc.toString()).ifEmpty { desc }
-                val type = marker ?: if (amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
+                // HDFC: "+ C 1,000.00" is a credit; the "C" is how the ₹ sign comes out of the PDF.
+                val rawCard = l.cardDesc.toString()
+                val plus = hdfcCredit.containsMatchIn(rawCard)
+                val cardDesc = cleanDesc(rawCard.replace(hdfcCredit, "").replace(rupeeGlyph, "").replace(convertWord, " ")).ifEmpty { desc }
+                val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
                 StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card)
             }
         }.filter { it.amountMinor > 0 }
@@ -265,9 +274,12 @@ object StatementParser {
             // A due date far from the statement's last line is a misread.
             ?.takeIf { b -> rows.maxOf { it.date }.let { last -> !b.third.isBefore(last.minusDays(3)) && !b.third.isAfter(last.plusDays(60)) } }
         else null
+        val check = if (kind == StatementKind.BANK) StatementCheck.bank(rows, openingBalance)
+            else bill?.let { b -> previousBalanceIn(text)?.let { prev -> StatementCheck.card(rows, prev, b.first) } }
         return ParsedStatement(
             rows, kind, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)),
-            billTotalMinor = bill?.first, billMinMinor = bill?.second, billDueDate = bill?.third,
+            billTotalMinor = bill?.first, billMinMinor = bill?.second, billDueDate = bill?.third, check = check,
+            numbersSeen = numbersIn(text.take(8000)) + parsed.mapNotNull { it.card }.distinct().map { null to it },
         )
     }
 
@@ -413,9 +425,23 @@ object StatementParser {
     private val percentRe = Regex("""\S*\d+(?:\.\d+)?%""")
     /** Lines below a transaction that are not part of its description: headings, legal text, reward panels. */
     private val notDescription = Regex(
-        """^#|transaction\s+details|card\s+(number|account)|category\s+of\s+service|registration\s*no|\brewards?\b|\bpoints\b|invoice\s+no|\bcin\b|^(date|serno|sl\.?\s*no)\b""",
+        """^#|^\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?$|transaction\s+details|card\s+(number|account)|category\s+of\s+service|registration\s*no|\brewards?\b|\bpoints\b|invoice\s+no|\bcin\b|^(date|serno|sl\.?\s*no)\b""",
         RegexOption.IGNORE_CASE,
     )
+    private val hdfcCredit = Regex("""(?:^|\s)\+\s*(?:C|₹)?\s*$""")
+    private val rupeeGlyph = Regex("""\s+C$""")
+    /** IDFC FIRST prints a "Convert" (to EMI) button text inside the description. */
+    private val convertWord = Regex("""\bConvert\b""")
+    private val prevBalanceLabel = Regex("""\b(?:previous|last|opening)\s+(?:statement\s+)?(?:balance|dues|outstanding)\b""", RegexOption.IGNORE_CASE)
+
+    /** A card statement's previous balance ("Previous Balance ₹12,345.00"), when printed with its label. */
+    fun previousBalanceIn(text: String): Long? {
+        val flat = text.replace(' ', ' ').take(8000)
+        val at = prevBalanceLabel.find(flat) ?: return null
+        val m = moneyRe.find(flat, at.range.last + 1)?.takeIf { it.range.first - at.range.last < 60 } ?: return null
+        return parseMoney(m.value)?.let { (v, marker) -> if (marker == TxnType.CREDIT) -abs(v) else v }
+    }
+
     private val currencyColumn = Regex("""\s+(USD|EUR|GBP|AED|SGD|MYR|THB|JPY|AUD|CAD|CHF|HKD|CNY|LKR|NPR|SAR|QAR|NZD|IDR|VND|KRW|ZAR)$""")
     /** Card statements: the serial / reference number printed before the description. */
     private val serialFirst = Regex("""^\d{9,24}\s+""")
@@ -436,6 +462,15 @@ object StatementParser {
         RegexOption.IGNORE_CASE,
     )
     private val maskedRe = Regex("""\b[0-9]{4,6}[Xx*•]{4,}[0-9Xx*•]*?(\d{4})\b|\b[Xx*•]{4,}\s?(\d{4})\b|\b\d{4}\s[Xx*]{4}\s[Xx*]{4}\s(\d{4})\b""")
+
+    private val numberRe = Regex("""(?<![\d])(\d{4,6})?[\sXx*•-]*[Xx*•]{2,}[\sXx*•-]*(\d{4})(?!\d)|(?<![\d])(\d{9,18})(?!\d)""")
+
+    /** Every masked or full card / account number in [text], as (first digits when printed, last 4). */
+    fun numbersIn(text: String): List<Pair<String?, String>> =
+        numberRe.findAll(text).map { m ->
+            if (m.groupValues[2].isNotEmpty()) m.groupValues[1].ifEmpty { null } to m.groupValues[2]
+            else m.groupValues[3].let { d -> (if (d.length >= 15) d.take(6) else null) to d.takeLast(4) }
+        }.distinct().toList()
 
     fun accountTailIn(text: String): String? {
         tailRe.find(text)?.let { m -> return m.groupValues[1].filter(Char::isDigit).takeLast(4) }

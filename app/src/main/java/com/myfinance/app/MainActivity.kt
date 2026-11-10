@@ -78,7 +78,8 @@ import com.myfinance.app.ui.screens.CategoriesScreen
 import com.myfinance.app.ui.screens.EditTransactionScreen
 import com.myfinance.app.ui.screens.ImportStatementScreen
 import com.myfinance.app.ui.screens.AccountsScreen
-import com.myfinance.app.ui.screens.OverviewScreen
+import com.myfinance.app.ui.screens.DashboardScreen
+import com.myfinance.app.ui.screens.HomeScreen
 import com.myfinance.app.ui.screens.ReportsScreen
 import com.myfinance.app.ui.screens.TransactionsScreen
 import com.myfinance.app.ui.screens.UpcomingScreen
@@ -175,9 +176,9 @@ private fun SharedFileImport() {
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
-    Tab("overview", "Overview", Icons.Filled.Home),
+    Tab("overview", "Home", Icons.Filled.Home),
     Tab("transactions", "Transactions", Icons.AutoMirrored.Filled.List),
-    Tab("reports", "Reports", Icons.Filled.Info),
+    Tab("dashboard", "Dashboard", Icons.Filled.Info),
     Tab("plan", "Plan", Icons.Filled.DateRange),
     Tab("categories", "Manage", Icons.Filled.Star),
 )
@@ -266,6 +267,17 @@ private fun MyFinanceRoot() {
         runCatching { nav.navigate(route) { launchSingleTop = true } }
     }
 
+    // Tabs keep their own back stack; other screens open on top.
+    val goTo: (String) -> Unit = { route ->
+        if (route in tabs.map { it.route }) {
+            nav.navigate(route) {
+                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        } else nav.navigate(route)
+    }
+
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
@@ -308,17 +320,20 @@ private fun MyFinanceRoot() {
     ) { padding ->
         NavHost(nav, startDestination = "overview", modifier = Modifier.padding(padding)) {
             composable("overview") {
-                OverviewScreen(
+                HomeScreen(vm = vm, smsGranted = smsGranted, onImport = importOrAsk, open = goTo)
+            }
+            composable("dashboard") {
+                DashboardScreen(
                     vm = vm,
                     smsGranted = smsGranted,
                     onImport = importOrAsk,
                     onOpenGroup = { category ->
                         vm.categoryFilter.value = category
-                        nav.navigate("transactions") { launchSingleTop = true }
+                        goTo("transactions")
                     },
                     onAdd = { nav.navigate("edit/0") },
                     onOpenUpcoming = { nav.navigate("upcoming") },
-                    open = { route -> nav.navigate(route) },
+                    open = goTo,
                 )
             }
             composable("upcoming") {
@@ -363,6 +378,7 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
+            composable("my-accounts") { com.myfinance.app.ui.screens.MyAccountsScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable("accounts") { AccountsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("import-statement") {
                 ImportStatementScreen(

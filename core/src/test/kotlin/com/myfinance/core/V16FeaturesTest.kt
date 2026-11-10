@@ -38,6 +38,20 @@ class V16FeaturesTest {
         assertEquals(TransferKind.CARD_BILL, found.single().kind)
     }
 
+    @Test fun upiOnCreditCardIsSpendingNotABillPayment() {
+        val d = LocalDate.of(2026, 11, 7)
+        val upi = row(d, 32_400, TxnType.DEBIT, "ICICI ••7002", merchant = "SWIGGY",
+            text = "INR 324.00 spent using ICICI Bank Credit Card XX7002 on 07-Nov-26 on UPI-123456789012-SWIGGY. Avl Limit: INR 1,00,000.00")
+        val upi2 = row(d, 7_500, TxnType.DEBIT, "ICICI ••7002", merchant = "Tea Stall",
+            text = "Your ICICI Bank Credit Card XX7002 has been debited with INR 75.00 via UPI to tea@ybl")
+        val bill = row(d, 2_500_000, TxnType.DEBIT, "HDFC ••1234", text = "Rs 25000 debited from a/c XX1234 towards ICICI Bank credit card XX7002")
+        val received = row(d, 2_500_000, TxnType.CREDIT, "ICICI ••7002", text = "Payment of INR 25,000 received on your ICICI Bank Credit Card XX7002")
+        val found = SelfTransfers.find(listOf(upi, upi2, bill, received))
+        assertEquals(1, found.size)
+        assertEquals(TransferKind.CARD_BILL, found.single().kind)
+        assertEquals(bill.uid, found.single().out?.uid)
+    }
+
     @Test fun splitParts() {
         val parts = listOf(SplitPart("Household", 50_000))
         assertNull(PaymentSplit.problem(200_000, parts))

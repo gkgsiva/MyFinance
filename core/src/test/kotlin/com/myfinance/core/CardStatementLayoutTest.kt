@@ -75,6 +75,38 @@ class CardStatementLayoutTest {
         assertEquals("Card payment received", Narration.merchant("CARD PAYMENT RECEIVED, THANK YOU"))
     }
 
+    @Test
+    fun sameStatementTwiceAddsNothing() {
+        val zone = ZoneId.of("Asia/Kolkata")
+        val st = assertNotNull(StatementParser.fromText(monthly))
+        val first = StatementImport.markDuplicates(StatementImport.candidates(st, zone = zone), emptyList(), zone = zone)
+        assertEquals(st.rows.size, first.count { it.duplicateOf == null })
+        // Stored as imported (ids from the database), then the same file again.
+        val stored = first.mapIndexed { i, c ->
+            ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key, i + 1L, true, "Statement: " + c.row.description)
+        }
+        val again = StatementImport.markDuplicates(StatementImport.candidates(st, zone = zone), stored, zone = zone)
+        assertEquals(0, again.count { it.duplicateOf == null })
+        assertEquals(0, again.count { it.updatesExisting })
+        // Typed a different card number this time, and an older app kept serial numbers in the text: still the same lines.
+        val older = first.mapIndexed { i, c ->
+            ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, "9999", null, "STMT|old$i", i + 1L, true, "Statement: 1000000000$i " + c.row.description + " 3")
+        }
+        val retyped = StatementImport.markDuplicates(StatementImport.candidates(st, accountTail = "1234", zone = zone), older, zone = zone)
+        assertEquals(0, retyped.count { it.duplicateOf == null })
+        assertEquals(0, retyped.count { it.updatesExisting })
+    }
+
+    @Test
+    fun otherCardWithOtherShopIsNew() {
+        val zone = ZoneId.of("Asia/Kolkata")
+        val st = assertNotNull(StatementParser.fromText(monthly))
+        val c = StatementImport.candidates(st, zone = zone)
+        val other = ExistingTxn(c[0].row.amountMinor, c[0].row.type, c[0].timestamp, "8888", null, "STMT|x", 5, true, "Statement: PETROL PUMP CHENNAI IN")
+        val marked = StatementImport.markDuplicates(c, listOf(other), zone = zone)
+        assertNull(marked[0].duplicateOf)
+    }
+
     private val yearly = """
         Customer Name Card Account No
         MR. TEST USER 1111 XXXX XXXX 9999

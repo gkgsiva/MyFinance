@@ -52,7 +52,7 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
             Hint12(
                 "You get a notification a few days before each due date. When a matching payment SMS arrives " +
                     "(e.g. BESCOM for electricity), the bill is marked paid and moves to its next due date. Card bills " +
-                    "and EMIs read from bank SMS are on the Overview's Bills screen.",
+                    "and EMIs read from bank SMS are on the Dashboard's Bills screen.",
             )
         }
         items(bills, key = { it.first.id }) { (b, s) ->
@@ -68,7 +68,7 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                     else "Due ${s.bill.nextDue.format(shortDate)} (" + com.myfinance.app.ui.screens.relativeDay(s.bill.nextDue) + ")"
                 Text(due, color = if (!s.bill.done && (s.state == BillState.OVERDUE || s.state == BillState.DUE_TODAY)) ExpenseRed else MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!s.bill.done) TextButton(onClick = { vm.markBillPaid(b) }) { Text("Mark paid") }
+                    if (!s.bill.done) TextButton(onClick = { vm.markBillPaid(b) }) { Text("Already paid") }
                     TextButton(onClick = { editing = b }) { Text("Edit") }
                     TextButton(onClick = { vm.deleteBill(b.id) }) { Text("Delete") }
                 }

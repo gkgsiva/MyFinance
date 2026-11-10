@@ -137,7 +137,7 @@ private fun BillCard(b: BillEntity, onPaid: () -> Unit, onRemove: () -> Unit) {
                 Text(formatInr(bill.amountMinor), fontWeight = FontWeight.Bold)
             }
             Row {
-                TextButton(onClick = onPaid) { Text("Mark paid") }
+                TextButton(onClick = onPaid) { Text("Already paid") }
                 TextButton(onClick = onRemove) { Text("Remove") }
             }
         }

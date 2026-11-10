@@ -44,10 +44,11 @@ object Notifier {
         post(context, CHANNEL_BUDGETS, ("budget" + alert.key).hashCode(), title, alert.message)
     }
 
-    fun reminder(context: Context, id: Int, title: String, text: String) =
-        post(context, CHANNEL_REMINDERS, id, title, text)
+    /** A payment reminder; with [paidBillId] it has an "Already paid" button that marks that reminder paid. */
+    fun reminder(context: Context, id: Int, title: String, text: String, paidBillId: String? = null) =
+        post(context, CHANNEL_REMINDERS, id, title, text, paidBillId)
 
-    private fun post(context: Context, channel: String, id: Int, title: String, text: String) {
+    private fun post(context: Context, channel: String, id: Int, title: String, text: String, paidBillId: String? = null) {
         if (!canNotify(context)) return
         val open = PendingIntent.getActivity(
             context, 0,
@@ -61,6 +62,18 @@ object Notifier {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(open)
             .setAutoCancel(true)
+            .apply {
+                if (paidBillId != null) {
+                    val paid = PendingIntent.getBroadcast(
+                        context, id,
+                        Intent(context, ReminderPaidReceiver::class.java)
+                            .putExtra(ReminderPaidReceiver.EXTRA_BILL, paidBillId)
+                            .putExtra(ReminderPaidReceiver.EXTRA_NOTIFICATION, id),
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    )
+                    addAction(0, "Already paid", paid)
+                }
+            }
             .build()
         try {
             NotificationManagerCompat.from(context).notify(id, n)

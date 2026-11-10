@@ -13,6 +13,7 @@ import com.myfinance.core.StatementImport
 import com.myfinance.core.StatementKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -33,6 +34,8 @@ data class StatementFile(
     val candidates: List<ImportCandidate> = emptyList(),
     val message: String? = null,
     val wrongPassword: Boolean = false,
+    /** The registered card / account (Manage > My cards & accounts) this statement was matched to. */
+    val matched: com.myfinance.core.MyAccount? = null,
 ) {
     enum class Status { READING, NEEDS_PASSWORD, FAILED, READY }
 
@@ -98,7 +101,7 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The user corrected the bank or the account / card's last 4 digits. */
     fun setAccount(uri: Uri, bank: String?, tail: String?) {
-        setFile(uri) { it.copy(bank = bank?.trim()?.ifBlank { null }, accountTail = tail?.filter(Char::isDigit)?.takeLast(4)?.ifBlank { null }) }
+        setFile(uri) { it.copy(bank = bank?.trim()?.ifBlank { null }, accountTail = tail?.filter(Char::isDigit)?.takeLast(4)?.ifBlank { null }, matched = null) }
         viewModelScope.launch { recompute() }
     }
 
@@ -140,17 +143,21 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun open(uri: Uri, password: String?, quietWrong: Boolean = false) {
-        val tryList = if (password != null) listOf(password) else listOf<String?>(null) + passwords
+        val saved = runCatching { com.myfinance.core.MyAccounts.passwords(repo.myAccounts.first()) }.getOrDefault(emptyList())
+        val tryList = if (password != null) listOf(password) else (listOf<String?>(null) + passwords + saved).distinct()
         var last: StatementFiles.Result? = null
         for (pw in tryList) {
             val r = StatementFiles.read(getApplication(), uri, pw)
             last = r
             if (r is StatementFiles.Result.Ok) {
                 pw?.let { passwords += it }
+                // A registered card or account printed on the statement decides the account (and so the person).
+                val mine = runCatching { com.myfinance.core.MyAccounts.forStatement(repo.myAccounts.first(), r.statement) }.getOrNull()
                 setFile(uri) {
                     it.copy(
-                        status = StatementFile.Status.READY, statement = r.statement, bank = r.statement.bank,
-                        accountTail = r.statement.accountTail, kind = r.statement.kind, message = null, wrongPassword = false,
+                        status = StatementFile.Status.READY, statement = r.statement, bank = mine?.bank ?: r.statement.bank,
+                        accountTail = mine?.tail ?: r.statement.accountTail, kind = r.statement.kind, message = null, wrongPassword = false,
+                        matched = mine,
                     )
                 }
                 return
@@ -180,7 +187,7 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
                 if (f.status != StatementFile.Status.READY || st == null) return@map f
                 val marked = StatementImport.markDuplicates(StatementImport.candidates(st, f.bank, f.accountTail), seen)
                 marked.filter { it.duplicateOf == null }.forEach { c ->
-                    seen += ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key)
+                    seen += ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key, fromStatement = true, text = c.row.description)
                 }
                 f.copy(candidates = marked)
             }

@@ -46,6 +46,8 @@ data class ExistingTxn(
     val id: Long = 0,
     /** Already a statement line, so another statement's matching line is simply skipped. */
     val fromStatement: Boolean = false,
+    /** The statement narration (or SMS) stored with it, to recognise the same line imported again. */
+    val text: String? = null,
 )
 
 object StatementImport {
@@ -119,7 +121,9 @@ object StatementImport {
                 if (used[i]) continue
                 val e = existing[i]
                 val et = tail(e.accountTail)
-                if (c.accountTail != null && et != null && et != c.accountTail) continue
+                // Another card number is another transaction, unless it is the same statement line imported
+                // again (an older version of the app, or a different card number typed on import).
+                if (c.accountTail != null && et != null && et != c.accountTail && !(e.fromStatement && sameLine(c.row.description, e.text))) continue
                 val gap = abs(day(e.timestamp) - cd)
                 if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (et == c.accountTail && et != null) 0 else 1))
             }
@@ -132,6 +136,22 @@ object StatementImport {
             result[ci] = linked(result[ci], existing[i], DuplicateReason.MATCHED)
         }
         return result
+    }
+
+    private fun words(s: String): String =
+        s.removePrefix("Statement: ").substringBefore("\n\nSMS: ").lowercase()
+            .split(Regex("""[^a-z]+""")).filter { it.length >= 2 }.joinToString(" ")
+
+    /** True when two narrations are the same statement line, ignoring numbers, reward points and spacing. */
+    fun sameLine(a: String, b: String?): Boolean {
+        if (b == null) return false
+        val x = words(a)
+        val y = words(b)
+        if (x.isEmpty() || y.isEmpty()) return false
+        if (x.contains(y) || y.contains(x)) return true
+        val xs = x.split(' ').toSet()
+        val ys = y.split(' ').toSet()
+        return (xs intersect ys).size * 10 >= minOf(xs.size, ys.size) * 7
     }
 
     /** A match with a stored SMS / entry is an update; with another statement's line or this batch, a skip. */

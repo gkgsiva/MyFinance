@@ -142,23 +142,24 @@ fun PaymentsAheadScreen(vm: FinanceViewModel, onBack: () -> Unit, openTxn: (Long
                 Text(
                     listOfNotNull(e.kind.label, e.amountMinor?.let { formatInr(it) }, e.date.format(dayFmt16)).joinToString(" · ") +
                         when {
-                            ref?.startsWith("bill:") == true -> "\n\nMark paid moves a repeating reminder to its next date; a one-time one is done."
+                            ref?.startsWith("bill:") == true -> "\n\nAlready paid moves a repeating reminder to its next date; a one-time one is done."
                             ref?.startsWith("auto:") == true -> "\n\nThis comes from your auto debits & EMIs; it clears when the debit SMS arrives."
-                            ref?.startsWith("card:") == true -> "\n\nThis card bill clears when the payment to the card is seen."
+                            ref?.startsWith("card:") == true -> "\n\nThis card bill clears when the payment to the card is seen, or tap Already paid."
                             else -> ""
                         },
                 )
             },
             confirmButton = {
                 when {
-                    ref?.startsWith("bill:") == true -> TextButton(onClick = { s.markReminderPaid(ref); selected = null }) { Text("Mark paid") }
+                    ref?.startsWith("bill:") == true || ref?.startsWith("card:") == true ->
+                        TextButton(onClick = { s.markReminderPaid(ref); selected = null }) { Text("Already paid") }
                     ref?.startsWith("auto:") == true -> TextButton(onClick = { selected = null; open("autodebits") }) { Text("Open auto debits") }
-                    ref?.startsWith("card:") == true -> TextButton(onClick = { selected = null; open("card-bills") }) { Text("Card bills") }
                     else -> TextButton(onClick = { selected = null }) { Text("OK") }
                 }
             },
             dismissButton = {
                 Row {
+                    if (ref?.startsWith("card:") == true) TextButton(onClick = { selected = null; open("card-bills") }) { Text("Card bills") }
                     if (ref?.startsWith("bill:") == true) {
                         TextButton(onClick = { selected = null; open("bills") }) { Text("Edit") }
                         TextButton(onClick = { s.deleteReminder(ref); selected = null }) { Text("Delete") }

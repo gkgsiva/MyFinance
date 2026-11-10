@@ -72,6 +72,10 @@
         </receiver>
 
         <receiver
+            android:name=".notify.ReminderPaidReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".widget.SpendWidgetProvider"
             android:exported="false"
             android:label="This month's spend">
