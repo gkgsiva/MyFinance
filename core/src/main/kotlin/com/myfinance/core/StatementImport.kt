@@ -25,7 +25,12 @@ data class ImportCandidate(
     val matchedId: Long? = null,
     /** From a credit card statement (its "payment received" lines are bill payments, not income). */
     val cardStatement: Boolean = false,
+    /** Money moved between two of the user's own accounts (both sides seen): not spending or income. */
+    val ownTransfer: Boolean = false,
 ) {
+    /** Paying a card bill or moving money between own accounts: left out of spending and income. */
+    val notCounted: Boolean get() = ownTransfer || SelfTransfers.isCardBillPayment(row.type, merchant, row.description, cardStatement)
+
     /** True when importing changes a stored SMS / manual row to the statement's details. */
     val updatesExisting: Boolean get() = matchedId != null && duplicateOf != DuplicateReason.SAME_STATEMENT
 }
@@ -62,12 +67,17 @@ object StatementImport {
         bank: String? = statement.bank,
         accountTail: String? = statement.accountTail,
         zone: ZoneId = ZoneId.systemDefault(),
+        /** The user's corrections of the cards / accounts a statement lists: printed last 4 → the right last 4. */
+        renames: Map<String, String> = emptyMap(),
     ): List<ImportCandidate> {
         val tail = accountTail?.filter(Char::isDigit)?.takeLast(4)?.ifEmpty { null }
         val seen = HashMap<String, Int>()
+        val several = accountsIn(statement).size > 1
         return statement.rows.map { r ->
-            // A card statement can list several cards (add-on card, RuPay card used for UPI): each line keeps its own.
-            val rowTail = r.cardTail?.takeIf { statement.kind == StatementKind.CARD } ?: tail
+            // A statement can list several cards (add-on card, RuPay card used for UPI) or accounts (savings and
+            // current): each line keeps its own. With one, the account chosen for the file applies.
+            val printed = r.cardTail?.let { renames[it] ?: it }
+            val rowTail = if (several || statement.kind == StatementKind.CARD) printed ?: tail else tail ?: printed
             val base = listOf(
                 rowTail ?: bank.orEmpty(), r.date.toString(), r.amountMinor.toString(), r.type.name,
                 r.description.lowercase().replace(Regex("""[^a-z0-9]+"""), ""),
@@ -188,6 +198,40 @@ object StatementImport {
     }
 
     /** Totals for the preview. */
+    /** The cards / accounts a statement's lines belong to (last 4 digits), with how many lines each, in order. */
+    fun accountsIn(statement: ParsedStatement): List<Pair<String, Int>> =
+        statement.rows.mapNotNull { it.cardTail }.groupingBy { it }.eachCount().toList()
+
+    /**
+     * Marks money moved between the user's own accounts when both sides are being imported (savings to current
+     * and back): a debit on one account and a credit of the same amount on another of [ownTails] within
+     * [windowDays] days, where both sides read like a transfer or one names the other account. Each line pairs once.
+     */
+    fun markOwnTransfers(
+        list: List<ImportCandidate>,
+        ownTails: Set<String>,
+        windowDays: Long = 2,
+    ): List<ImportCandidate> {
+        val fresh = list.indices.filter { list[it].duplicateOf == null && list[it].accountTail in ownTails }
+        val credits = fresh.filter { list[it].row.type == TxnType.CREDIT }.groupBy { list[it].row.amountMinor }
+        val used = HashSet<Int>()
+        val out = list.toMutableList()
+        for (d in fresh.filter { list[it].row.type == TxnType.DEBIT }.sortedBy { list[it].timestamp }) {
+            val dc = list[d]
+            val c = credits[dc.row.amountMinor].orEmpty()
+                .filter { it !in used && list[it].accountTail != dc.accountTail && abs(list[it].row.date.toEpochDay() - dc.row.date.toEpochDay()) <= windowDays }
+                .filter { i -> val cc = list[i]; (SelfTransfers.looksLikeTransfer(dc.row.description) && SelfTransfers.looksLikeTransfer(cc.row.description)) || names(dc.row.description, cc.accountTail) || names(cc.row.description, dc.accountTail) }
+                .minByOrNull { abs(list[it].timestamp - dc.timestamp) } ?: continue
+            used += c
+            out[d] = dc.copy(ownTransfer = true)
+            out[c] = list[c].copy(ownTransfer = true)
+        }
+        return out
+    }
+
+    /** The narration names the account ending in [tail] ("TO A/C XXXX4144"). */
+    private fun names(text: String, tail: String?) = tail != null && Regex("""(?:[Xx*•]|\d)$tail(?!\d)""").containsMatchIn(text)
+
     data class Summary(
         val newCount: Int,
         /** SMS / typed entries that will take the statement's details. */
@@ -198,6 +242,9 @@ object StatementImport {
         val receivedMinor: Long,
         val from: LocalDate?,
         val to: LocalDate?,
+        /** Card bill payments and transfers between own accounts among the new lines: not counted. */
+        val notCountedMinor: Long = 0,
+        val notCountedCount: Int = 0,
     )
 
     fun summary(list: List<ImportCandidate>): Summary {
@@ -207,8 +254,10 @@ object StatementImport {
             newCount = fresh.size,
             updateCount = updates,
             duplicateCount = list.size - fresh.size - updates,
-            spentMinor = fresh.filter { it.row.type == TxnType.DEBIT }.sumOf { it.row.amountMinor },
-            receivedMinor = fresh.filter { it.row.type == TxnType.CREDIT }.sumOf { it.row.amountMinor },
+            spentMinor = fresh.filter { it.row.type == TxnType.DEBIT && !it.notCounted }.sumOf { it.row.amountMinor },
+            receivedMinor = fresh.filter { it.row.type == TxnType.CREDIT && !it.notCounted }.sumOf { it.row.amountMinor },
+            notCountedMinor = fresh.filter { it.notCounted }.sumOf { it.row.amountMinor },
+            notCountedCount = fresh.count { it.notCounted },
             from = list.minOfOrNull { it.row.date },
             to = list.maxOfOrNull { it.row.date },
         )

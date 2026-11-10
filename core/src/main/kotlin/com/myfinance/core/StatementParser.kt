@@ -18,8 +18,13 @@ data class StatementRow(
     val type: TxnType,
     val balanceMinor: Long? = null,
     val reference: String? = null,
-    /** Card statements listing several cards (add-on, RuPay UPI card): the last 4 digits of this line's card. */
+    /**
+     * Statements covering several cards (add-on, RuPay UPI card) or accounts (savings and current): the last
+     * 4 digits of this line's card or account, from the heading printed above its table.
+     */
     val cardTail: String? = null,
+    /** The serial / reference number printed at the start of a card statement line, when there is one. */
+    val serial: String? = null,
 )
 
 data class ParsedStatement(
@@ -185,6 +190,11 @@ object StatementParser {
             val date: LocalDate, val time: LocalTime?, val desc: StringBuilder, val amounts: List<Pair<Long, TxnType?>>, val raw: String,
             /** The description without card-statement columns (serial number before it, reward points after it). */
             val cardDesc: StringBuilder, val card: String?,
+            /** Bank statements: the account heading above this line. */
+            val acct: String? = null,
+            /** Which table it was read from: a new heading (card / account number) starts a new one. */
+            val section: Int = 0,
+            val serial: String? = null,
         )
 
         val lines = text.lines()
@@ -194,13 +204,17 @@ object StatementParser {
         var continuation = 0
         var headerText = StringBuilder()
         var card: String? = null
+        var acct: String? = null
+        var section = 0
+        // Each account's opening ("B/F") balance, when a statement holds several.
+        val openings = HashMap<String?, Long>()
         for (raw in lines) {
             var line = raw.replace(' ', ' ').trim()
             if (line.isEmpty()) { lastWasTxn = false; continue }
             if (parsed.isEmpty() && headerText.length < 4000) headerText.append(line).append('\n')
             val low = line.lowercase()
-            if (openingBalance == null && (low.contains("opening balance") || low.contains("balance b/f") || low.contains("brought forward") || Regex("""\sb/f\s""").containsMatchIn(" $low "))) {
-                moneyRe.findAll(line).lastOrNull()?.let { openingBalance = parseMoney(it.value)?.first }
+            if (!openings.containsKey(acct) && (low.contains("opening balance") || low.contains("balance b/f") || low.contains("brought forward") || Regex("""\sb/f\s""").containsMatchIn(" $low "))) {
+                moneyRe.findAll(line).lastOrNull()?.let { m -> parseMoney(m.value)?.first?.let { openings[acct] = it; if (openingBalance == null) openingBalance = it } }
             }
             var start = lineStart.find(line)
             var date = if (start != null) parseDate(start.groupValues[1]) else null
@@ -216,8 +230,19 @@ object StatementParser {
             }
             if (start == null || date == null) {
                 // "Card Number : 4375 XXXX XXXX 4007" / "4375XXXXXXXX5010": the lines below are this card's.
-                val cardHit = cardNumberRe.find(line)
-                if (cardHit != null && moneyRe.find(line) == null) { card = cardHit.groupValues[1]; lastWasTxn = false; continue }
+                // "Statement of transactions in Savings Account XXXXXXXX4144" / "Account No : 012301234567": the
+                // lines below are that account's (a statement can hold savings and current accounts).
+                if (moneyRe.find(line) == null) {
+                    val cardHit = cardNumberRe.find(line)
+                    val acctHit = accountTailOfHeading(line)
+                    if (cardHit != null || acctHit != null) {
+                        cardHit?.let { card = it.groupValues[1] }
+                        acctHit?.let { acct = it }
+                        section++
+                        lastWasTxn = false
+                        continue
+                    }
+                }
                 val extra = line.replace(percentRe, " ").trim()
                 if (extra.isEmpty()) continue
                 if (lastWasTxn && continuation < 2 && moneyRe.find(line) == null && !isFooter(line) && !notDescription.containsMatchIn(extra) && parsed.isNotEmpty()) {
@@ -237,7 +262,8 @@ object StatementParser {
                 .replace(currencyColumn, "").trim()
             val values = amounts.mapNotNull { m -> parseMoney(m.value) }
             val cardText = descText.replace(serialFirst, "").replace(pointsLast, "").trim()
-            parsed += Line(date, time, StringBuilder(descText), values, line, StringBuilder(cardText), card)
+            val serial = serialFirst.find(descText)?.value?.trim()?.takeIf { it.length >= 12 }
+            parsed += Line(date, time, StringBuilder(descText), values, line, StringBuilder(cardText), card, acct, section, serial)
             lastWasTxn = true
             continuation = 0
         }
@@ -246,7 +272,18 @@ object StatementParser {
         // A bank statement line ends "... amount balance"; check whether the balances chain up.
         val multi = parsed.count { it.amounts.size >= 2 }
         val asBank = parsed.map { (if (it.amounts.size >= 2) it.amounts[it.amounts.size - 2].first else it.amounts.last().first) to (if (it.amounts.size >= 2) it.amounts.last().first else null) }
-        val bankDirs = if (multi >= parsed.size * 0.6) directionsFromBalance(asBank, openingBalance) else null
+        // Each account's balance runs on its own: savings and current in one statement are chained separately.
+        val bankDirs = if (multi >= parsed.size * 0.6) {
+            val out = ArrayList<TxnType?>(parsed.size)
+            var i = 0
+            while (i < parsed.size) {
+                var j = i
+                while (j < parsed.size && parsed[j].acct == parsed[i].acct) j++
+                out += directionsFromBalance(asBank.subList(i, j), openings[parsed[i].acct] ?: if (i == 0) openingBalance else null)
+                i = j
+            }
+            out
+        } else null
         val chained = bankDirs?.count { it != null } ?: 0
         val isBank = bankDirs != null && chained >= (parsed.size - 1) * 0.6 && !looksLikeCard(headerText.toString())
 
@@ -255,7 +292,7 @@ object StatementParser {
             if (isBank) {
                 val (amt, bal) = asBank[i]
                 val marker = l.amounts.getOrNull(l.amounts.size - 2)?.second
-                StatementRow(l.date, l.time, desc, abs(amt), bankDirs!![i] ?: marker ?: guessType(desc, StatementKind.BANK), bal?.let { abs(it) }, referenceIn(l.raw))
+                StatementRow(l.date, l.time, desc, abs(amt), bankDirs!![i] ?: marker ?: guessType(desc, StatementKind.BANK), bal?.let { abs(it) }, referenceIn(l.raw), cardTail = l.acct)
             } else {
                 // Card bills: the transaction amount is the last money value; "Cr" marks payments and refunds.
                 val (amt, marker) = l.amounts.last()
@@ -264,9 +301,9 @@ object StatementParser {
                 val plus = hdfcCredit.containsMatchIn(rawCard)
                 val cardDesc = cleanDesc(rawCard.replace(hdfcCredit, "").replace(rupeeGlyph, "").replace(convertWord, " ")).ifEmpty { desc }
                 val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
-                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card)
+                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card, serial = l.serial)
             }
-        }.filter { it.amountMinor > 0 }
+        }.let { all -> withoutRepeats(all, parsed.map { it.section }, isBank) }.filter { it.amountMinor > 0 }
         if (rows.isEmpty()) return null
         val head = headerText.toString()
         val kind = if (isBank) StatementKind.BANK else StatementKind.CARD
@@ -274,8 +311,13 @@ object StatementParser {
             // A due date far from the statement's last line is a misread.
             ?.takeIf { b -> rows.maxOf { it.date }.let { last -> !b.third.isBefore(last.minusDays(3)) && !b.third.isAfter(last.plusDays(60)) } }
         else null
+        val accountsInFile = rows.mapNotNullTo(LinkedHashSet()) { it.cardTail }
         val check = runCatching {
-            if (kind == StatementKind.BANK) StatementCheck.bank(rows, openingBalance)
+            if (kind == StatementKind.BANK && accountsInFile.size > 1) {
+                // Each account against its own balances, added up.
+                val parts = rows.groupBy { it.cardTail }.values.map { StatementCheck.bank(it, null) }
+                if (parts.any { it == null }) null else StatementCheck(parts.sumOf { it!!.expectedMinor }, parts.sumOf { it!!.computedMinor })
+            } else if (kind == StatementKind.BANK) StatementCheck.bank(rows, openingBalance)
             else bill?.let { b -> previousBalanceIn(text)?.let { prev -> StatementCheck.card(rows, prev, b.first) } }
         }.getOrNull()
         return ParsedStatement(
@@ -423,7 +465,51 @@ object StatementParser {
 
     private fun cleanDesc(s: String): String = s.replace(Regex("""\s+"""), " ").trim().trim('-', '|', ',').trim()
 
-    private val cardNumberRe = Regex("""\b\d{4}\s?[Xx*]{4}\s?[Xx*]{4}\s?(\d{4})\b""")
+    // "4375 XXXX XXXX 4007", "4375XXXXXXXX5010", "4375 47XX XXXX 5002", "XXXX XXXX XXXX 5002", "4375-XXXX-XXXX-5002"
+    private val cardNumberRe = Regex("""(?<![\w*])(?:\d{4}|[Xx*]{4})[\s-]?(?:\d{2}[Xx*]{2}|[Xx*]{4})[\s-]?[Xx*]{4}[\s-]?(\d{4})\b""")
+
+    private val accountWord = Regex("""\b(?:a/c|acct|account)\b""", RegexOption.IGNORE_CASE)
+    /** How an account heading reads: "Savings Account …", "Account No …", "Current A/c Number …". */
+    private val accountHeading = Regex(
+        """\b(?:savings?|current|salary|overdraft|nre|nro)\s+(?:a/c|acct|account)\b|\b(?:a/c|acct|account)\s*(?:no|number|num)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** A narration that mentions an account ("NEFT TO A/C 1234…") is not a heading. */
+    private val narrationCodes = Regex("""\b(?:neft|imps|rtgs|upi|trf|inft|mmt|transfer|transferred|credited|debited|bil)\b""", RegexOption.IGNORE_CASE)
+    private val accountNumber = Regex("""(?<![\w/])(?:[Xx*•]{2,}[\s-]?(?:[Xx*•]+[\s-]?)*\d{3,8}|\d{9,18})(?![\w/])""")
+
+    /** The last 4 digits of the account a heading line names ("Savings Account XXXXXXXX4144", "A/c No: 012301234567"). */
+    fun accountTailOfHeading(line: String): String? {
+        if (!accountHeading.containsMatchIn(line) || narrationCodes.containsMatchIn(line)) return null
+        val w = accountWord.find(line) ?: return null
+        if (cardNumberRe.containsMatchIn(line) && line.contains("card", ignoreCase = true)) return null
+        val n = accountNumber.find(line, w.range.last + 1)?.takeIf { it.range.first - w.range.last < 40 } ?: return null
+        return n.value.filter(Char::isDigit).takeLast(4).takeIf { it.length == 4 }
+    }
+
+    /**
+     * Consolidated statements can print the same statement (or month) twice. A card line's serial number is
+     * never reused, so a table whose numbered lines were all read already is a repeat and is left out, as is
+     * any other numbered line seen before. A bank line with the same amount and running balance is a repeat too.
+     */
+    private fun withoutRepeats(rows: List<StatementRow>, sections: List<Int>, bank: Boolean): List<StatementRow> {
+        if (bank) {
+            val seen = HashSet<List<Any?>>()
+            return rows.filter { r -> r.balanceMinor == null || seen.add(listOf(r.cardTail, r.date, r.amountMinor, r.type, r.balanceMinor, r.description)) }
+        }
+        fun key(r: StatementRow) = listOf(r.cardTail, r.serial, r.date, r.amountMinor, r.type)
+        val seenBefore = HashSet<List<Any?>>()
+        val bySection = rows.indices.groupBy { sections[it] }
+        val keep = BooleanArray(rows.size) { true }
+        for ((_, idx) in bySection.entries.sortedBy { it.key }) {
+            val numbered = idx.filter { rows[it].serial != null }
+            val repeats = numbered.filter { key(rows[it]) in seenBefore }
+            if (numbered.isNotEmpty() && repeats.size == numbered.size) idx.forEach { keep[it] = false }
+            else repeats.forEach { keep[it] = false }
+            numbered.forEach { seenBefore += key(rows[it]) }
+        }
+        return rows.filterIndexed { i, _ -> keep[i] }
+    }
     private val percentRe = Regex("""\S*\d+(?:\.\d+)?%""")
     /** Lines below a transaction that are not part of its description: headings, legal text, reward panels. */
     private val notDescription = Regex(

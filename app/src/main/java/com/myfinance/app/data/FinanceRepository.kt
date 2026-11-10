@@ -1079,7 +1079,7 @@ class FinanceRepository(
                                 owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
                                 reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                                 source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
-                                excluded = t.excluded || (!t.userEdited && com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement)),
+                                excluded = t.excluded || (!t.userEdited && (c.ownTransfer || com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement))),
                             ),
                         )
                         updated++
@@ -1089,7 +1089,8 @@ class FinanceRepository(
                     val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
                     if (rule?.ignore == true) continue
                     // A card bill payment (bank side or card side) is not spending or income: the card's purchases are.
-                    val billPayment = com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement)
+                    // So is money moved between two of the user's own accounts.
+                    val billPayment = c.ownTransfer || com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement)
                     val base = TransactionEntity(
                         excluded = billPayment,
                         amountMinor = r.amountMinor, type = r.type, merchant = c.merchant,

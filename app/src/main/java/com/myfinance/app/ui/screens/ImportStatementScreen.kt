@@ -48,6 +48,7 @@ import com.myfinance.app.ui.StatementImportViewModel
 import com.myfinance.app.ui.theme.ExpenseRed
 import com.myfinance.app.ui.theme.IncomeGreen
 import com.myfinance.core.TxnType
+import com.myfinance.core.StatementKind
 import com.myfinance.core.formatInr
 import java.time.format.DateTimeFormatter
 
@@ -142,6 +143,7 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, open: (String)
             items(state.files, key = { it.uri.toString() }) { f ->
                 FileCard(
                     f,
+                    myAccounts = state.myAccounts,
                     onPassword = { vm.submitPassword(f.uri, it) },
                     onRemove = { vm.remove(f.uri) },
                     onEditAccount = { editing = f },
@@ -211,6 +213,8 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, open: (String)
     editing?.let { f ->
         var bank by remember(f.uri) { mutableStateOf(f.bank.orEmpty()) }
         var tail by remember(f.uri) { mutableStateOf(f.accountTail.orEmpty()) }
+        val several = f.accounts.size > 1
+        val renames = remember(f.uri) { androidx.compose.runtime.mutableStateMapOf<String, String>().apply { f.accounts.forEach { (p, _) -> put(p, f.renames[p] ?: p) } } }
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text("Which account is this?") },
@@ -222,20 +226,29 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, open: (String)
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedTextField(bank, { bank = it }, label = { Text("Bank") }, singleLine = true)
-                    OutlinedTextField(
+                    if (several) {
+                        Text("This statement lists ${f.accounts.size} ${if (f.kind == StatementKind.CARD) "cards" else "accounts"}. Correct any last 4 digits here:", style = MaterialTheme.typography.bodySmall)
+                        f.accounts.forEach { (printed, n) ->
+                            OutlinedTextField(
+                                renames[printed].orEmpty(), { v -> renames[printed] = v.filter(Char::isDigit).take(4) },
+                                label = { Text("••$printed · $n lines") }, singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            )
+                        }
+                    } else OutlinedTextField(
                         tail, { v -> tail = v.filter(Char::isDigit).take(4) }, label = { Text("Last 4 digits") }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = { vm.setAccount(f.uri, bank, tail); editing = null }) { Text("Save") } },
+            confirmButton = { TextButton(onClick = { vm.setAccount(f.uri, bank, tail, if (several) renames.toMap() else emptyMap()); editing = null }) { Text("Save") } },
             dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
         )
     }
 }
 
 @Composable
-private fun FileCard(f: StatementFile, onPassword: (String) -> Unit, onRemove: () -> Unit, onEditAccount: () -> Unit) {
+private fun FileCard(f: StatementFile, myAccounts: List<com.myfinance.core.MyAccount>, onPassword: (String) -> Unit, onRemove: () -> Unit, onEditAccount: () -> Unit) {
     var showLines by remember(f.uri) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -259,7 +272,7 @@ private fun FileCard(f: StatementFile, onPassword: (String) -> Unit, onRemove: (
                     }
                     StatementFile.Status.FAILED -> Text(f.message.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     StatementFile.Status.NEEDS_PASSWORD -> PasswordBox(f.wrongPassword, onPassword)
-                    StatementFile.Status.READY -> Ready(f, showLines, { showLines = !showLines }, onEditAccount)
+                    StatementFile.Status.READY -> Ready(f, myAccounts, showLines, { showLines = !showLines }, onEditAccount)
                 }
             }
         }
@@ -288,11 +301,28 @@ private fun PasswordBox(wrong: Boolean, onSubmit: (String) -> Unit) {
 }
 
 @Composable
-private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit, onEditAccount: () -> Unit) {
+private fun Ready(f: StatementFile, myAccounts: List<com.myfinance.core.MyAccount>, showLines: Boolean, toggleLines: () -> Unit, onEditAccount: () -> Unit) {
     val s = f.summary
-    val account = listOfNotNull(f.bank, f.accountTail?.let { "••$it" }).joinToString(" ").ifBlank { "Account not shown" }
+    val several = f.accounts.size > 1
+    val account = if (several) listOfNotNull(f.bank, "${f.accounts.size} ${if (f.kind == StatementKind.CARD) "cards" else "accounts"}").joinToString(" · ")
+    else listOfNotNull(f.bank, f.accountTail?.let { "••$it" }).joinToString(" ").ifBlank { "Account not shown" }
     Text("${f.kind?.label ?: "Statement"} · $account", style = MaterialTheme.typography.bodyMedium)
-    f.matched?.let { m ->
+    // A statement covering several cards (add-on, wife's card) or accounts (savings and current): each line goes to its own.
+    if (several) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            f.accounts.forEach { (printed, n) ->
+                val tail = f.renames[printed] ?: printed
+                val reg = com.myfinance.core.MyAccounts.match(myAccounts, tail, f.bank)
+                val who = reg?.let { r -> r.label + (r.owner?.takeIf { it.isNotBlank() }?.let { " ($it's)" } ?: "") } ?: "••$tail"
+                Text(
+                    "$who · $n line${if (n == 1) "" else "s"}" + if (tail != printed) " (printed ••$printed)" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (reg != null) com.myfinance.app.ui.theme.IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (!several) f.matched?.let { m ->
         Text(
             "✓ Your registered " + m.label + (m.owner?.let { " ($it's)" } ?: ""),
             style = MaterialTheme.typography.bodySmall, color = com.myfinance.app.ui.theme.IncomeGreen,
@@ -325,6 +355,11 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
     if (s.newCount > 0) {
         Text(
             "New: spent ${formatInr(s.spentMinor)} · received ${formatInr(s.receivedMinor)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (s.notCountedCount > 0) Text(
+            "Not counted: ${s.notCountedCount} card bill payments and transfers between your accounts (${formatInr(s.notCountedMinor)})",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
