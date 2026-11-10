@@ -107,3 +107,63 @@ class MultiAccountStatementTest {
         assertFalse(c.any { it.ownTransfer })
     }
 }
+
+class SalaryDetectTest {
+    private val zone = ZoneId.of("Asia/Kolkata")
+    private fun at(d: java.time.LocalDate) = d.atTime(10, 0).atZone(zone).toInstant().toEpochMilli()
+    private fun credit(d: String, amt: Long, cat: String, who: String = "ACME LTD", id: Long = 0) =
+        TxnLite(amt, TxnType.CREDIT, cat, who, "••4144", at(java.time.LocalDate.parse(d)), id = id)
+
+    @Test fun lateSalaryCountsForNextMonth() {
+        val t = listOf(credit("2026-07-28", 150_000_00, "Salary"), credit("2026-08-27", 150_000_00, "Salary"), credit("2026-09-29", 150_000_00, "Salary"), credit("2026-10-28", 150_000_00, "Salary"), credit("2026-10-05", 500_00, "Other", "FRIEND"))
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(25, g.fromDay)
+        assertTrue(g.alreadySalary)
+        val c = MonthCycle(salaryFromDay = g.fromDay)
+        assertEquals(java.time.YearMonth.of(2026, 11), c.periodOf(t[3], zone))
+        assertEquals("salary from 25 Oct counts here", c.note(java.time.YearMonth.of(2026, 11)))
+    }
+
+    @Test fun steadyPayerWithoutSalaryCategoryIsFound() {
+        val t = listOf(credit("2026-08-30", 90_000_00, "Other", "NEFT INFOSYS", 1), credit("2026-09-30", 92_000_00, "Other", "NEFT INFOSYS", 2), credit("2026-10-31", 91_000_00, "Other", "NEFT INFOSYS", 3))
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertFalse(g.alreadySalary)
+        assertEquals(listOf(1L, 2L, 3L), g.ids)
+        assertEquals(28, g.fromDay)
+    }
+
+    @Test fun earlySalaryNeedsNothing() {
+        val t = listOf(credit("2026-08-01", 150_000_00, "Salary"), credit("2026-09-01", 150_000_00, "Salary"), credit("2026-10-01", 150_000_00, "Salary"))
+        assertEquals(null, SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone))
+    }
+}
+
+class CardCyclesTest {
+    private val zone = ZoneId.of("Asia/Kolkata")
+    private fun at(d: String) = java.time.LocalDate.parse(d).atTime(10, 0).atZone(zone).toInstant().toEpochMilli()
+
+    @Test fun billOnThe14thPaidInTheLastWeek() {
+        val card = MyAccount(tail = "5002", billDay = 14, payDay = 25)
+        val lines = listOf(
+            CardLine("5002", TxnType.DEBIT, 1_000_00, at("2026-10-20"), false),
+            CardLine("5002", TxnType.DEBIT, 2_000_00, at("2026-11-14"), false),
+            CardLine("5002", TxnType.DEBIT, 500_00, at("2026-11-15"), false),
+            CardLine("4007", TxnType.DEBIT, 9_000_00, at("2026-11-01"), false),
+        )
+        val v = CardCycles.view(card, lines, java.time.LocalDate.parse("2026-11-23"), zone)!!
+        assertEquals(java.time.LocalDate.parse("2026-11-14"), v.billDate)
+        assertEquals(3_000_00L, v.billedMinor)
+        assertEquals(500_00L, v.unbilledMinor)
+        assertEquals(java.time.LocalDate.parse("2026-11-25"), v.payBy)
+        assertTrue(CardCycles.reminderDue(v, java.time.LocalDate.parse("2026-11-23")))
+        assertFalse(CardCycles.reminderDue(v, java.time.LocalDate.parse("2026-11-20")))
+        val paid = CardCycles.view(card, lines + CardLine("5002", TxnType.CREDIT, 3_000_00, at("2026-11-22"), true), java.time.LocalDate.parse("2026-11-23"), zone)!!
+        assertFalse(CardCycles.reminderDue(paid, java.time.LocalDate.parse("2026-11-23")))
+    }
+
+    @Test fun beforeTheBillDayTheLastBillIsLastMonths() {
+        assertEquals(java.time.LocalDate.parse("2026-10-14"), CardCycles.lastBillDate(14, java.time.LocalDate.parse("2026-11-10")))
+        assertEquals(java.time.LocalDate.parse("2026-02-28"), CardCycles.lastBillDate(31, java.time.LocalDate.parse("2026-03-10")))
+        assertEquals(java.time.LocalDate.parse("2026-12-05"), CardCycles.payBy(java.time.LocalDate.parse("2026-11-14"), 5))
+    }
+}

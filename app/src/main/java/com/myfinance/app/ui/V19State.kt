@@ -155,6 +155,63 @@ class V19State(
         _message.value = if (n == 0) "Your rules already match every entry." else "Your rules changed $n older entries, statements included."
     }
 
+    // ---- 1.11: card bills, salary month by itself ----
+
+    /** Each card with a bill day: the last bill, what's on the next one, and whether it was paid. */
+    val cardCycles: StateFlow<List<com.myfinance.core.CardCycleView>> = state(
+        emptyList(),
+        combine(allTransactions, myAccounts) { all, accounts ->
+            val cards = accounts.filter { it.isCard && it.billDay != null }
+            val lines = repo.cardLines(all, cards)
+            cards.mapNotNull { com.myfinance.core.CardCycles.view(it, lines, LocalDate.now(), zone) }
+        },
+        scope,
+    )
+
+    private val _salaryState = MutableStateFlow(repo.salaryAutoState)
+
+    /**
+     * A salary that arrives in the last week, so the month it is for shows it as income. Found by itself the
+     * first time; [SalaryNote.applied] says it was switched on (the user can keep it or turn it off).
+     */
+    data class SalaryNote(val guess: com.myfinance.core.SalaryGuess, val applied: Boolean)
+
+    val salaryNote: StateFlow<SalaryNote?> = state(
+        null,
+        combine(allLite, cycle, _salaryState) { txns, c, st ->
+            when {
+                st == "applied" && c.salaryFromDay != null ->
+                    com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, true) }
+                    ?: SalaryNote(com.myfinance.core.SalaryGuess(c.salaryFromDay, null, emptyList(), 0, true, c.salaryFromDay), true)
+                st != null || c.salaryFromDay != null -> null
+                else -> com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)?.let { SalaryNote(it, false) }
+            }
+        },
+        scope,
+    )
+
+    init {
+        // Salary already in the Salary category: switch it on straight away (the Home card says so and can undo it).
+        scope.launch {
+            salaryNote.collect { n -> if (n != null && !n.applied && n.guess.alreadySalary) useSalaryDay(n.guess) }
+        }
+    }
+
+    /** Count salary from [g]'s day for the next month; credits not in the Salary category yet are put there. */
+    fun useSalaryDay(g: com.myfinance.core.SalaryGuess) = scope.launch {
+        if (!g.alreadySalary && g.ids.isNotEmpty()) runCatching { repo.categorise(g.ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
+        repo.setMonthCycle(repo.monthCycle.value.copy(salaryFromDay = g.fromDay), byUser = false)
+        repo.salaryAutoState = "applied"
+        _salaryState.value = "applied"
+    }
+
+    fun salaryNoteDone(keep: Boolean) {
+        if (!keep) repo.setMonthCycle(repo.monthCycle.value.copy(salaryFromDay = null), byUser = false)
+        val st = if (keep) "ok" else "dismissed"
+        repo.salaryAutoState = st
+        _salaryState.value = st
+    }
+
     /** Days since the last backup or saved export (or since first use), for the Home nudge. */
     fun backupDaysAgo(): Long = com.myfinance.core.BackupNudge.daysSince(repo.lastBackupAt, repo.firstUseAt, System.currentTimeMillis())
 

@@ -79,6 +79,8 @@ fun MyAccountsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                                         a.bank.takeIf { !a.name.isNullOrBlank() },
                                         (a.prefix?.let { "$it…" } ?: "••") + a.tail,
                                         a.creditLimitMinor?.let { "limit ${com.myfinance.core.formatInr(it)}" },
+                                        a.billDay?.let { "bill on ${it}th" },
+                                        a.payDay?.let { "pay by ${it}th" },
                                         "PDF password saved".takeIf { !a.pdfPassword.isNullOrBlank() },
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -119,6 +121,8 @@ private fun MyAccountDialog(
     var owner by remember { mutableStateOf(start.owner.orEmpty()) }
     var password by remember { mutableStateOf(start.pdfPassword.orEmpty()) }
     var limit by remember { mutableStateOf(start.creditLimitMinor?.let { (it / 100).toString() }.orEmpty()) }
+    var billDay by remember { mutableStateOf(start.billDay?.toString().orEmpty()) }
+    var payDay by remember { mutableStateOf(start.payDay?.toString().orEmpty()) }
     var error by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -154,6 +158,17 @@ private fun MyAccountDialog(
                     limit, { limit = it.filter { c -> c.isDigit() || c == ',' } }, label = { Text("Credit limit (₹, optional), for card use") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
                 )
+                if (isCard) {
+                    OutlinedTextField(
+                        billDay, { billDay = it.filter(Char::isDigit).take(2) }, label = { Text("Bill (statement) day, e.g. 14") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        payDay, { payDay = it.filter(Char::isDigit).take(2) }, label = { Text("I pay the bill by day, e.g. 25") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
+                    )
+                    Muted("Spends still count in the month you made them. The bill day shows what's on the next bill; you get a reminder a few days before your pay-by day if the bill isn't paid yet.")
+                }
                 OutlinedTextField(
                     password, { password = it }, label = { Text("PDF statement password (optional)") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
@@ -173,6 +188,8 @@ private fun MyAccountDialog(
                         bank = bank.trim().ifBlank { null }, isCard = isCard, name = name.trim().ifBlank { null },
                         owner = owner.trim().takeIf { it.isNotBlank() && it != me }, pdfPassword = password.ifBlank { null },
                         creditLimitMinor = if (isCard) com.myfinance.core.parseAmountToMinor(limit)?.takeIf { it > 0 } else null,
+                        billDay = if (isCard) billDay.toIntOrNull()?.takeIf { it in 1..31 } else null,
+                        payDay = if (isCard) payDay.toIntOrNull()?.takeIf { it in 1..31 } else null,
                     ),
                 )
             }) { Text("Save") }

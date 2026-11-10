@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -64,6 +65,8 @@ fun HomeScreen(
     val loaded by vm.loaded.collectAsState()
     val allTxns by vm.allTransactions.collectAsState()
     val backupDays = remember(allTxns.size) { vm.v19.backupDaysAgo() }
+    val salaryNote by vm.v19.salaryNote.collectAsState()
+    val cycle by vm.monthCycle.collectAsState()
     var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     if (addDue) com.myfinance.app.ui.v15.QuickAddDialog(vm, com.myfinance.app.ui.v15.QuickAdd.PAYMENT_DUE) { addDue = false }
 
@@ -143,6 +146,39 @@ fun HomeScreen(
                 }
             }
 
+            // A salary that comes in the last week counts for the next month.
+            salaryNote?.let { n ->
+                item {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (n.applied) {
+                                Text("Salary counts for the next month", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Your salary comes in the last week, so from the ${n.guess.fromDay}th it counts as the next month's income: " +
+                                        "late October salary is November's. Change it under Manage > Month for budgets and reports.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                                    TextButton(onClick = { vm.v19.salaryNoteDone(true) }) { Text("OK") }
+                                    TextButton(onClick = { vm.v19.salaryNoteDone(false) }) { Text("Turn off") }
+                                }
+                            } else {
+                                Text("Is this your salary?", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${n.guess.payer ?: "A steady credit"} comes around the ${n.guess.typicalDay}th each month (${n.guess.months} months). " +
+                                        "Count it as salary, for the next month's income?",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                                    TextButton(onClick = { vm.v19.useSalaryDay(n.guess) }) { Text("Yes, it's my salary") }
+                                    TextButton(onClick = { vm.v19.salaryNoteDone(false) }) { Text("No") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Today's transactions, then payments due today and in the next few days, and missed ones.
             item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
 
@@ -159,6 +195,7 @@ fun HomeScreen(
                             Text("${month.format(monthName)} so far", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                             Text("Dashboard ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         }
+                        cycle.note(month)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         Row {
                             Text("Spent ", style = MaterialTheme.typography.bodyMedium)
                             Text(formatInr(summary.expenseMinor), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = ExpenseRed)

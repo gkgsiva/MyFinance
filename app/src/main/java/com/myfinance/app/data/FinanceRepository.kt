@@ -161,7 +161,13 @@ class FinanceRepository(
         )
     }.getOrDefault(MonthCycle.CALENDAR)
 
-    fun setMonthCycle(cycle: MonthCycle) {
+    /** null: salary month not looked at yet; "applied" (found by itself), "ok", "dismissed", or "user" (set in Manage). */
+    var salaryAutoState: String?
+        get() = prefs.getString(KEY_SALARY_AUTO, null)
+        set(v) { prefs.edit().putString(KEY_SALARY_AUTO, v).apply() }
+
+    fun setMonthCycle(cycle: MonthCycle, byUser: Boolean = true) {
+        if (byUser) salaryAutoState = "user"
         prefs.edit()
             .putInt(KEY_CYCLE_START, cycle.startDay)
             .putInt(KEY_SALARY_FROM, cycle.salaryFromDay ?: 0)
@@ -857,6 +863,7 @@ class FinanceRepository(
         }
 
         runCatching { checkStatementReminder(today) }
+        runCatching { newKeys += checkCardBills(today, sent) }
         runCatching { newKeys += checkRefunds(today, sent) }
         runCatching { sendWeeklyDigest(today, all) }
         runCatching { checkBackupReminder() }
@@ -1184,6 +1191,43 @@ class FinanceRepository(
     val firstUseAt: Long
         get() = prefs.getLong(KEY_FIRST_USE, 0).takeIf { it > 0 } ?: System.currentTimeMillis().also { prefs.edit().putLong(KEY_FIRST_USE, it).apply() }
 
+    /** Card lines for the bill view: payments reach a card on its statement, or leave the bank naming its number. */
+    fun cardLines(all: List<TransactionEntity>, cards: List<com.myfinance.core.MyAccount>): List<com.myfinance.core.CardLine> {
+        val tails = cards.filter { it.isCard }.map { it.tail }.toSet()
+        if (tails.isEmpty()) return emptyList()
+        return all.mapNotNull { t ->
+            val tail = t.accountTail?.filter(Char::isDigit)?.takeLast(4)
+            val bill = com.myfinance.core.SelfTransfers.isCardBillPayment(t.type, t.merchant, t.rawSms, t.source == TxnSource.STATEMENT && tail in tails)
+            when {
+                tail in tails -> if (t.excluded && !bill) null else com.myfinance.core.CardLine(tail, t.type, t.amountMinor, t.timestamp, bill)
+                // Paid from the bank: the SMS or narration names the card.
+                bill && t.type == TxnType.DEBIT -> tails.firstOrNull { c -> t.rawSms?.contains(c) == true || t.merchant?.contains(c) == true }
+                    ?.let { com.myfinance.core.CardLine(it, TxnType.CREDIT, t.amountMinor, t.timestamp, true) }
+                else -> null
+            }
+        }
+    }
+
+    /** A few days before the pay-by day: the card's last bill, when no payment has reached it yet. */
+    private suspend fun checkCardBills(today: LocalDate, sent: Set<String>): List<String> {
+        val cards = myAccountsNow().filter { it.isCard && it.billDay != null && it.payDay != null }
+        if (cards.isEmpty()) return emptyList()
+        val lines = cardLines(db.transactions().rangeOnce(System.currentTimeMillis() - 70L * 24 * 60 * 60 * 1000, Long.MAX_VALUE), cards)
+        val keys = ArrayList<String>()
+        for (c in cards) {
+            val v = com.myfinance.core.CardCycles.view(c, lines, today) ?: continue
+            if (!com.myfinance.core.CardCycles.reminderDue(v, today)) continue
+            val key = "cardbill|${c.tail}|${v.payBy}"
+            if (key in sent) continue
+            Notifier.reminder(
+                context, key.hashCode(), "Pay ${c.label} bill by ${v.payBy!!.format(dayFormat)}",
+                "About ${formatInr(v.billedMinor)} from the ${v.billDate.format(dayFormat)} bill" + (c.owner?.let { " ($it's card)" } ?: "") + ". Not paid yet.",
+            )
+            keys += key
+        }
+        return keys
+    }
+
     private suspend fun checkBackupReminder() {
         val now = System.currentTimeMillis()
         val hasData = db.transactions().countAll() > 0
@@ -1270,6 +1314,7 @@ class FinanceRepository(
         private const val KEY_WEEKLY_DIGEST = "weekly_digest_on"
         private const val KEY_WEEKLY_SENT = "weekly_digest_sent_week"
         private const val KEY_SALARY_FROM = "salary_next_month_from_day"
+        private const val KEY_SALARY_AUTO = "salary_auto_state"
         private const val KEY_LAST_SCAN = "last_inbox_scan"
         private const val KEY_STMT_DAY = "statement_reminder_day"
         private const val KEY_STMT_SENT = "statement_reminder_sent"

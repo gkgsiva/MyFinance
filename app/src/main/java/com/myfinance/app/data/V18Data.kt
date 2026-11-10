@@ -31,11 +31,14 @@ data class MyAccountEntity(
     val pdfPassword: String? = null,
     /** Added in version 2 of this database. */
     val creditLimitMinor: Long? = null,
+    /** Added in version 4: a card's bill day and pay-by day. */
+    val billDay: Int? = null,
+    val payDay: Int? = null,
 ) {
-    fun toCore() = MyAccount(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor)
+    fun toCore() = MyAccount(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor, billDay, payDay)
 }
 
-fun MyAccount.toEntity() = MyAccountEntity(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor)
+fun MyAccount.toEntity() = MyAccountEntity(id, tail, prefix, bank, isCard, name, owner, pdfPassword, creditLimitMinor, billDay, payDay)
 
 /** One statement import: what it added, so the whole import can be undone. Added in version 3. */
 @Entity(tableName = "import_batches")
@@ -65,7 +68,7 @@ interface V18Dao {
     @Query("DELETE FROM my_accounts WHERE id = :id") suspend fun deleteAccount(id: Long)
 }
 
-@Database(entities = [MyAccountEntity::class, ImportBatchEntity::class], version = 3, exportSchema = true)
+@Database(entities = [MyAccountEntity::class, ImportBatchEntity::class], version = 4, exportSchema = true)
 abstract class V18Database : RoomDatabase() {
     abstract fun dao(): V18Dao
 
@@ -73,12 +76,20 @@ abstract class V18Database : RoomDatabase() {
         const val FILE = "myfinance-v18.db"
 
         fun create(context: Context): V18Database =
-            Room.databaseBuilder(context, V18Database::class.java, FILE).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+            Room.databaseBuilder(context, V18Database::class.java, FILE).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
 
         /** 1.9: a card's credit limit. */
         private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE my_accounts ADD COLUMN creditLimitMinor INTEGER")
+            }
+        }
+
+        /** 1.11: a card's bill day and pay-by day. */
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE my_accounts ADD COLUMN billDay INTEGER")
+                db.execSQL("ALTER TABLE my_accounts ADD COLUMN payDay INTEGER")
             }
         }
 
