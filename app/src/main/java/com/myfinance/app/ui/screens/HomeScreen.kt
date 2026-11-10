@@ -158,6 +158,14 @@ fun HomeScreen(
                                         "late October salary is November's. Change it under Manage > Month for budgets and reports.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                n.guess.latest?.let { t ->
+                                    val d = java.time.Instant.ofEpochMilli(t.timestamp).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                                    val forMonth = cycle.periodOf(t.timestamp, t.type, com.myfinance.core.DefaultCategories.SALARY, java.time.ZoneId.systemDefault())
+                                    Text(
+                                        "Latest salary: ${com.myfinance.core.formatInr(t.amountMinor)} on ${d.dayOfMonth} ${d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)}, counted for ${forMonth.month.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                                 com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                                     TextButton(onClick = { vm.v19.salaryNoteDone(true) }) { Text("OK") }
                                     TextButton(onClick = { vm.v19.salaryNoteDone(false) }) { Text("Turn off") }

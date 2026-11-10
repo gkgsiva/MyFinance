@@ -117,11 +117,11 @@ class SalaryDetectTest {
     @Test fun lateSalaryCountsForNextMonth() {
         val t = listOf(credit("2026-07-28", 150_000_00, "Salary"), credit("2026-08-27", 150_000_00, "Salary"), credit("2026-09-29", 150_000_00, "Salary"), credit("2026-10-28", 150_000_00, "Salary"), credit("2026-10-05", 500_00, "Other", "FRIEND"))
         val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
-        assertEquals(25, g.fromDay)
+        assertEquals(24, g.fromDay)
         assertTrue(g.alreadySalary)
         val c = MonthCycle(salaryFromDay = g.fromDay)
         assertEquals(java.time.YearMonth.of(2026, 11), c.periodOf(t[3], zone))
-        assertEquals("salary from 25 Oct counts here", c.note(java.time.YearMonth.of(2026, 11)))
+        assertEquals("salary from 24 Oct counts here", c.note(java.time.YearMonth.of(2026, 11)))
     }
 
     @Test fun steadyPayerWithoutSalaryCategoryIsFound() {
@@ -129,7 +129,22 @@ class SalaryDetectTest {
         val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
         assertFalse(g.alreadySalary)
         assertEquals(listOf(1L, 2L, 3L), g.ids)
-        assertEquals(28, g.fromDay)
+        assertEquals(25, g.fromDay)
+    }
+
+    @Test fun octoberSalaryWithoutTheWordCountsForNovember() {
+        // Older months' SMS said "salary"; October's statement line didn't, and came early (the 25th was a Sunday).
+        val t = listOf(
+            credit("2026-07-28", 150_000_00, "Salary", id = 1), credit("2026-08-28", 150_000_00, "Salary", id = 2),
+            credit("2026-09-29", 152_000_00, "Salary", id = 3), credit("2026-10-23", 151_000_00, "Other", id = 4),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertTrue(g.alreadySalary)
+        assertEquals(listOf(4L), g.toCategorise)
+        assertEquals(20, g.fromDay)
+        assertEquals(4L, g.latest?.id)
+        val c = MonthCycle(salaryFromDay = g.fromDay)
+        assertEquals(java.time.YearMonth.of(2026, 11), c.periodOf(t[3].copy(category = "Salary"), zone))
     }
 
     @Test fun earlySalaryNeedsNothing() {
@@ -165,5 +180,60 @@ class CardCyclesTest {
         assertEquals(java.time.LocalDate.parse("2026-10-14"), CardCycles.lastBillDate(14, java.time.LocalDate.parse("2026-11-10")))
         assertEquals(java.time.LocalDate.parse("2026-02-28"), CardCycles.lastBillDate(31, java.time.LocalDate.parse("2026-03-10")))
         assertEquals(java.time.LocalDate.parse("2026-12-05"), CardCycles.payBy(java.time.LocalDate.parse("2026-11-14"), 5))
+    }
+}
+
+class CardRepeatTest {
+    private val zone = ZoneId.of("Asia/Kolkata")
+
+    @Test fun sameTableUnderAnotherCardIsReadOnce() {
+        val text = """
+            Card Number : 6528 XXXX XXXX 7002
+            Date Ref. Number Transaction Details Currency Amount(in ` )
+            12-NOV-26 74332746316000000001234 MAX HYPERMARKET INDIA CHENNAI IN 0.00 4,601.62
+            12-NOV-26 Interest Amount Amortization - <1/6> 0.00 12.91
+            Card Number : 4375 47XX XXXX 5010
+            Date Ref. Number Transaction Details Currency Amount(in ` )
+            12-NOV-26 74332746316000000001234 MAX HYPERMARKET INDIA CHENNAI IN 0.00 4,601.62
+            12-NOV-26 Interest Amount Amortization - <1/6> 0.00 12.91
+            13-NOV-26 74332746317000000009999 SWIGGY BANGALORE IN 0.00 300.00
+        """.trimIndent()
+        val st = StatementParser.fromText(text)!!
+        assertEquals(3, st.rows.size)
+    }
+
+    @Test fun lineOnTwoCardsInOneFileIsImportedOnce() {
+        val text = """
+            Card Number : 6528 XXXX XXXX 7002
+            12-NOV-26 Igst-ci@18% 0.00 2.32
+            Card Number : 4375 XXXX XXXX 5010
+            12-NOV-26 Igst-ci@18% 0.00 2.32
+            12-NOV-26 Igst-ci@18% 0.00 2.32
+        """.trimIndent()
+        val st = StatementParser.fromText(text)!!
+        val c = StatementImport.markDuplicates(StatementImport.candidates(st, zone = zone), emptyList())
+        // The first card keeps its line; the other card's copy is a repeat. Two on one card stay two.
+        assertEquals(listOf(null, DuplicateReason.SAME_STATEMENT, DuplicateReason.SAME_STATEMENT), c.map { it.duplicateOf })
+    }
+
+    @Test fun storedTwiceUnderTwoCardsKeepsTheLatest() {
+        fun l(id: Long, tail: String, text: String = "Max Hypermarket India", edited: Boolean = false) =
+            StatementImport.StoredLine(id, 100, 4_601_62, TxnType.DEBIT, text, tail, edited)
+        val gone = StatementImport.storedRepeats(listOf(l(1, "7002"), l(9, "5010"), l(3, "7002", "Swiggy"), l(4, "5010", "Swiggy", edited = true)))
+        assertEquals(listOf(1L, 3L), gone)
+    }
+}
+
+class CardPaymentPairTest {
+    @Test fun bankPaymentAndCardCreditPair() {
+        val day = 24L * 60 * 60 * 1000
+        val rows = listOf(
+            SelfTransfers.PayRow(1, TxnType.DEBIT, 54_121_00, 10 * day, "XX144", "Payment", false),
+            SelfTransfers.PayRow(2, TxnType.CREDIT, 54_121_00, 11 * day, "XX5010", "Money received", false),
+            SelfTransfers.PayRow(3, TxnType.DEBIT, 2_000_00, 10 * day, "XX144", "Uzhavarbumi", false),
+            SelfTransfers.PayRow(4, TxnType.CREDIT, 2_000_00, 10 * day, "XX7002", "Refund", false),
+        )
+        assertEquals(listOf(1L to 2L), SelfTransfers.cardPaymentPairs(rows, setOf("5010", "7002")))
+        assertTrue(SelfTransfers.isCardBillPayment(TxnType.CREDIT, "Money received", "Payment of INR 54,121.00 has been received on your ICICI Bank Credit Card Account XX5010"))
     }
 }

@@ -41,7 +41,7 @@ object SelfTransfers {
     private const val DAY = 24 * 60 * 60 * 1000L
 
     private val cardPayment = Regex(
-        """credit\s*card|card\s*payment|cc\s*payment|\bcc\s*bill|card\s*bill|\bcred\b|cred\s*club|billdesk.*card|payment\s+(?:of\s+.{0,20})?received.{0,40}card|card.{0,40}payment\s+received""",
+        """credit\s*card|card\s*payment|cc\s*payment|\bcc\s*bill|card\s*bill|\bcred\b|cred\s*club|billdesk.*card|payment\s+(?:of\s+.{0,40})?(?:has\s+been\s+)?received.{0,60}card|card.{0,40}payment\s+received|money\s+received.{0,60}card|card.{0,60}money\s+received""",
         RegexOption.IGNORE_CASE,
     )
     private val selfWords = Regex("""\bself\b|own\s+a/?c|\bneft\b|\bimps\b|\brtgs\b|\bupi\b|transfer|trf|\bft\b|sweep""", RegexOption.IGNORE_CASE)
@@ -58,6 +58,42 @@ object SelfTransfers {
     )
 
     fun isCardPayment(r: CheckRow): Boolean = isCardPayment(r.merchant, r.text)
+
+    /** One stored entry, for pairing a bank payment with the card it paid. */
+    data class PayRow(val id: Long, val type: TxnType, val amountMinor: Long, val timestamp: Long, val tail: String?, val text: String?, val edited: Boolean)
+
+    /** How a card statement or SMS shows a payment reaching the card. */
+    private val cardSideWords = Regex("""payment|money\s+received|thank\s*you|\bbbps\b|autopay|auto\s*debit|\bcred\b|billdesk|received\s+(?:on|towards|in)\s+your""", RegexOption.IGNORE_CASE)
+    private val payWords = Regex("""payment|\bpay\b|billpay|bill\s*pay|\bbbps\b|\bcred\b|autopay|auto\s*debit|\bsi\b|\bneft\b|\bimps\b|\bupi\b|\bach\b|transfer|\btrf\b|money\s+received|received|credited|thank\s*you|\bcard\b""", RegexOption.IGNORE_CASE)
+
+    /**
+     * A card bill paid from a bank account, seen from both sides: a debit from a bank account and a credit of the
+     * same amount on one of [cardTails] within [days] days. Returns (debit id, credit id) pairs, closest first,
+     * each entry used once. Entries the user edited are left alone.
+     */
+    fun cardPaymentPairs(rows: List<PayRow>, cardTails: Set<String>, days: Int = 4): List<Pair<Long, Long>> {
+        fun tail(r: PayRow) = r.tail?.filter(Char::isDigit)?.takeLast(4)
+        val credits = rows.filter { it.type == TxnType.CREDIT && !it.edited && tail(it) in cardTails && it.amountMinor > 0 }.groupBy { it.amountMinor }
+        val debits = rows.filter { it.type == TxnType.DEBIT && !it.edited && tail(it) !in cardTails && it.amountMinor > 0 }
+        val candidates = ArrayList<Triple<PayRow, PayRow, Long>>()
+        for (d in debits) for (c in credits[d.amountMinor].orEmpty()) {
+            val gap = abs(c.timestamp - d.timestamp)
+            if (gap > days * DAY) continue
+            // The bank side reads like a payment (or names the card), or the card side says it was a payment.
+            val ok = listOfNotNull(c.text).any { cardSideWords.containsMatchIn(it) } ||
+                listOfNotNull(d.text).any { t -> payWords.containsMatchIn(t) && tail(c)?.let { t.contains(it) } == true }
+            // A refund or cashback on the card is not a payment, whatever the bank side says.
+            if (ok && listOfNotNull(c.text).none { notPayment.containsMatchIn(it) }) candidates += Triple(d, c, gap)
+        }
+        val used = HashSet<Long>()
+        val out = ArrayList<Pair<Long, Long>>()
+        for ((d, c, _) in candidates.sortedBy { it.third }) {
+            if (d.id in used || c.id in used) continue
+            used += d.id; used += c.id
+            out += d.id to c.id
+        }
+        return out
+    }
 
     private val ownTransferWords = Regex("""\binft\b|\binf/|\bmmt/|fund\s*transfer|\bto\s+self\b|\bsweep|\bown\s+a/?c""", RegexOption.IGNORE_CASE)
 

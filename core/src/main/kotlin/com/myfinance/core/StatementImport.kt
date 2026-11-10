@@ -112,15 +112,26 @@ object StatementImport {
         fun day(ts: Long) = Dates.localDate(ts, zone).toEpochDay()
         fun tail(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.ifEmpty { null }
 
+        // The same line printed under two cards' tables in one file (a consolidated statement): one transaction.
+        val firstTail = HashMap<List<Any?>, MutableList<String?>>()
+        val repeatOnOtherCard = BooleanArray(candidates.size)
+        candidates.forEachIndexed { i, c ->
+            val k = listOf(c.row.date, c.row.amountMinor, c.row.type, words(c.row.description))
+            val tails = firstTail.getOrPut(k) { ArrayList() }
+            if (c.accountTail != null && tails.any { it != null && it != c.accountTail } && tails.count { it == c.accountTail } == 0) repeatOnOtherCard[i] = true
+            else tails += c.accountTail
+        }
+
         // Pass 1: exact keys and references, which are certain.
-        val result = candidates.map { c ->
-            if (c.key in keys) return@map c.copy(duplicateOf = DuplicateReason.SAME_STATEMENT)
+        val result = candidates.mapIndexed { i, c ->
+            if (repeatOnOtherCard[i]) return@mapIndexed c.copy(duplicateOf = DuplicateReason.SAME_STATEMENT)
+            if (c.key in keys) return@mapIndexed c.copy(duplicateOf = DuplicateReason.SAME_STATEMENT)
             val ref = c.row.reference?.takeIf { it.length >= 6 }
             if (ref != null) {
                 val hit = byAmount[c.row.amountMinor to c.row.type]?.firstOrNull { i ->
                     !used[i] && existing[i].reference?.let { it == ref || (ref.length >= 10 && it.endsWith(ref)) || (it.length >= 10 && ref.endsWith(it)) } == true
                 }
-                if (hit != null) { used[hit] = true; return@map linked(c, existing[hit], DuplicateReason.REFERENCE) }
+                if (hit != null) { used[hit] = true; return@mapIndexed linked(c, existing[hit], DuplicateReason.REFERENCE) }
             }
             c
         }.toMutableList()
@@ -198,6 +209,28 @@ object StatementImport {
     }
 
     /** Totals for the preview. */
+    /** A stored statement line, for finding the same line stored twice under two card numbers. */
+    data class StoredLine(val id: Long, val day: Long, val amountMinor: Long, val type: TxnType, val text: String?, val tail: String?, val edited: Boolean)
+
+    /**
+     * Statement lines stored twice, once under each of two cards (an earlier import read the card heading
+     * differently): the same day, amount, direction and narration on different cards. The latest import's card
+     * is kept; the others' lines are returned to remove, never one the user edited.
+     */
+    fun storedRepeats(lines: List<StoredLine>): List<Long> {
+        val out = ArrayList<Long>()
+        lines.filter { it.tail != null && !it.text.isNullOrBlank() }
+            .groupBy { listOf(it.day, it.amountMinor, it.type, words(it.text!!)) }
+            .values.filter { g -> g.mapTo(HashSet()) { it.tail }.size > 1 }
+            .forEach { g ->
+                val byTail = g.groupBy { it.tail }
+                // The card the user edited a line on, else the latest import's.
+                val keep = byTail.maxWith(compareBy<Map.Entry<String?, List<StoredLine>>> { (_, l) -> l.any { it.edited } }.thenBy { (_, l) -> l.maxOf { it.id } }).key
+                byTail.filterKeys { it != keep }.values.flatten().filterNot { it.edited }.forEach { out += it.id }
+            }
+        return out
+    }
+
     /** The cards / accounts a statement's lines belong to (last 4 digits), with how many lines each, in order. */
     fun accountsIn(statement: ParsedStatement): List<Pair<String, Int>> =
         statement.rows.mapNotNull { it.cardTail }.groupingBy { it }.eachCount().toList()

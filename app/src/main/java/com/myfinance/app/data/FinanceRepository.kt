@@ -194,6 +194,8 @@ class FinanceRepository(
 
     suspend fun ensureDefaults() {
         runCatching { leaveOutCardBillPaymentsOnce() }
+        runCatching { removeStatementRepeatsOnce() }
+        runCatching { leaveOutCardPaymentPairs() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
             DefaultCategories.all.mapIndexed { i, name ->
@@ -219,6 +221,63 @@ class FinanceRepository(
         if (changed.isNotEmpty()) db.transactions().updateAll(changed)
         prefs.edit().putBoolean(KEY_CARD_BILL_CLEANUP, true).apply()
     }
+
+    /**
+     * Once (1.11.1): statement lines stored twice under two card numbers by earlier imports. They go to
+     * Recently deleted (so they can be restored) and are remembered, so importing again won't add them back.
+     */
+    private suspend fun removeStatementRepeatsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_STMT_REPEAT_CLEANUP, false)) return@withContext
+        val zone = ZoneId.systemDefault()
+        val all = db.transactions().allOnce().filter { it.source == TxnSource.STATEMENT }
+        val ids = com.myfinance.core.StatementImport.storedRepeats(
+            all.map { t ->
+                com.myfinance.core.StatementImport.StoredLine(
+                    t.id, com.myfinance.core.Dates.localDate(t.timestamp, zone).toEpochDay(), t.amountMinor, t.type,
+                    t.rawSms, t.accountTail?.filter(Char::isDigit)?.takeLast(4), t.userEdited,
+                )
+            },
+        ).toHashSet()
+        if (ids.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            for (t in all.filter { it.id in ids }) {
+                v13.putTrash(DeletedTxnEntity.from(t, now))
+                v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now))
+                db.transactions().delete(t)
+            }
+            prefs.edit().putInt(KEY_STMT_REPEAT_REMOVED, ids.size).apply()
+            onDataChanged()
+        }
+        prefs.edit().putBoolean(KEY_STMT_REPEAT_CLEANUP, true).apply()
+    }
+
+    /**
+     * A card bill paid from a bank account, with both sides stored (the bank's debit and the "payment received"
+     * on the card): both stop counting as spending and income. Cards are those in My cards & accounts, plus any
+     * account whose messages say "credit card". Entries the user edited are left alone.
+     */
+    suspend fun leaveOutCardPaymentPairs(from: Long = 0, to: Long = Long.MAX_VALUE): Int = withContext(Dispatchers.IO) {
+        val rows = if (from == 0L && to == Long.MAX_VALUE) db.transactions().allOnce() else db.transactions().rangeOnce(from, to)
+        fun tail(t: TransactionEntity) = t.accountTail?.filter(Char::isDigit)?.takeLast(4)
+        val cardWords = Regex("""credit\s*card""", RegexOption.IGNORE_CASE)
+        val cards = myAccountsNow().filter { it.isCard }.map { it.tail }.toHashSet()
+        rows.filter { it.rawSms?.let { s -> cardWords.containsMatchIn(s) } == true && it.type == TxnType.CREDIT }.mapNotNullTo(cards) { tail(it) }
+        // A bank account is never a card, even when one of its messages mentions paying a credit card.
+        myAccountsNow().filter { !it.isCard }.forEach { cards -= it.tail }
+        if (cards.isEmpty()) return@withContext 0
+        val pairs = com.myfinance.core.SelfTransfers.cardPaymentPairs(
+            rows.filter { it.source != TxnSource.MANUAL }.map { com.myfinance.core.SelfTransfers.PayRow(it.id, it.type, it.amountMinor, it.timestamp, it.accountTail, listOfNotNull(it.merchant, it.rawSms).joinToString(" "), it.userEdited) },
+            cards,
+        )
+        val ids = pairs.flatMap { listOf(it.first, it.second) }.toHashSet()
+        val changed = rows.filter { it.id in ids && (!it.excluded || it.category != DefaultCategories.TRANSFERS) }
+            .map { it.copy(excluded = true, category = DefaultCategories.TRANSFERS) }
+        if (changed.isNotEmpty()) db.transactions().updateAll(changed)
+        changed.size
+    }
+
+    /** How many repeated statement lines the 1.11.1 cleanup moved to Recently deleted (0 when none). */
+    val statementRepeatsRemoved: Int get() = prefs.getInt(KEY_STMT_REPEAT_REMOVED, 0)
 
     private suspend fun categorizer(): Categorizer =
         Categorizer(db.merchantRules().all().associate { it.merchantKey to it.category })
@@ -291,6 +350,8 @@ class FinanceRepository(
         if (runCatching { repeatsAnotherSms(row) }.getOrDefault(false)) return Ingest.ALREADY_HERE
         val added = db.transactions().insert(row) != -1L
         if (added) {
+            // The other side of a card bill payment may already be here (bank debit and card credit).
+            runCatching { val w = 5L * 24 * 60 * 60 * 1000; leaveOutCardPaymentPairs(timestamp - w, timestamp + w) }
             runCatching { v12.onNewTransaction(row, rule) }
             runCatching { applyLabelRules(row, parsed.merchant) }
             // A late SMS for a month already closed: added, and shown in the review inbox.
@@ -1128,6 +1189,7 @@ class FinanceRepository(
             done += chunk.size
             onProgress(done, total)
         }
+        runCatching { leaveOutCardPaymentPairs() }
         onDataChanged()
         ImportResult(added, updated, skippedClosed, addedUids)
     }
@@ -1307,6 +1369,8 @@ class FinanceRepository(
         private const val KEY_BACKFILLED = "backfilled_v11"
         private const val KEY_CYCLE_START = "month_start_day"
         private const val KEY_CARD_BILL_CLEANUP = "card_bill_cleanup_1_9"
+        private const val KEY_STMT_REPEAT_CLEANUP = "stmt_repeat_cleanup_1_11_1"
+        private const val KEY_STMT_REPEAT_REMOVED = "stmt_repeat_removed_1_11_1"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"
