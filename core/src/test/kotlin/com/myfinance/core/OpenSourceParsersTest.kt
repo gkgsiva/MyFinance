@@ -232,3 +232,92 @@ class DashboardTest {
         assertEquals(99900, other.spentMinor)
     }
 }
+
+class IciciSbiCanaraSmsTest {
+    private fun parse(sender: String, body: String) = SmsParser.parse(sender, body, 1_700_000_000_000)
+
+    @Test
+    fun `ICICI account debit names the payee`() {
+        val t = assertNotNull(parse("JM-ICICIT-S", "ICICI Bank Acct XX123 debited for Rs 500.00 on 05-Nov-24; SWIGGY credited. UPI:431234567890. Call 18002662 for dispute. SMS BLOCK 123 to 9215676766."))
+        assertEquals(50000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("SWIGGY", t.merchant)
+        assertEquals("ICICI Bank", t.bank)
+        assertEquals("123", t.accountTail)
+    }
+
+    @Test
+    fun `ICICI account credit`() {
+        val t = assertNotNull(parse("VM-ICICIT", "Dear Customer, Acct XX123 is credited with Rs 5,000.00 on 05-Nov-24 from RAVI KUMAR. UPI:431234567891-ICICI Bank."))
+        assertEquals(TxnType.CREDIT, t.type)
+        assertEquals("RAVI KUMAR", t.merchant)
+    }
+
+    @Test
+    fun `SBI debit by transfer and credit`() {
+        val d = assertNotNull(parse("AD-SBIINB-S", "Dear Customer, Your A/C XXXXX654321 has a debit by transfer of Rs 1,200.00 on 05Nov24. Avl Bal Rs 23,456.00 -SBI"))
+        assertEquals(120000, d.amountMinor)
+        assertEquals(TxnType.DEBIT, d.type)
+        assertEquals(2345600, d.balanceMinor)
+        assertEquals("SBI", d.bank)
+        val c = assertNotNull(parse("AD-SBIINB-S", "Dear Customer, Your A/C XXXXX654321 Credited INR 50,000.00 on 01/11/24 -Deposit by transfer from ACME CORP. Avl Bal INR 73,456.00 -SBI"))
+        assertEquals(TxnType.CREDIT, c.type)
+        assertEquals(5000000, c.amountMinor)
+    }
+
+    @Test
+    fun `Canara debit with Total Avail bal`() {
+        val t = assertNotNull(parse("VM-CANBNK", "An amount of INR 750.00 has been DEBITED to your account XXX4321 on 05/11/2024 towards UPI/431234500000/BIGBASKET. Total Avail.bal INR 12,000.00 - Canara Bank"))
+        assertEquals(75000, t.amountMinor)
+        assertEquals(TxnType.DEBIT, t.type)
+        assertEquals("Canara Bank", t.bank)
+        assertEquals("4321", t.accountTail)
+        val c = assertNotNull(parse("VM-CANBNK", "Your a/c XX4321 is credited by Rs.2,000.00 on 05/11/2024 by UPI from RAMESH. Total Avail.bal INR 14,000.00 - Canara Bank"))
+        assertEquals(TxnType.CREDIT, c.type)
+        assertEquals(200000, c.amountMinor)
+    }
+}
+
+class MyAccountsTest {
+    private val mine = MyAccount(1, "1234", "437551", "ICICI Bank", true, "Amazon Pay card")
+    private val wifeAddOn = MyAccount(2, "5678", null, "ICICI Bank", true, "Add-on", owner = "Priya", pdfPassword = "PRIY0101")
+    private val wifeCanara = MyAccount(3, "4321", null, "Canara Bank", false, owner = "Priya")
+    private val sbi = MyAccount(4, "1234", null, "SBI", false)
+    private val all = listOf(mine, wifeAddOn, wifeCanara, sbi)
+
+    @Test
+    fun `numbers typed in`() {
+        assertEquals("437551" to "7890", MyAccounts.parseNumber("4375 5112 3456 7890", true))
+        assertEquals(null to "1234", MyAccounts.parseNumber("XX1234", true))
+        assertNull(MyAccounts.parseNumber("12", true))
+        assertEquals(null to "6789", MyAccounts.parseNumber("30123456789", false))
+    }
+
+    @Test
+    fun `matching by last 4 and bank`() {
+        assertEquals("Priya", MyAccounts.ownerOf(all, "4321", "Canara Bank"))
+        assertEquals(wifeAddOn, MyAccounts.match(all, "5678", null))
+        // Same last 4 on ICICI and SBI: the bank decides.
+        assertEquals(sbi, MyAccounts.match(all, "1234", "SBI"))
+        assertEquals(mine, MyAccounts.match(all, "1234", "ICICI Bank"))
+        assertNull(MyAccounts.match(all, "1234", null)?.takeIf { it.owner != null })
+        assertNull(MyAccounts.match(all, "4321", "HDFC Bank"))
+    }
+
+    @Test
+    fun `statement matched by a number printed in it`() {
+        val text = """
+            ICICI Bank Credit Card Statement
+            Customer ID 99887766
+            4375XXXXXXXX1234
+            10/03/2025 SWIGGY BANGALORE 450.00
+            Card Number : 4375 XXXX XXXX 5678
+            11/03/2025 AMAZON 1,299.00
+        """.trimIndent()
+        val st = assertNotNull(StatementParser.fromText(text))
+        assertEquals(mine, MyAccounts.forStatement(listOf(mine, wifeAddOn, wifeCanara), st.copy(accountTail = "7766")))
+        assertTrue(st.rows.any { it.cardTail == "5678" })
+        assertEquals("Priya", MyAccounts.ownerOf(all, st.rows.last().cardTail, st.bank))
+        assertEquals(listOf("PRIY0101"), MyAccounts.passwords(all))
+    }
+}

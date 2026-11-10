@@ -132,6 +132,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
                         Button(onClick = { open("import-statement") }, modifier = Modifier.weight(1f)) { Text("Import statements") }
                         FilledTonalButton(onClick = { open("accounts") }, modifier = Modifier.weight(1f)) { Text("Accounts & cards") }
                     }
+                    FilledTonalButton(onClick = { open("my-accounts") }, modifier = Modifier.fillMaxWidth()) { Text("My cards & accounts (yours and family's)") }
                 }
             }
         }

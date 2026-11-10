@@ -34,6 +34,8 @@ data class ParsedStatement(
     val billDueDate: LocalDate? = null,
     /** Whether the lines read add up to the statement's own totals; null when the statement doesn't say. */
     val check: StatementCheck? = null,
+    /** Card / account numbers printed near the top, as (first digits when shown, last 4). */
+    val numbersSeen: List<Pair<String?, String>> = emptyList(),
 ) {
     val from: LocalDate? get() = rows.minOfOrNull { it.date }
     val to: LocalDate? get() = rows.maxOfOrNull { it.date }
@@ -140,7 +142,7 @@ object StatementParser {
         val hasBalance = rows.count { it.balanceMinor != null } >= rows.size / 2
         val kind = if (hasBalance && !looksLikeCard(preamble)) StatementKind.BANK else StatementKind.CARD
         val fixed = if (pendingDirection.isEmpty()) rows else fixDirections(rows, pendingDirection.toSet(), kind)
-        return ParsedStatement(fixed, kind, bankIn(preamble), accountTailIn(preamble), check = if (kind == StatementKind.BANK) StatementCheck.bank(fixed) else null)
+        return ParsedStatement(fixed, kind, bankIn(preamble), accountTailIn(preamble), check = if (kind == StatementKind.BANK) StatementCheck.bank(fixed) else null, numbersSeen = numbersIn(preamble))
     }
 
     private fun amountsIn(rec: List<String>, cols: Map<Col, Int>): List<Long> =
@@ -277,6 +279,7 @@ object StatementParser {
         return ParsedStatement(
             rows, kind, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)),
             billTotalMinor = bill?.first, billMinMinor = bill?.second, billDueDate = bill?.third, check = check,
+            numbersSeen = numbersIn(text.take(8000)) + parsed.mapNotNull { it.card }.distinct().map { null to it },
         )
     }
 
@@ -459,6 +462,15 @@ object StatementParser {
         RegexOption.IGNORE_CASE,
     )
     private val maskedRe = Regex("""\b[0-9]{4,6}[Xx*•]{4,}[0-9Xx*•]*?(\d{4})\b|\b[Xx*•]{4,}\s?(\d{4})\b|\b\d{4}\s[Xx*]{4}\s[Xx*]{4}\s(\d{4})\b""")
+
+    private val numberRe = Regex("""(?<![\d])(\d{4,6})?[\sXx*•-]*[Xx*•]{2,}[\sXx*•-]*(\d{4})(?!\d)|(?<![\d])(\d{9,18})(?!\d)""")
+
+    /** Every masked or full card / account number in [text], as (first digits when printed, last 4). */
+    fun numbersIn(text: String): List<Pair<String?, String>> =
+        numberRe.findAll(text).map { m ->
+            if (m.groupValues[2].isNotEmpty()) m.groupValues[1].ifEmpty { null } to m.groupValues[2]
+            else m.groupValues[3].let { d -> (if (d.length >= 15) d.take(6) else null) to d.takeLast(4) }
+        }.distinct().toList()
 
     fun accountTailIn(text: String): String? {
         tailRe.find(text)?.let { m -> return m.groupValues[1].filter(Char::isDigit).takeLast(4) }

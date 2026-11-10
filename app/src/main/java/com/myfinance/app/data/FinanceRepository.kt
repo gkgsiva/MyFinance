@@ -46,11 +46,12 @@ class FinanceRepository(
     v15Db: V15Database,
     v16Db: V16Database,
     v17Db: V17Database,
+    v18Db: V18Database,
 ) {
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
-        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db, V16Database.FILE to v16Db, V17Database.FILE to v17Db)
+        listOf("myfinance.db" to db, "myfinance-extras.db" to extrasDb, V12Database.FILE to v12Db, V13Database.FILE to v13Db, V14Database.FILE to v14Db, V15Database.FILE to v15Db, V16Database.FILE to v16Db, V17Database.FILE to v17Db, V18Database.FILE to v18Db)
     }
 
     /** v1.3: recently deleted bin, deleted-row records, auto debit plans. */
@@ -67,6 +68,46 @@ class FinanceRepository(
 
     /** v1.7: nicknames for payments, kept apart from the merchant name. */
     val v17: V17Dao = v17Db.dao()
+
+    /** Next release: the family's own cards and accounts by number. */
+    val v18: V18Dao = v18Db.dao()
+
+    val myAccounts: Flow<List<com.myfinance.core.MyAccount>> = v18.observeAccounts().map { l -> l.map { it.toCore() } }
+
+    private suspend fun myAccountsNow(): List<com.myfinance.core.MyAccount> = runCatching { v18.accounts().map { it.toCore() } }.getOrDefault(emptyList())
+
+    /**
+     * Saves a card or account, then puts past entries on that card under its person. Returns how many past
+     * entries changed hands.
+     */
+    suspend fun saveMyAccount(a: com.myfinance.core.MyAccount): Int = withContext(Dispatchers.IO) {
+        v18.putAccount(a.toEntity())
+        applyMyAccounts()
+    }
+
+    suspend fun deleteMyAccount(id: Long) = withContext(Dispatchers.IO) { v18.deleteAccount(id) }
+
+    /** Sets the person on stored entries whose card / account number is registered to someone. */
+    suspend fun applyMyAccounts(): Int = withContext(Dispatchers.IO) {
+        val accounts = myAccountsNow()
+        if (accounts.isEmpty()) return@withContext 0
+        val me = ownerName.value
+        val changed = db.transactions().allOnce().mapNotNull { t ->
+            if (t.source == TxnSource.MANUAL || t.accountTail == null) return@mapNotNull null
+            val acc = com.myfinance.core.MyAccounts.match(accounts, t.accountTail, t.bank) ?: return@mapNotNull null
+            // Null owner = this phone's owner; a merged entry from another phone keeps its person unless the card says otherwise.
+            val want = acc.owner?.takeIf { it.isNotBlank() && it != me }
+            val bank = t.bank ?: acc.bank
+            if (t.owner == want && t.bank == bank) null else t.copy(owner = want, bank = bank)
+        }
+        if (changed.isNotEmpty()) db.transactions().updateAll(changed)
+        onDataChanged()
+        changed.size
+    }
+
+    /** The person a card / account number belongs to, when registered to someone other than this phone's owner. */
+    private suspend fun ownerForNumber(tail: String?, bank: String?): String? =
+        com.myfinance.core.MyAccounts.ownerOf(myAccountsNow(), tail, bank)?.takeIf { it.isNotBlank() && it != ownerName.value }
 
     /** Rupees per unit of other currencies, for foreign spends. Starts from [com.myfinance.core.Fx.defaultRates]. */
     private val _fxRates = MutableStateFlow(com.myfinance.core.Fx.defaultRates + com.myfinance.core.Fx.parseRates(
@@ -197,6 +238,8 @@ class FinanceRepository(
             reference = parsed.reference,
             balanceMinor = parsed.balanceMinor,
             note = parsed.foreign?.let { f -> parsed.fxRate?.let { com.myfinance.core.Fx.note(f, it) } },
+            // A registered card or account of another family member (an add-on card, a joint account).
+            owner = runCatching { ownerForNumber(parsed.accountTail, parsed.bank) }.getOrNull(),
         )
         // A name the user gave this payee ("Vegetable seller Ravi") replaces the raw UPI id / merchant text.
         val nick = parsed.merchant?.let { m -> runCatching { payeeName(m) }.getOrNull() }
@@ -932,6 +975,9 @@ class FinanceRepository(
         var skippedClosed = 0
         val closed = closedMonths()
         val zone = ZoneId.systemDefault()
+        val accounts = myAccountsNow()
+        val me = ownerName.value
+        fun ownerOf(tail: String?, bank: String?) = com.myfinance.core.MyAccounts.ownerOf(accounts, tail, bank)?.takeIf { it.isNotBlank() && it != me }
         for (c in rows) {
             val r = c.row
             // Closed months stay as they were reviewed.
@@ -950,6 +996,7 @@ class FinanceRepository(
                         amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
                         merchant = official,
                         accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
+                        owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
                         reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                         source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
                     ),
@@ -965,6 +1012,7 @@ class FinanceRepository(
                 category = cat.categorize(c.merchant, r.type, r.description),
                 accountTail = c.accountTail, bank = c.bank, timestamp = c.timestamp, source = TxnSource.STATEMENT,
                 smsKey = c.key, rawSms = r.description, reference = r.reference, balanceMinor = r.balanceMinor, uid = c.uid,
+                owner = ownerOf(c.accountTail, c.bank),
             )
             // The statement's merchant name stays; a payee name the user gave becomes the nickname.
             val row = rule?.applyTo(base) ?: base

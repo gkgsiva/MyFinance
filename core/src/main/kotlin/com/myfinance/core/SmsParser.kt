@@ -183,7 +183,7 @@ object SmsParser {
     }
 
     private val balanceClauses = listOf(
-        Regex("""\b(?:avl|avbl|available|total|updated|remaining|current|curr|clr|ledger|closing)\.?\s*(?:credit\s+)?(?:bal(?:ance)?|lmt|limit)\b[^\d\n]{0,30}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:avl|avbl|avail|available|total|updated|remaining|current|curr|clr|ledger|closing)(?:\.?\s*avail)?\.?\s*(?:credit\s+)?(?:bal(?:ance)?|lmt|limit)\b[^\d\n]{0,30}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
         Regex("""\b(?:balance|credit\s+limit)\s*(?:is|:)[^\d\n]{0,20}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
         Regex("""\b(?:total\s+)?outstanding\b[^\d\n]{0,20}(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?""", RegexOption.IGNORE_CASE),
     )
@@ -226,6 +226,8 @@ object SmsParser {
         }
         // "UPI/P2M/431234567890/SWIGGY" style narrations quoted in the SMS (from kharcha, Apache-2.0).
         upiNarration.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
+        // ICICI: "Acct XX123 debited for Rs 500.00 on 05-Nov-24; SWIGGY credited. UPI:431234567890."
+        if (type == TxnType.DEBIT) iciciPayee.find(text)?.let { m -> cleanName(m.groupValues[1])?.let { return it } }
         for (regex in ordered) {
             for (m in regex.findAll(text)) {
                 val cleaned = cleanName(m.groupValues[1]) ?: continue
@@ -238,6 +240,8 @@ object SmsParser {
         anyVpa.find(text)?.let { return cleanVpa(it.groupValues[1]) }
         return null
     }
+
+    private val iciciPayee = Regex(""";\s*([A-Za-z0-9][A-Za-z0-9 &'._@\-]{1,40}?)\s+credited\b""", RegexOption.IGNORE_CASE)
 
     private val upiNarration = Regex(
         """\bUPI/(?:(?:DR|CR|P2A|P2M|P2P|REV)/)?\d{6,}/([A-Za-z][A-Za-z0-9 &.'\-]{1,40}?)(?=\s*/|\s*\.\s|\s*\.$|\s+(?:avl|available|bal|ref|upi|on|not|if|call|sms)\b|$)""",

@@ -378,6 +378,7 @@ private fun MyFinanceRoot() {
                 )
             }
             composable("categories") { CategoriesScreen(vm = vm, open = { route -> nav.navigate(route) }) }
+            composable("my-accounts") { com.myfinance.app.ui.screens.MyAccountsScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable("accounts") { AccountsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
             composable("import-statement") {
                 ImportStatementScreen(

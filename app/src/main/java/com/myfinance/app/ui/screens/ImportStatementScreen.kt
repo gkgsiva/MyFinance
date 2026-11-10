@@ -226,6 +226,12 @@ private fun Ready(f: StatementFile, showLines: Boolean, toggleLines: () -> Unit,
     val s = f.summary
     val account = listOfNotNull(f.bank, f.accountTail?.let { "••$it" }).joinToString(" ").ifBlank { "Account not shown" }
     Text("${f.kind?.label ?: "Statement"} · $account", style = MaterialTheme.typography.bodyMedium)
+    f.matched?.let { m ->
+        Text(
+            "✓ Your registered " + m.label + (m.owner?.let { " ($it's)" } ?: ""),
+            style = MaterialTheme.typography.bodySmall, color = com.myfinance.app.ui.theme.IncomeGreen,
+        )
+    }
     val from = s.from
     val to = s.to
     if (from != null && to != null) {
