@@ -180,7 +180,7 @@ class StatementImportViewModel(app: Application) : AndroidViewModel(app) {
                 if (f.status != StatementFile.Status.READY || st == null) return@map f
                 val marked = StatementImport.markDuplicates(StatementImport.candidates(st, f.bank, f.accountTail), seen)
                 marked.filter { it.duplicateOf == null }.forEach { c ->
-                    seen += ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key)
+                    seen += ExistingTxn(c.row.amountMinor, c.row.type, c.timestamp, c.accountTail, c.row.reference, c.key, fromStatement = true, text = c.row.description)
                 }
                 f.copy(candidates = marked)
             }

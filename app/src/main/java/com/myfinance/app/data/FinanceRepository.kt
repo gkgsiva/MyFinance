@@ -904,7 +904,7 @@ class FinanceRepository(
     /** Every stored transaction, in the shape the statement matcher compares against. */
     suspend fun existingForImport(): List<ExistingTxn> = withContext(Dispatchers.IO) {
         val stored = db.transactions().allOnce().map {
-            ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, it.source == TxnSource.STATEMENT)
+            ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, it.source == TxnSource.STATEMENT, it.rawSms)
         }
         // Statement lines the user deleted count as already imported, so they stay deleted.
         val deleted = v13.keys().mapNotNull { k -> k.smsKey?.takeIf { it.startsWith("STMT|") } }
