@@ -60,7 +60,11 @@ enum class QuickAdd { PAYMENT_DUE, INVESTMENT, PROPERTY, EPF }
  * few days (and anything missed), then one-line alerts. Adding things lives in the + button menu.
  */
 @Composable
-fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
+fun TodayCard(
+    vm: FinanceViewModel, open: (String) -> Unit,
+    /** False on Home, where the month's ledger below already lists today's transactions. */
+    showTransactions: Boolean = true,
+) {
     val today by vm.v15.today.collectAsState()
     val all by vm.allTransactions.collectAsState()
     val nicks by vm.nicknames.collectAsState()
@@ -88,7 +92,8 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                 Text(formatInr(today.spentMinor), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
             }
             if (todays.isEmpty()) Text("No transactions yet today", style = small, color = muted)
-            val shown = if (showAllToday) todays else todays.take(5)
+            else if (!showTransactions) Text((if (todays.size == 1) "1 transaction" else "${todays.size} transactions") + " today, in the ledger below", style = small, color = muted)
+            val shown = if (!showTransactions) emptyList() else if (showAllToday) todays else todays.take(5)
             shown.forEach { t ->
                 val name = nicks[t.uid.substringBefore('#')] ?: t.merchant ?: if (t.type == com.myfinance.core.TxnType.CREDIT) "Money received" else "Payment"
                 Row(
@@ -111,7 +116,7 @@ fun TodayCard(vm: FinanceViewModel, open: (String) -> Unit) {
                     )
                 }
             }
-            if (todays.size > 5) {
+            if (showTransactions && todays.size > 5) {
                 Text(
                     if (showAllToday) "Show less" else "+${todays.size - 5} more today",
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
