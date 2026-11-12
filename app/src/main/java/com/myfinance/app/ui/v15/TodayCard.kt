@@ -64,6 +64,8 @@ fun TodayCard(
     vm: FinanceViewModel, open: (String) -> Unit,
     /** False on Home, where the month's ledger below already lists today's transactions. */
     showTransactions: Boolean = true,
+    /** False on Home, which shows today's spend above this card; the card then shows only what is due. */
+    showToday: Boolean = true,
 ) {
     val today by vm.v15.today.collectAsState()
     val all by vm.allTransactions.collectAsState()
@@ -83,15 +85,16 @@ fun TodayCard(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             // Today: total, then each transaction.
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showToday) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Today", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text("  " + now.format(dayName), style = small, color = muted, modifier = Modifier.weight(1f))
                 if (today.receivedMinor > 0) Text("+" + formatInr(today.receivedMinor) + "  ", style = small, color = IncomeGreen, fontWeight = FontWeight.SemiBold)
                 Text(formatInr(today.spentMinor), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
             }
-            if (todays.isEmpty()) Text("No transactions yet today", style = small, color = muted)
+            if (!showToday) Unit
+            else if (todays.isEmpty()) Text("No transactions yet today", style = small, color = muted)
             else if (!showTransactions) Text((if (todays.size == 1) "1 transaction" else "${todays.size} transactions") + " today, in the ledger below", style = small, color = muted)
             val shown = if (!showTransactions) emptyList() else if (showAllToday) todays else todays.take(5)
             shown.forEach { t ->
@@ -124,7 +127,7 @@ fun TodayCard(
                 )
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            if (showToday) HorizontalDivider(Modifier.padding(vertical = 6.dp))
 
             // Commitments: missed ones first, then today and the next few days.
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -214,7 +217,7 @@ fun QuickAddFab(vm: FinanceViewModel, open: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<QuickAdd?>(null) }
     Box {
-        FloatingActionButton(onClick = { menu = true }) { Icon(Icons.Filled.Add, contentDescription = "Add") }
+        com.myfinance.app.ui.theme.AppFab(onClick = { menu = true }) { Icon(Icons.Filled.Add, contentDescription = "Add") }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             fun pick(action: () -> Unit) { menu = false; action() }
             DropdownMenuItem(text = { Text("Spend (any date)") }, onClick = { pick { open("edit/0") } })

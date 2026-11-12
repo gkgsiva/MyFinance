@@ -143,7 +143,7 @@ private fun Kpi(
 ) {
     Card(
         modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.12f)),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {

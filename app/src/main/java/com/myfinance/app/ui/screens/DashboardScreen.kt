@@ -122,7 +122,7 @@ fun DashboardScreen(
         floatingActionButton = {
             // The current month adds through a menu (spend, income, payment due, ...); past months add a spend.
             if (month == currentMonth) com.myfinance.app.ui.v15.QuickAddFab(vm, open)
-            else FloatingActionButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
+            else com.myfinance.app.ui.theme.AppFab(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
         },
     ) { inner ->
         LazyColumn(
@@ -130,26 +130,43 @@ fun DashboardScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            // Serif title with a refresh button, then the month on a white pill.
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = vm::previousMonth) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(month.format(monthFormat), style = MaterialTheme.typography.titleLarge)
-                        // With a custom month (e.g. 25th to 24th) show which dates it covers.
-                        cycle.rangeLabel(month)?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(Modifier.fillMaxWidth()) {
+                    Text("Insights", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.align(Alignment.Center))
+                    Box(Modifier.align(Alignment.CenterEnd)) {
+                        com.myfinance.app.ui.theme.RoundIconHolder {
+                            IconButton(onClick = onImport, enabled = !importState.running) {
+                                if (importState.running) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Filled.Refresh, contentDescription = "Import SMS")
+                            }
                         }
                     }
-                    IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
-                    }
-                    IconButton(onClick = onImport, enabled = !importState.running) {
-                        if (importState.running) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Import SMS")
+                }
+            }
+
+            // This week: a day strip, a bar for each day's spend, and the chosen day's payments by time.
+            item { WeeklyInsightsCard(vm) { id -> open("edit/$id") } }
+
+            item {
+                androidx.compose.material3.Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                ) {
+                    Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = vm::previousMonth) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
+                        }
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(month.format(monthFormat), style = MaterialTheme.typography.titleMedium)
+                            // With a custom month (e.g. 25th to 24th) show which dates it covers.
+                            cycle.rangeLabel(month)?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
                         }
                     }
                 }

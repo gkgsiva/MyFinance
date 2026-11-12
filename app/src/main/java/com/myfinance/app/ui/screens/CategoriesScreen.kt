@@ -87,6 +87,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        item { com.myfinance.app.ui.theme.ScreenTitle("Manage", "Categories, labels, accounts and settings") }
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

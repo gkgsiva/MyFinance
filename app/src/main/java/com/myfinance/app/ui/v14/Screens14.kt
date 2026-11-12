@@ -453,7 +453,7 @@ fun PinDialog(suggested: String, onDismiss: () -> Unit, onPin: (String) -> Unit)
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.OutlinedTextField(name, { name = it.take(40) }, label = { Text("Name") }, singleLine = true)
-                Muted("Shows on the Dashboard with the same dates (a moving window like \"last 12 months\" keeps moving).")
+                Muted("Shows on Insights with the same dates (a moving window like \"last 12 months\" keeps moving).")
             }
         },
         confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onPin(name.trim()) }) { Text("Pin") } },

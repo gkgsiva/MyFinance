@@ -48,28 +48,34 @@ fun TransactionRow(
     nickname: String? = null,
     onClick: () -> Unit,
 ) {
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        ColorDot(categoryColor, 14)
+        com.myfinance.app.ui.theme.CategoryBadge(txn.category, categoryColor)
         Column(Modifier.weight(1f)) {
             Text(
                 nickname ?: txn.merchant ?: if (txn.type == TxnType.CREDIT) "Money received" else "Payment",
                 style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             val details = listOfNotNull(
+                txn.timestamp.toLocalDateTime().format(timeFormat),
                 nickname?.let { txn.merchant },
                 txn.category,
                 txn.owner,
                 txn.accountLabel,
-                txn.timestamp.toLocalDateTime().format(timeFormat),
                 when (txn.source) { TxnSource.MANUAL -> "manual"; TxnSource.STATEMENT -> "statement"; else -> null },
                 if (txn.excluded) "excluded" else null,
                 if (hidden) "hidden" else null,
@@ -93,8 +99,10 @@ fun TransactionRow(
         }
         Text(
             (if (txn.type == TxnType.CREDIT) "+" else "−") + formatInr(txn.amountMinor),
-            color = if (txn.type == TxnType.CREDIT) IncomeGreen else ExpenseRed,
+            color = if (txn.type == TxnType.CREDIT) IncomeGreen else MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.SemiBold,
         )
+    }
     }
 }

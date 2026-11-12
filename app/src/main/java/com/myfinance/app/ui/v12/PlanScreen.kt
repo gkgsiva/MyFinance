@@ -45,7 +45,7 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item { Text("Plan", style = MaterialTheme.typography.headlineSmall) }
+        item { com.myfinance.app.ui.theme.ScreenTitle("Plan", "What is coming, and tools to stay on top") }
         item { Tile("Payments ahead", "Day · week · month", "Reminders, EMIs, auto debits, card bills and yearly dues; what was missed") { open("payments-ahead") } }
         item { Tile("30-day forecast", "Balance", "Your bank balance over the next 30 days after salary, EMIs and bills") { open("forecast") } }
         item { Tile("Review inbox", "Check", "New payees, possible recurring payments, transfers and duplicates to confirm") { open("review") } }
@@ -109,13 +109,42 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
 
 @Composable
 private fun Tile(title: String, value: String, hint: String, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text(value, fontWeight = FontWeight.SemiBold)
-        }
+    val (emoji, tint) = tileLook(title)
+    com.myfinance.app.ui.theme.NavTile(emoji, tint, title, hint, value, onClick)
+}
+
+private fun tileLook(title: String): Pair<String, androidx.compose.ui.graphics.Color> {
+    val t = com.myfinance.app.ui.theme.ChartPalette
+    return when (title) {
+        "Payments ahead" -> "📅" to t[0]
+        "30-day forecast" -> "🔮" to t[1]
+        "Review inbox" -> "📥" to t[2]
+        "Heavy spends" -> "🏋️" to t[5]
+        "Family UPI" -> "👨‍👩‍👧" to t[3]
+        "Transfers & card bills" -> "🔁" to t[4]
+        "Ask" -> "💬" to t[6]
+        "Cash flow calendar" -> "🗓️" to t[0]
+        "Net worth" -> "📊" to t[2]
+        "Auto debits & EMIs" -> "🔄" to t[4]
+        "EMIs & loan payoff" -> "🏦" to t[3]
+        "Card bill check" -> "💳" to t[1]
+        "Refund tracker" -> "↩️" to t[2]
+        "Year in review" -> "🎉" to t[6]
+        "Subscription audit" -> "📺" to t[5]
+        "Insurance & warranties" -> "🛡️" to t[4]
+        "Lent & borrowed" -> "🤝" to t[3]
+        "Bill reminders" -> "🔔" to t[0]
+        "Split & settle" -> "➗" to t[1]
+        "Cash wallet" -> "👛" to t[7]
+        "Tax-time pack" -> "🧾" to t[6]
+        "Monthly close" -> "✅" to t[2]
+        "Data health check" -> "🩺" to t[5]
+        "Export to Excel or Sheets" -> "📤" to t[4]
+        "Foreign currency" -> "🌍" to t[4]
+        "All settings" -> "⚙️" to t[6]
+        "Custom SMS rules" -> "✉️" to t[0]
+        "App lock" -> "🔒" to t[3]
+        "Backup & restore" -> "💾" to t[2]
+        else -> "•" to t[0]
     }
 }
