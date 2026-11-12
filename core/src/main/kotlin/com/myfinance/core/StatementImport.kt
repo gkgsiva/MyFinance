@@ -136,7 +136,10 @@ object StatementImport {
             c
         }.toMutableList()
 
-        // Pass 2: same amount and direction, close in time, closest first.
+        // Pass 2: same amount and direction, close in time, closest first. A foreign spend's SMS gives the amount
+        // in dollars (converted at an approximate rate): the same foreign amount, or a rupee amount close to it.
+        val foreignSms = existing.indices.filter { !existing[it].fromStatement && existing[it].key?.startsWith("STMT|") != true }
+            .mapNotNull { i -> existing[i].text?.let { Fx.find(it)?.first }?.let { i to it } }
         val pairs = ArrayList<Triple<Int, Int, Long>>()
         result.forEachIndexed { ci, c ->
             if (c.duplicateOf != null) return@forEachIndexed
@@ -146,10 +149,25 @@ object StatementImport {
                 val e = existing[i]
                 val et = tail(e.accountTail)
                 // Another card number is another transaction, unless it is the same statement line imported
-                // again (an older version of the app, or a different card number typed on import).
-                if (c.accountTail != null && et != null && et != c.accountTail && !(e.fromStatement && sameLine(c.row.description, e.text))) continue
+                // again (an older version of the app, or a different card number typed on import), or a debit
+                // card's SMS for a card payment from this bank account.
+                if (!sameAccount(c.accountTail, et) && !(e.fromStatement && sameLine(c.row.description, e.text)) &&
+                    !(!e.fromStatement && !c.cardStatement && debitCardSms(e.text) && debitCardLine(c.row.description))
+                ) continue
                 val gap = abs(day(e.timestamp) - cd)
-                if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (et == c.accountTail && et != null) 0 else 1))
+                if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (et != null && c.accountTail != null && sameAccount(et, c.accountTail)) 0 else 1))
+            }
+            for ((i, fx) in foreignSms) {
+                if (used[i]) continue
+                val e = existing[i]
+                if (e.type != c.row.type || e.amountMinor == c.row.amountMinor) continue
+                val exact = c.row.foreign?.let { f -> Fx.find(f)?.first == fx } == true
+                val close = c.row.foreign == null && abs(e.amountMinor - c.row.amountMinor) * 100 <= c.row.amountMinor * FX_TOLERANCE_PCT
+                // Only on the same card: rupee amounts that are merely close need the card to agree.
+                val et = tail(e.accountTail)
+                if (!(exact || close) || c.accountTail == null || et == null || !sameAccount(c.accountTail, et)) continue
+                val gap = abs(day(e.timestamp) - cd)
+                if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (exact) 2 else 5))
             }
         }
         val taken = BooleanArray(result.size)
@@ -161,6 +179,30 @@ object StatementImport {
         }
         return result
     }
+
+    /** How far (percent) a foreign spend's SMS amount, converted at an approximate rate, may be from the statement's. */
+    private const val FX_TOLERANCE_PCT = 15
+
+    /**
+     * Two account numbers (last digits) can be the same account: either is unknown, they are equal, or one is
+     * the end of the other. ICICI's SMS print 3 digits ("Acct XX144") where its statements print 4 (4144).
+     */
+    fun sameAccount(a: String?, b: String?): Boolean {
+        val x = a?.filter(Char::isDigit)?.ifEmpty { null } ?: return true
+        val y = b?.filter(Char::isDigit)?.ifEmpty { null } ?: return true
+        if (x == y) return true
+        val (short, long) = if (x.length <= y.length) x to y else y to x
+        return short.length >= 3 && long.endsWith(short)
+    }
+
+    private val debitCardWords = Regex("""\bdebit\s*card\b""", RegexOption.IGNORE_CASE)
+    private val creditCardWords = Regex("""\bcredit\s*card\b""", RegexOption.IGNORE_CASE)
+    /** A bank statement line paid with the account's debit card (shop, online or ATM). */
+    private val debitCardNarration = Regex("""^(DEBIT CARD\b|ICICI ATM\b|OTHER ATMS\b)|\b(VPS|IPS|MPS|PCD|POS|ATM|NFS|VIN|DCARD)/|\bPOS\s|\bATM\s?WDL|CASH WDL""", RegexOption.IGNORE_CASE)
+
+    /** An SMS about a debit card ("Debit Card XX1234"), which names the card, not the account. */
+    private fun debitCardSms(text: String?) = text != null && debitCardWords.containsMatchIn(text) && !creditCardWords.containsMatchIn(text)
+    private fun debitCardLine(narration: String) = debitCardNarration.containsMatchIn(narration.trim())
 
     private fun words(s: String): String =
         s.removePrefix("Statement: ").substringBefore("\n\nSMS: ").lowercase()
@@ -189,7 +231,14 @@ object StatementImport {
      * same transaction as, or null when it is new: same reference, or same amount and direction on
      * a compatible account within [windowDays] days, closest first.
      */
-    fun lineForSms(sms: ExistingTxn, lines: List<ExistingTxn>, windowDays: Long = 2, zone: ZoneId = ZoneId.systemDefault()): Int? {
+    fun lineForSms(
+        sms: ExistingTxn,
+        lines: List<ExistingTxn>,
+        windowDays: Long = 2,
+        zone: ZoneId = ZoneId.systemDefault(),
+        /** Without a shared reference, both must name an account (or the SMS be a debit card's). */
+        needAccount: Boolean = false,
+    ): Int? {
         fun tail(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.ifEmpty { null }
         val st = tail(sms.accountTail)
         val ref = sms.reference?.takeIf { it.length >= 6 }
@@ -199,13 +248,61 @@ object StatementImport {
                 ?.let { return it }
         }
         val day = Dates.localDate(sms.timestamp, zone).toEpochDay()
-        return same.filter { i ->
+        fun gap(i: Int) = abs(Dates.localDate(lines[i].timestamp, zone).toEpochDay() - day)
+        val debitCard = debitCardSms(sms.text)
+        same.filter { i ->
             val lt = tail(lines[i].accountTail)
-            !(st != null && lt != null && st != lt) && abs(Dates.localDate(lines[i].timestamp, zone).toEpochDay() - day) <= windowDays
+            val account = if (needAccount) st != null && lt != null && sameAccount(st, lt) else sameAccount(st, lt)
+            (account || debitCard && debitCardLine(lines[i].text.orEmpty().removePrefix("Statement: "))) && gap(i) <= windowDays
         }.minWithOrNull(
-            compareBy<Int> { abs(Dates.localDate(lines[it].timestamp, zone).toEpochDay() - day) }
-                .thenBy { if (tail(lines[it].accountTail) == st && st != null) 0 else 1 },
-        )
+            compareBy<Int> { gap(it) }
+                .thenBy { if (st != null && tail(lines[it].accountTail) != null && sameAccount(tail(lines[it].accountTail), st)) 0 else 1 },
+        )?.let { return it }
+        // A foreign spend's SMS: its rupee amount is only an estimate. A close amount on the same card.
+        if (sms.text?.let { Fx.find(it) } == null || st == null) return null
+        return lines.indices.filter { i ->
+            val l = lines[i]
+            val lt = tail(l.accountTail)
+            l.type == sms.type && lt != null && sameAccount(st, lt) && gap(i) <= windowDays &&
+                abs(l.amountMinor - sms.amountMinor) * 100 <= l.amountMinor * FX_TOLERANCE_PCT
+        }.minWithOrNull(compareBy<Int> { gap(it) }.thenBy { abs(lines[it].amountMinor - sms.amountMinor) })
+    }
+
+    /**
+     * Stored SMS entries that are the same payment as a stored statement line, kept twice by earlier versions
+     * (ICICI's SMS name the account by 3 digits, its statements by 4; a debit card's SMS names the card; a
+     * foreign spend's SMS is in dollars). Returns (index in [sms], index in [lines]) pairs, one to one.
+     * Stricter than importing: both sides must name an account (or be a debit card payment), so payments on
+     * unknown accounts are never paired by amount alone.
+     */
+    fun storedSmsDoubles(
+        sms: List<ExistingTxn>,
+        lines: List<ExistingTxn>,
+        windowDays: Long = 2,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<Pair<Int, Int>> {
+        val order = lines.indices.sortedBy { lines[it].timestamp }
+        val times = LongArray(order.size) { lines[order[it]].timestamp }
+        val used = BooleanArray(lines.size)
+        val span = (windowDays + 1) * 24 * 60 * 60 * 1000L
+        val out = ArrayList<Pair<Int, Int>>()
+        for (si in sms.indices.sortedBy { sms[it].timestamp }) {
+            val s = sms[si]
+            var lo = java.util.Arrays.binarySearch(times, s.timestamp - span).let { if (it < 0) -it - 1 else it }
+            while (lo > 0 && times[lo - 1] >= s.timestamp - span) lo--
+            val near = ArrayList<Int>()
+            var k = lo
+            while (k < order.size && times[k] <= s.timestamp + span) {
+                val li = order[k]
+                if (!used[li] && lines[li].type == s.type) near += li
+                k++
+            }
+            if (near.isEmpty()) continue
+            val pick = lineForSms(s, near.map { lines[it] }, windowDays, zone, needAccount = true) ?: continue
+            used[near[pick]] = true
+            out += si to near[pick]
+        }
+        return out
     }
 
     /** Totals for the preview. */

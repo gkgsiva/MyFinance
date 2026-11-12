@@ -30,8 +30,10 @@ data class RecurringPayment(
     val lastDate: LocalDate,
     val nextDate: LocalDate,
     val occurrences: Int,
+    /** Set when one payee has two series (two EMIs to one lender): the amount tells them apart. */
+    val amountTag: Long? = null,
 ) {
-    val key: String get() = Categorizer.merchantKey(merchant) + "|" + cadence.name
+    val key: String get() = Categorizer.merchantKey(merchant) + "|" + cadence.name + (amountTag?.let { "|$it" } ?: "")
 }
 
 /** Finds repeating payments in the transaction history. */
@@ -49,12 +51,15 @@ object RecurringDetector {
         val out = ArrayList<RecurringPayment>()
         for ((_, group) in debits.groupBy { Categorizer.merchantKey(it.merchant!!) }) {
             if (group.size < 2) continue
-            findSeries(group, zone)?.let { s ->
-                val (cadence, series) = s
-                val last = series.last()
+            // The same amount on about the same day each month is recurring, even when the payee also takes other
+            // payments (two EMIs to one lender, a subscription among one-off purchases).
+            fun live(c: Cadence, s: List<TxnLite>) = ChronoUnit.DAYS.between(Dates.localDate(s.last().timestamp, zone), today) <= c.days * 2 + 7
+            val series = sameAmountSeries(group, zone).filter { (c, s) -> live(c, s) }.ifEmpty { listOfNotNull(findSeries(group, zone)) }
+            for ((cadence, s) in series) {
+                val last = s.last()
                 val lastDate = Dates.localDate(last.timestamp, zone)
                 // Stopped: missed two cycles in a row.
-                if (ChronoUnit.DAYS.between(lastDate, today) > cadence.days * 2 + 7) return@let
+                if (ChronoUnit.DAYS.between(lastDate, today) > cadence.days * 2 + 7) continue
                 var next = cadence.next(lastDate)
                 while (next.isBefore(today)) next = cadence.next(next)
                 out += RecurringPayment(
@@ -64,11 +69,40 @@ object RecurringDetector {
                     cadence = cadence,
                     lastDate = lastDate,
                     nextDate = next,
-                    occurrences = series.size,
+                    occurrences = s.size,
+                    amountTag = if (series.size > 1) last.amountMinor else null,
                 )
             }
         }
         return out.sortedBy { it.nextDate }
+    }
+
+    /**
+     * Payments of exactly one amount (within 2%) to one payee on about the same day of the month (within 4 days),
+     * month after month: at least three, most of them a month apart. Each amount is its own series.
+     */
+    private fun sameAmountSeries(group: List<TxnLite>, zone: ZoneId): List<Pair<Cadence, List<TxnLite>>> {
+        val out = ArrayList<Pair<Cadence, List<TxnLite>>>()
+        val sorted = group.sortedBy { it.timestamp }
+        val clusters = ArrayList<MutableList<TxnLite>>()
+        for (t in sorted.sortedBy { it.amountMinor }) {
+            val c = clusters.lastOrNull()
+            if (c != null && kotlin.math.abs(t.amountMinor - c[0].amountMinor) * 50 <= c[0].amountMinor) c += t else clusters += mutableListOf(t)
+        }
+        for (c in clusters) {
+            // One a month: two the same month are not a monthly series of this amount.
+            val byMonth = c.sortedBy { it.timestamp }.distinctBy { java.time.YearMonth.from(Dates.localDate(it.timestamp, zone)) }
+            if (byMonth.size < 3) continue
+            val days = byMonth.map { Dates.localDate(it.timestamp, zone).dayOfMonth }
+            val typical = days.sorted()[days.size / 2]
+            fun near(d: Int) = minOf(kotlin.math.abs(d - typical), 31 - kotlin.math.abs(d - typical)) <= 4
+            val onDay = byMonth.filter { near(Dates.localDate(it.timestamp, zone).dayOfMonth) }
+            if (onDay.size < 3 || onDay.size * 10 < byMonth.size * 7) continue
+            val dates = onDay.map { Dates.localDate(it.timestamp, zone) }
+            val gaps = dates.zipWithNext { a, b -> ChronoUnit.DAYS.between(a, b) }
+            if (gaps.count { Cadence.MONTHLY.fits(it) } * 10 >= gaps.size * 7) out += Cadence.MONTHLY to onDay
+        }
+        return out
     }
 
     private fun findSeries(group: List<TxnLite>, zone: ZoneId): Pair<Cadence, List<TxnLite>>? {
