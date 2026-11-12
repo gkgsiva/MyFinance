@@ -167,9 +167,11 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                     Text("Next: ${item.nextDate.format(dayFmt)} (${relativeDay(item.nextDate)})" + if (item.estimated) ", estimated" else "")
                     Text("Amount: ${formatInr(item.amountMinor)}")
                     item.lastPaid?.let { Text("Last paid: ${it.format(dayFmt)}") }
+                    if (item.instalmentsPaid != null && item.instalmentsTotal != null) Text("Paid ${item.instalmentsPaid} of ${item.instalmentsTotal} instalments")
                     item.remaining?.let { Text("$it instalments left, last one ${item.endDate?.format(monthFmt)}") }
+                    item.remainingMinor?.let { Text("Still to pay: about ${formatInr(it)}") }
                     item.account?.let { Text("Account: $it") }
-                    if (item.occurrences > 0) Muted("Found ${item.occurrences} payments in your SMS.")
+                    if (item.occurrences > 0) Muted("Found ${item.occurrences} payments in your SMS and statements.")
                     Muted("Hide takes it off this list but keeps it in the totals above.")
                     if (com.myfinance.core.AutoDebits.payeeKey(item) != null) {
                         Muted("Not recurring takes this payee off the list and out of the totals, e.g. a one-time payment or a family UPI payment. Labelling a payment \"Family UPI\" does the same.")
@@ -263,6 +265,7 @@ private fun AutoDebitRow(i: AutoDebitItem, hidden: Boolean, onClick: () -> Unit)
                 val extra = buildList {
                     add(i.kind.label)
                     add(i.cadenceLabel)
+                    if (i.instalmentsPaid != null && i.instalmentsTotal != null) add("${i.instalmentsPaid} of ${i.instalmentsTotal} paid")
                     i.remaining?.let { add("$it left") }
                     i.account?.let { add(it) }
                     if (hidden) add("hidden")

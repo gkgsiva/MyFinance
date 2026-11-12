@@ -61,6 +61,11 @@ data class AutoDebitItem(
     val account: String? = null,
     val planId: String? = null,
     val everyMonths: Int = 1,
+    /** EMIs whose statement / SMS prints the instalment ("<4/6>", "EMI 3 of 12"): instalments paid and in all. */
+    val instalmentsPaid: Int? = null,
+    val instalmentsTotal: Int? = null,
+    /** What is still to pay: [remaining] times the instalment, when known. */
+    val remainingMinor: Long? = null,
 )
 
 data class AutoDebitTotals(val next30DaysMinor: Long, val next30DaysCount: Int, val monthlyMinor: Long)
@@ -102,6 +107,85 @@ object AutoDebits {
     private fun debitPayee(d: DebitRecord): String =
         d.txn.merchant?.let { Categorizer.merchantKey(it) }?.takeIf { it.isNotBlank() }
             ?: "acct ${d.txn.account} ${d.txn.amountMinor / 100}"
+
+    /** "Principal Amount Amortization - <4/6>", "EMI 3 of 12", "Instalment 3/12": the instalment and the count. */
+    private val instalmentRe = Regex(
+        """<\s*(\d{1,3})\s*/\s*(\d{1,3})\s*>|\b(?:EMI|INSTAL+MENT|INST)\b\D{0,12}?(\d{1,3})\s*(?:OF|/)\s*(\d{1,3})\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val emiInterest = Regex("""interest\s+amount\s+amortization|\bemi\s+interest\b""", RegexOption.IGNORE_CASE)
+
+    /** The instalment number and count printed on an EMI line, when there is one. */
+    fun instalmentOf(text: String?): Pair<Int, Int>? {
+        val m = text?.let { instalmentRe.find(it) } ?: return null
+        val k = (m.groupValues[1].ifEmpty { m.groupValues[3] }).toIntOrNull() ?: return null
+        val n = (m.groupValues[2].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: return null
+        return (k to n).takeIf { n in 2..360 && k in 1..n }
+    }
+
+    /**
+     * EMIs that print which instalment each payment is (card EMIs: "Principal Amount Amortization - <4/6>" with
+     * its interest line). Each EMI is told apart by its card, its length and the month it started; the latest
+     * instalment gives what is paid, what is left and the last month. Finished EMIs are left out.
+     */
+    fun instalmentEmis(debits: List<DebitRecord>, today: LocalDate, zone: ZoneId = ZoneId.systemDefault()): List<AutoDebitItem> {
+        data class Inst(val d: DebitRecord, val k: Int, val n: Int, val date: LocalDate, val start: java.time.YearMonth, val interest: Boolean, val name: String?)
+        val seen = debits.filter { it.txn.type == TxnType.DEBIT }.mapNotNull { d ->
+            val text = d.sms?.removePrefix("Statement: ")?.substringBefore("\n\nSMS: ") ?: d.txn.merchant
+            val (k, n) = instalmentOf(text) ?: instalmentOf(d.txn.merchant) ?: return@mapNotNull null
+            val date = Dates.localDate(d.txn.timestamp, zone)
+            // "<2/6>GADGET SHOP": the purchase the EMI is for.
+            val name = text?.let { t -> instalmentRe.find(t)?.let { t.substring(it.range.last + 1) } }?.trim()?.takeIf { it.count(Char::isLetter) >= 3 }
+            Inst(d, k, n, date, java.time.YearMonth.from(date).minusMonths((k - 1).toLong()), emiInterest.containsMatchIn(text.orEmpty()), name)
+        }
+        val out = ArrayList<AutoDebitItem>()
+        // The same EMI's start month can read a month apart (billing dates move): allow one month either way.
+        val groups = ArrayList<MutableList<Inst>>()
+        for (i in seen.sortedBy { it.date }) {
+            val g = groups.firstOrNull { g -> g[0].n == i.n && g[0].d.txn.account == i.d.txn.account && kotlin.math.abs(ChronoUnit.MONTHS.between(g[0].start, i.start)) <= 1 &&
+                g.none { it.k == i.k && it.interest == i.interest } }
+            if (g != null) g += i else groups += mutableListOf(i)
+        }
+        for (g in groups) {
+            val latestK = g.maxOf { it.k }
+            val n = g[0].n
+            val latest = g.filter { it.k == latestK }
+            // One instalment: principal plus interest (when printed on the same month).
+            val instalment = latest.sumOf { it.d.txn.amountMinor }
+            val lastDate = latest.maxOf { it.date }
+            val left = n - latestK
+            if (left <= 0) continue
+            // Not seen for two months: probably closed early or the statements stop.
+            if (ChronoUnit.DAYS.between(lastDate, today) > 70) continue
+            var next = lastDate.plusMonths(1)
+            var leftNow = left
+            while (next.isBefore(today.minusDays(3)) && leftNow > 1) { next = next.plusMonths(1); leftNow-- }
+            val end = lastDate.plusMonths(left.toLong())
+            val days = ChronoUnit.DAYS.between(today, next)
+            val acct = g[0].d.txn.account
+            val title = g.firstNotNullOfOrNull { it.name }?.let { Narration.merchant(it) }?.let { "$it EMI" } ?: ("Card EMI" + (acct?.let { " · $it" } ?: ""))
+            out += AutoDebitItem(
+                key = "emi:${acct.orEmpty()}|${g[0].start}|$n",
+                name = title,
+                kind = AutoDebitKind.EMI,
+                amountMinor = instalment,
+                cadenceLabel = "Monthly",
+                nextDate = next,
+                daysLeft = days,
+                state = state(days),
+                source = AutoDebitSource.DETECTED,
+                lastPaid = lastDate,
+                remaining = leftNow,
+                endDate = end,
+                occurrences = latestK,
+                account = acct,
+                instalmentsPaid = n - leftNow,
+                instalmentsTotal = n,
+                remainingMinor = instalment * leftNow,
+            )
+        }
+        return out
+    }
 
     /** True when an SMS describes a mandate / NACH / standing instruction debit. */
     fun isMandate(text: String?): Boolean = text != null && mandate.containsMatchIn(text)
@@ -275,6 +359,10 @@ object AutoDebits {
         notRecurring: Set<String> = emptySet(),
     ): List<AutoDebitItem> {
         val planItems = plans.mapNotNull { planItem(it, debits, today, zone) }
+        val emiItems = instalmentEmis(debits, today, zone)
+        // EMI lines are read above; as plain payments they would show again as a recurring "EMI principal".
+        fun isEmiLine(name: String?) = name != null && (instalmentOf(name) != null || name.startsWith("EMI principal") || name.startsWith("EMI interest") ||
+            name.endsWith(" EMI") || name.endsWith(" EMI interest"))
 
         val billItems = emiBills.filter { it.kind == BillKind.EMI }.map { b ->
             val days = ChronoUnit.DAYS.between(today, b.dueDate)
@@ -292,7 +380,7 @@ object AutoDebits {
             )
         }
 
-        val recurringItems = recurring.map { r ->
+        val recurringItems = recurring.filterNot { isEmiLine(it.merchant) }.map { r ->
             val days = ChronoUnit.DAYS.between(today, r.nextDate)
             val sms = debits.lastOrNull { d -> d.txn.merchant?.let { Categorizer.merchantKey(it) } == Categorizer.merchantKey(r.merchant) }?.sms
             AutoDebitItem(
@@ -313,7 +401,10 @@ object AutoDebits {
         val recurringNames = recurring.map { Categorizer.merchantKey(it.merchant) }.toSet()
         val mandateItems = mandateSeries(debits, today, zone).filter { it.key.removePrefix("nach:") !in recurringNames }
 
-        val fixed = planItems + billItems
+        val fixed = planItems + billItems + emiItems.filterNot { e ->
+            // The user's own plan for the same EMI wins.
+            planItems.any { p -> p.kind == AutoDebitKind.EMI && kotlin.math.abs(p.amountMinor - e.amountMinor) * 100 <= e.amountMinor * 15 && p.account == e.account }
+        }
         fun duplicatesFixed(d: AutoDebitItem): Boolean {
             val nameKey = Categorizer.merchantKey(d.name)
             return fixed.any { f ->

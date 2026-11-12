@@ -43,7 +43,7 @@ class FinanceRepository(
     private val db: FinanceDatabase,
     private val extrasDb: ExtrasDatabase,
     v12Db: V12Database,
-    v13Db: V13Database,
+    private val v13Db: V13Database,
     v14Db: V14Database,
     v15Db: V15Database,
     v16Db: V16Database,
@@ -195,6 +195,8 @@ class FinanceRepository(
     suspend fun ensureDefaults() {
         runCatching { leaveOutCardBillPaymentsOnce() }
         runCatching { removeStatementRepeatsOnce() }
+        runCatching { removeSmsDoublesOnce() }
+        runCatching { refreshStatementMerchantsOnce() }
         runCatching { leaveOutCardPaymentPairs() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
@@ -254,6 +256,97 @@ class FinanceRepository(
             onDataChanged()
         }
     }
+
+    /**
+     * Once (1.11.3): an SMS entry and the statement line for the same payment, both kept by earlier versions
+     * because they didn't see them as one (ICICI's SMS say "Acct XX144" where the statement says 4144; a debit
+     * card's SMS names the card; a foreign spend's SMS is in dollars). The statement line stays, as the official
+     * record, and takes the SMS text and anything the user changed on the SMS entry (category, note, labels,
+     * nickname). The SMS entry goes to Recently deleted and is remembered, so a rescan won't add it back.
+     */
+    private suspend fun removeSmsDoublesOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_SMS_DOUBLE_CLEANUP, false)) return@withContext
+        // Marked done first: if anything below fails, the app must not try (and fail) again at every start.
+        prefs.edit().putBoolean(KEY_SMS_DOUBLE_CLEANUP, true).apply()
+        val all = db.transactions().allOnce()
+        val sms = all.filter { it.source == TxnSource.SMS && it.smsKey != null && !it.smsKey.startsWith("STMT|") }
+        // Statement lines not yet linked to an SMS.
+        val lines = all.filter { it.source == TxnSource.STATEMENT && it.smsKey?.startsWith("STMT|") == true }
+        if (sms.isEmpty() || lines.isEmpty()) return@withContext
+        fun ex(t: TransactionEntity, line: Boolean) =
+            ExistingTxn(t.amountMinor, t.type, t.timestamp, t.accountTail, t.reference, t.smsKey, t.id, line, t.rawSms)
+        // Family members' entries pair only with their own statements.
+        val pairs = sms.groupBy { it.owner.orEmpty() }.flatMap { (owner, mine) ->
+            val theirLines = lines.filter { it.owner.orEmpty() == owner }
+            StatementImport.storedSmsDoubles(mine.map { ex(it, false) }, theirLines.map { ex(it, true) })
+                .map { (si, li) -> mine[si] to theirLines[li] }
+        }
+        if (pairs.isEmpty()) return@withContext
+        val now = System.currentTimeMillis()
+        val labelsByUid = runCatching { v13.allLabels() }.getOrDefault(emptyList()).groupBy({ it.uid }, { it.label })
+        val newLabels = ArrayList<TxnLabelEntity>()
+        val nicks = ArrayList<NicknameEntity>()
+        val updated = pairs.map { (s, line) ->
+            labelsByUid[s.uid].orEmpty().filter { it !in labelsByUid[line.uid].orEmpty() }.forEach { newLabels += TxnLabelEntity(line.uid, it) }
+            runCatching { v17.nicknameOf(s.uid)?.let { n -> if (v17.nicknameOf(line.uid) == null) nicks += NicknameEntity(line.uid, n) } }
+            val edits = s.userEdited && !line.userEdited
+            line.copy(
+                rawSms = statementText(line.rawSms.orEmpty(), s.rawSms),
+                reference = line.reference ?: s.reference, bank = line.bank ?: s.bank,
+                category = if (edits) s.category else line.category,
+                note = line.note ?: s.note,
+                excluded = if (edits) s.excluded else line.excluded || s.excluded,
+                userEdited = line.userEdited || s.userEdited,
+            )
+        }
+        val gone = pairs.map { it.first }
+        // Remembered first (in one go), so a removed SMS is never added again; then all changes in one transaction,
+        // so the screens refresh once instead of once per entry.
+        runCatching {
+            v13Db.withTransaction {
+                for (t in gone) {
+                    v13.putTrash(DeletedTxnEntity.from(t, now))
+                    v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now))
+                }
+            }
+        }
+        db.withTransaction {
+            db.transactions().updateAll(updated)
+            gone.map { it.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) }
+        }
+        if (newLabels.isNotEmpty()) runCatching { v13.addLabels(newLabels) }
+        if (nicks.isNotEmpty()) runCatching { v17.putNicknames(nicks) }
+        prefs.edit().putInt(KEY_SMS_DOUBLE_REMOVED, gone.size).apply()
+        onDataChanged()
+    }
+
+    /**
+     * Once (1.11.3): statement lines get the merchant name read from their narration again, now that names are
+     * picked out of UPI, IMPS, NEFT, debit card and bill payment remarks (and never left empty). Lines the user
+     * edited keep theirs; a line still in "Other" is categorised again by its new name.
+     */
+    private suspend fun refreshStatementMerchantsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_MERCHANT_REFRESH, false)) return@withContext
+        prefs.edit().putBoolean(KEY_MERCHANT_REFRESH, true).apply()
+        val cat = categorizer()
+        val changed = db.transactions().allOnce().filter { it.source == TxnSource.STATEMENT && !it.userEdited && !it.rawSms.isNullOrBlank() }
+            .mapNotNull { t ->
+                val narration = t.rawSms!!.removePrefix("Statement: ").substringBefore("\n\nSMS: ")
+                val name = com.myfinance.core.Narration.merchant(narration) ?: return@mapNotNull null
+                if (name == t.merchant) return@mapNotNull null
+                // A rule of the user's that names the merchant keeps its name.
+                if (runCatching { v12.ruleFor(null, narration, t.merchant, t.type, t.amountMinor)?.merchant }.getOrNull() != null) return@mapNotNull null
+                val category = if (t.category == DefaultCategories.OTHER && !t.excluded) cat.categorize(name, t.type, narration) else t.category
+                t.copy(merchant = name, category = category)
+            }
+        if (changed.isNotEmpty()) {
+            db.withTransaction { changed.chunked(500).forEach { db.transactions().updateAll(it) } }
+            onDataChanged()
+        }
+    }
+
+    /** How many SMS entries the 1.11.3 cleanup found already imported from a statement (0 when none). */
+    val smsDoublesRemoved: Int get() = prefs.getInt(KEY_SMS_DOUBLE_REMOVED, 0)
 
     /**
      * A card bill paid from a bank account, with both sides stored (the bank's debit and the "payment received"
@@ -1323,12 +1416,14 @@ class FinanceRepository(
     private suspend fun linkToStatementLine(sms: TransactionEntity, nick: String? = null): Boolean {
         if (db.transactions().bySmsKey(sms.smsKey ?: return false) != null) return false
         val window = 3 * 24 * 60 * 60 * 1000L
+        // A foreign spend's SMS gives an estimated rupee amount, so its line can differ a little.
+        val foreign = sms.rawSms?.let { com.myfinance.core.Fx.find(it) } != null
         val lines = db.transactions().rangeOnce(sms.timestamp - window, sms.timestamp + window)
-            .filter { it.source == TxnSource.STATEMENT && it.smsKey?.startsWith("STMT|") != false && it.amountMinor == sms.amountMinor && it.type == sms.type }
+            .filter { it.source == TxnSource.STATEMENT && it.smsKey?.startsWith("STMT|") != false && (it.amountMinor == sms.amountMinor || foreign) && it.type == sms.type }
         if (lines.isEmpty()) return false
         val i = StatementImport.lineForSms(
-            ExistingTxn(sms.amountMinor, sms.type, sms.timestamp, sms.accountTail, sms.reference, sms.smsKey),
-            lines.map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, true) },
+            ExistingTxn(sms.amountMinor, sms.type, sms.timestamp, sms.accountTail, sms.reference, sms.smsKey, text = sms.rawSms),
+            lines.map { ExistingTxn(it.amountMinor, it.type, it.timestamp, it.accountTail, it.reference, it.smsKey, it.id, true, it.rawSms) },
         ) ?: return false
         val line = lines[i]
         db.transactions().update(
@@ -1375,6 +1470,9 @@ class FinanceRepository(
         private const val KEY_CARD_BILL_CLEANUP = "card_bill_cleanup_1_9"
         private const val KEY_STMT_REPEAT_CLEANUP = "stmt_repeat_cleanup_1_11_1"
         private const val KEY_STMT_REPEAT_REMOVED = "stmt_repeat_removed_1_11_1"
+        private const val KEY_SMS_DOUBLE_CLEANUP = "sms_double_cleanup_1_11_3"
+        private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
+        private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"
