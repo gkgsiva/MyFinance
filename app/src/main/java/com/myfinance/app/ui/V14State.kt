@@ -96,7 +96,7 @@ class V14State(
                 out.merge(l, if (t.type == TxnType.DEBIT) t.amountMinor else -t.amountMinor, Long::plus)
             }
             out.mapValues { it.value.coerceAtLeast(0) }
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyMap())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyMap())
 
     /** [minor] null or 0 removes the budget. */
     fun setLabelBudget(label: String, minor: Long?) = scope.launch {
@@ -113,7 +113,7 @@ class V14State(
             val idOf = all.associate { it.uid to it.id }
             val no = dis.mapNotNullTo(HashSet()) { d -> idOf[d.uid]?.let { it to d.label } }
             LabelSuggest.suggest(lite.filterNot { it.id in m.hiddenIds }, m.labelsById, no)
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     private fun uidOf(id: Long): String? = allTransactions.value.firstOrNull { it.id == id }?.uid
 
@@ -138,7 +138,7 @@ class V14State(
                 Triple(b.toBill(), com.myfinance.core.Dates.localDate(b.receivedAt, zone), b.markedPaid)
             }
             CardBills.check(list, lite, LocalDate.now(), zone)
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     // ---- EMI end dates and loan payoff ----
 
@@ -150,10 +150,10 @@ class V14State(
             items.filter { it.kind == AutoDebitKind.EMI || it.endDate != null }
                 .map { LoanRow(it, it.planId?.let(rates::get)) }
                 .sortedWith(compareBy<LoanRow> { it.item.endDate == null }.thenBy { it.item.endDate })
-        }.stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.stateIn(scope, WhileShown, emptyList())
 
     val emiEnds: StateFlow<List<EmiEnd>> =
-        autoDebits.map { (items, _) -> LoanPayoff.endings(items) }.stateIn(scope, SharingStarted.Lazily, emptyList())
+        autoDebits.map { (items, _) -> LoanPayoff.endings(items) }.stateIn(scope, WhileShown, emptyList())
 
     fun setLoanRate(planId: String, ratePct: Double) = scope.launch { dao.putLoan(LoanDetailsEntity(planId, ratePct)) }
 
@@ -164,7 +164,7 @@ class V14State(
         combine(allLite, meta) { lite, m ->
             SalaryBreakdown.report(lite, m.labelsById, financialYear = false, zone = zone) to
                 SalaryBreakdown.report(lite, m.labelsById, financialYear = true, zone = zone)
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     // ---- Refund tracker ----
 
@@ -185,11 +185,11 @@ class V14State(
         combine(watches, allLite, allTransactions) { w, lite, all ->
             val idOf = all.associate { it.uid to it.id }
             Refunds.candidates(lite, w.mapNotNullTo(HashSet()) { idOf[it.uid] }, LocalDate.now(), zone = zone)
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     /** Uids being watched, for the edit screen switch. */
     val watchedUids: StateFlow<Set<String>> =
-        watches.map { w -> w.filter { !it.closed }.mapTo(HashSet()) { it.uid } }.stateIn(scope, SharingStarted.Lazily, emptySet())
+        watches.map { w -> w.filter { !it.closed }.mapTo(HashSet()) { it.uid } }.stateIn(scope, WhileShown, emptySet())
 
     fun watchRefund(uid: String, expectedMinor: Long?) = scope.launch {
         dao.putRefund(RefundWatchEntity(uid, expectedMinor, System.currentTimeMillis()))
@@ -248,7 +248,7 @@ class V14State(
     val pinned: StateFlow<List<PinnedReport>> =
         combine(savedReports, allTransactions, meta) { list, _, _ -> list.map { summarise(it) } }
             .flowOn(Dispatchers.Default)
-            .stateIn(scope, SharingStarted.Lazily, emptyList())
+            .stateIn(scope, WhileShown, emptyList())
 
     private fun summarise(r: SavedReportEntity): PinnedReport {
         val (from, to) = rangeOf(r)

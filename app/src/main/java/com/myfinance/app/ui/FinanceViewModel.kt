@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
@@ -102,7 +103,7 @@ data class TxnMeta(
     fun hidden(t: TransactionEntity): Boolean = t.uid.substringBefore('#') in hiddenUids
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = (app as MyFinanceApp).repository
@@ -176,35 +177,38 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Labels in use, then the suggestions. */
     val labelChoices: StateFlow<List<String>> =
-        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten()) }
+        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten()) }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, Labels.suggestions)
 
     /** Choices for money received: income labels (Salary, Interest, Rent income…) first. */
     val incomeLabelChoices: StateFlow<List<String>> =
-        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten(), income = true) }
+        txnMeta.map { m -> Labels.choices(m.labelsByUid.values.flatten(), income = true) }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, Labels.incomeSuggestions)
 
     /** Labels in use, for the filter chips. */
     val usedLabels: StateFlow<List<String>> =
-        txnMeta.map { m -> m.labelsByUid.values.flatten().distinct().sortedBy { it.lowercase() } }
+        txnMeta.map { m -> m.labelsByUid.values.flatten().distinct().sortedBy { it.lowercase() } }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val labelFilter = MutableStateFlow<String?>(null)
     val showHidden = MutableStateFlow(false)
 
+    /** Every transaction in the reports' form, worked out once per change: all of them, and those that count. */
+    private val lites: StateFlow<Pair<List<TxnLite>, List<TxnLite>>> =
+        combine(allTransactions, ownerName, mergedModes) { list, me, modes ->
+            val all = list.map { it.toLite(me, modes) }
+            all to all.filterIndexed { i, _ -> !list[i].excluded }
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<TxnLite>() to emptyList())
+
     /** Every transaction as the reports see it, including ones left out of totals. */
     private val allLiteWithExcluded: StateFlow<List<TxnLite>> =
-        combine(allTransactions, ownerName, mergedModes) { list, me, modes -> list.map { it.toLite(me, modes) } }
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        lites.map { it.first }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Transactions that count towards totals. */
     private val allLite: StateFlow<List<TxnLite>> =
-        combine(allTransactions, ownerName, mergedModes) { list, me, modes ->
-            list.filterNot { it.excluded }.map { it.toLite(me, modes) }
-        }
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        lites.map { it.second }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** All transactions in the selected month, newest first. */
     val monthTransactions: StateFlow<List<TransactionEntity>> = combine(_month, monthCycle) { ym, cycle -> ym to cycle }
@@ -214,17 +218,19 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             repo.transactionsBetween(range.first, range.last)
                 .map { list -> list.filter { cycle.periodOf(it.timestamp, it.type, it.category, zone) == ym } }
         }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** This month's spending per label, for "Where it went" on the Overview. */
     val labelGroups: StateFlow<List<GroupTotal>> =
         combine(monthTransactions, ownerName, txnMeta) { list, me, meta ->
             Labels.spendByLabel(list.filterNot { it.excluded }.map { it.toLite(me) }, meta.labelsById)
-        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, WhileShown, emptyList())
 
     val summary: StateFlow<FinanceSummary> = combine(monthTransactions, repo.ownerName) { list, me ->
         FinanceSummary.of(list.filterNot { it.excluded }.map { it.toLite(me) })
     }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, FinanceSummary.of(emptyList()))
 
     /**
@@ -232,17 +238,15 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
      * Transactions tab is showing. Left-out rows (own transfers, card bill payments) aren't in it.
      */
     val homeLedger: StateFlow<com.myfinance.core.MonthLedger> =
-        combine(combine(allTransactions, ownerName, mergedModes) { a, b, c -> Triple(a, b, c) }, currentMonth, monthCycle, txnMeta) { (list, me, modes), ym, cycle, meta ->
-            com.myfinance.core.MonthLedger.build(
-                list.filterNot { it.excluded }.map { it.toLite(me, modes) }, ym, cycle, ZoneId.systemDefault(), meta.hiddenIds,
-            )
+        combine(allLite, currentMonth, monthCycle, txnMeta) { lite, ym, cycle, meta ->
+            com.myfinance.core.MonthLedger.build(lite, ym, cycle, ZoneId.systemDefault(), meta.hiddenIds)
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, com.myfinance.core.MonthLedger(repo.monthCycle.value.current(), 0, 0, emptyList(), 0))
 
     /** Transactions with a bill photo, by uid. */
     private val photoUids: StateFlow<Set<String>> =
-        repo.v12.receiptUids.map { it.toSet() }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
+        repo.v12.receiptUids.map { it.toSet() }.stateIn(viewModelScope, WhileShown, emptySet())
 
     /** The user's nicknames for payments, by uid (split parts use their payment's). */
     val nicknames: StateFlow<Map<String, String>> =
@@ -254,7 +258,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The filter actually applied: the search box and category chip plus the advanced options. */
     val effectiveFilter: StateFlow<TxnFilter> =
-        combine(query, categoryFilter, advancedFilter) { q, c, a -> a.copy(text = q, category = c) }
+        // Typing waits a moment before the list is searched again, so each key press doesn't filter every entry.
+        combine(query.debounce { if (it.isBlank()) 0L else 250L }, categoryFilter, advancedFilter) { q, c, a -> a.copy(text = q, category = c) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, TxnFilter())
 
     /**
@@ -288,7 +293,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val filterOptions: StateFlow<Pair<List<String>, List<String>>> =
         combine(allTransactions, ownerName) { all, me ->
             all.map { it.owner ?: me }.distinct().sorted() to all.mapNotNull { it.accountLabel }.distinct().sorted()
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<String>() to emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<String>() to emptyList())
 
     val reports: StateFlow<ReportsData> =
         combine(allLite, _month, reportMonths, monthCycle, txnMeta) { txns, end, count, cycle, meta ->
@@ -319,7 +324,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, ReportsData())
+            .stateIn(viewModelScope, WhileShown, ReportsData())
 
     /** The family's own cards and accounts by number (Manage > My cards & accounts). */
     val myAccounts: StateFlow<List<com.myfinance.core.MyAccount>> =
@@ -344,7 +349,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             com.myfinance.core.Dashboard.compute(txns, end, period, account, ZoneId.systemDefault(), cycle, meta.hiddenIds)
         }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, com.myfinance.core.DashboardData())
+            .stateIn(viewModelScope, WhileShown, com.myfinance.core.DashboardData())
 
     val recurring: StateFlow<List<RecurringPayment>> =
         allLite.map { RecurringDetector.detect(it, LocalDate.now()) }
@@ -532,22 +537,22 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             ) to keys
         }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<AutoDebitItem>() to emptySet())
+            .stateIn(viewModelScope, WhileShown, emptyList<AutoDebitItem>() to emptySet())
 
     /** Rows shown in the list; hidden ones are left out unless [showHiddenAutoDebits] is on. */
     val showHiddenAutoDebits = MutableStateFlow(false)
 
     val autoDebits: StateFlow<List<AutoDebitItem>> =
         combine(autoDebitsWithHidden, showHiddenAutoDebits) { (all, hidden), show -> if (show) all else all.filter { it.key !in hidden } }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     val hiddenAutoDebitKeys: StateFlow<Set<String>> =
-        autoDebitsWithHidden.map { it.second }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
+        autoDebitsWithHidden.map { it.second }.stateIn(viewModelScope, WhileShown, emptySet())
 
     /** Totals include hidden rows: hiding only takes them off the list. */
     val autoDebitTotals: StateFlow<AutoDebitTotals> =
         autoDebitsWithHidden.map { AutoDebits.totals(it.first, LocalDate.now()) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, AutoDebitTotals(0, 0, 0))
+            .stateIn(viewModelScope, WhileShown, AutoDebitTotals(0, 0, 0))
 
     suspend fun autoPlan(id: String): AutoDebitPlan? =
         autoPlans.first().firstOrNull { it.id == id }?.toPlan()
@@ -566,7 +571,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     /** Payees marked "Not recurring", as stored keys. */
     val notRecurringKeys: StateFlow<List<String>> =
         hiddenAuto.map { list -> list.map { it.key }.filter { it.startsWith(AutoDebits.NOT_RECURRING_PREFIX) }.sorted() }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     // ---- Labels, hiding and payee names ----
 
@@ -600,7 +605,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     /** Saved payee names: name -> the raw payee texts it replaces. */
     val payeeNames: StateFlow<List<Pair<String, List<String>>>> =
         repo.v13.observePayeeNames().map { list -> list.groupBy({ it.name }, { it.merchantKey }).toList() }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     fun renamePayeeName(old: String, new: String) = viewModelScope.launch { repo.renamePayeeName(old, new) }
     fun forgetPayeeName(name: String) = viewModelScope.launch { repo.forgetPayeeName(name) }
@@ -608,7 +613,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     /** Hidden auto debit / EMI rows with their names, for Settings > Hidden items. */
     val hiddenAutoDebitItems: StateFlow<List<AutoDebitItem>> =
         autoDebitsWithHidden.map { (all, hidden) -> all.filter { it.key in hidden } }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     /** Hidden transactions, newest first. */
     val hiddenTransactions: StateFlow<List<TransactionEntity>> =
@@ -624,24 +629,24 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     val incomeYears: StateFlow<Pair<List<IncomeYear>, List<IncomeYear>>> =
         allLite.map { Insights.incomeByYear(it, financialYear = false) to Insights.incomeByYear(it, financialYear = true) }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<IncomeYear>() to emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList<IncomeYear>() to emptyList())
 
     val salaryByMonth: StateFlow<List<Pair<YearMonth, Long>>> =
         allLite.map { Insights.salaryByMonth(it) }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     /** "Did you know" facts about the selected month: record months, jumps, top category, streaks. */
     val facts: StateFlow<List<Fact>> =
         combine(allLite, _month, txnMeta) { txns, m, meta -> Insights.facts(txns, meta.labelsById, m) }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     /** Payees by how often they appear, for the explorer's picker. */
     val payeeOptions: StateFlow<List<String>> =
         allTransactions.map { all -> all.mapNotNull { it.merchant }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, WhileShown, emptyList())
 
     /** Transactions (not left out of totals) matching one label, payee, category, account or person. */
     /**

@@ -32,6 +32,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import com.myfinance.core.MonthCycle
@@ -50,6 +55,9 @@ class FinanceRepository(
     v17Db: V17Database,
     v18Db: V18Database,
 ) {
+
+    /** Keeps shared database reads alive between screens. */
+    private val sharingScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
 
     /** v1.2 features: goals, net worth, bill reminders, splits, receipts, tax, rules, backups. */
     val v12 = V12Repository(context, v12Db) {
@@ -180,7 +188,18 @@ class FinanceRepository(
     fun transactionsBetween(from: Long, to: Long): Flow<List<TransactionEntity>> =
         db.transactions().observeRange(from, to)
 
-    fun allTransactions(): Flow<List<TransactionEntity>> = db.transactions().observeAll()
+    /**
+     * Every stored transaction, read once per change and shared by all screens (each screen used to run its own
+     * query of the whole table on every change). Unchanged results are dropped, and a burst of changes (an import
+     * writing many chunks) only delivers the latest list.
+     */
+    private val sharedTransactions: Flow<List<TransactionEntity>> = db.transactions().observeAll()
+        .distinctUntilChanged()
+        .conflate()
+        .flowOn(Dispatchers.IO)
+        .shareIn(sharingScope, SharingStarted.WhileSubscribed(10_000, replayExpirationMillis = 0), replay = 1)
+
+    fun allTransactions(): Flow<List<TransactionEntity>> = sharedTransactions
 
     val bills: Flow<List<BillEntity>> = extras.observeBills()
 
@@ -197,6 +216,7 @@ class FinanceRepository(
         runCatching { removeStatementRepeatsOnce() }
         runCatching { removeSmsDoublesOnce() }
         runCatching { refreshStatementMerchantsOnce() }
+        runCatching { restoreSalaryOnce() }
         runCatching { leaveOutCardPaymentPairs() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
@@ -293,7 +313,7 @@ class FinanceRepository(
             line.copy(
                 rawSms = statementText(line.rawSms.orEmpty(), s.rawSms),
                 reference = line.reference ?: s.reference, bank = line.bank ?: s.bank,
-                category = if (edits) s.category else line.category,
+                category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, s.category, line.userEdited, s.userEdited),
                 note = line.note ?: s.note,
                 excluded = if (edits) s.excluded else line.excluded || s.excluded,
                 userEdited = line.userEdited || s.userEdited,
@@ -317,6 +337,25 @@ class FinanceRepository(
         if (newLabels.isNotEmpty()) runCatching { v13.addLabels(newLabels) }
         if (nicks.isNotEmpty()) runCatching { v17.putNicknames(nicks) }
         prefs.edit().putInt(KEY_SMS_DOUBLE_REMOVED, gone.size).apply()
+        onDataChanged()
+    }
+
+    /**
+     * Once (1.12.1): salary credits that lost the Salary category when their SMS was joined with the statement line
+     * (the line kept "Transfers" or "Income"), so the salary didn't count as salary or move to the salary month.
+     * Found by the SMS set aside in Recently deleted, or by "salary" in the text. Entries the user edited stay.
+     */
+    private suspend fun restoreSalaryOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_SALARY_RESTORE, false)) return@withContext
+        prefs.edit().putBoolean(KEY_SALARY_RESTORE, true).apply()
+        fun row(t: TransactionEntity) = com.myfinance.core.SalaryRepair.Row(t.id, t.type, t.amountMinor, t.timestamp, t.category, t.rawSms, t.userEdited)
+        val rows = db.transactions().allOnce().filter { it.type == TxnType.CREDIT }
+        val removed = runCatching { v13.trash() }.getOrDefault(emptyList()).filter { it.source == TxnSource.SMS.name }.map {
+            com.myfinance.core.SalaryRepair.Row(it.originalId, runCatching { TxnType.valueOf(it.type) }.getOrDefault(TxnType.DEBIT), it.amountMinor, it.timestamp, it.category, it.rawSms, it.userEdited)
+        }
+        val ids = com.myfinance.core.SalaryRepair.toRestore(rows.map(::row), removed).toSet()
+        if (ids.isEmpty()) return@withContext
+        db.withTransaction { db.transactions().updateAll(rows.filter { it.id in ids }.map { it.copy(category = DefaultCategories.SALARY) }) }
         onDataChanged()
     }
 
@@ -1429,6 +1468,8 @@ class FinanceRepository(
         db.transactions().update(
             line.copy(
                 smsKey = sms.smsKey, rawSms = statementText(line.rawSms.orEmpty(), sms.rawSms),
+                // A salary SMS keeps the line in Salary, so it counts as salary (and for the salary month).
+                category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, sms.category, line.userEdited, false),
                 reference = line.reference ?: sms.reference, accountTail = line.accountTail ?: sms.accountTail,
                 bank = line.bank ?: sms.bank,
             ),
@@ -1473,6 +1514,7 @@ class FinanceRepository(
         private const val KEY_SMS_DOUBLE_CLEANUP = "sms_double_cleanup_1_11_3"
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
+        private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"

@@ -165,12 +165,12 @@ class V15State(
     val policies: StateFlow<List<PolicyRow>> = dao.observePolicies().map { list ->
         val today = LocalDate.now()
         list.map { it.toPolicy() }.map { PolicyRow(it, Vault.policyStatus(it, today)) }
-    }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    }.stateIn(scope, WhileShown, emptyList())
 
     val warranties: StateFlow<List<WarrantyRow>> = dao.observeWarranties().map { list ->
         val today = LocalDate.now()
         list.map { it.toWarranty() }.map { WarrantyRow(it, Vault.warrantyStatus(it, today)) }.sortedBy { it.warranty.endDate }
-    }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    }.stateIn(scope, WhileShown, emptyList())
 
     fun savePolicy(p: Policy) = work { dao.putPolicy(PolicyEntity.from(p)); "Policy saved" }
     fun deletePolicy(id: String) = work { dao.deletePolicy(id); null }
@@ -196,7 +196,7 @@ class V15State(
                 ignored = m.filter { it.mark == "IGNORE" }.mapTo(HashSet()) { it.key },
                 today = LocalDate.now(), zone = zone,
             )
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     fun markSubscription(key: String, notUsed: Boolean) = work {
         if (notUsed) dao.putMark(SubscriptionMarkEntity(key, "NOT_USED")) else dao.deleteMark(key)
@@ -212,7 +212,7 @@ class V15State(
         val statuses = entries.map { Lending.status(it.toEntry(), r, today) }
             .sortedWith(compareBy<LendStatus> { it.state == com.myfinance.core.LendState.SETTLED }.thenBy { it.entry.dueDate ?: LocalDate.MAX })
         LendingData(statuses, Lending.summary(statuses))
-    }.stateIn(scope, SharingStarted.Lazily, LendingData())
+    }.stateIn(scope, WhileShown, LendingData())
 
     fun saveLend(e: LendEntryEntity) = work { dao.putLend(e); "Saved" }
     fun deleteLend(id: String) = work { dao.deleteRepaymentsOf(id); dao.deleteLend(id); null }
@@ -226,17 +226,17 @@ class V15State(
 
     /** People named in splits, lending and family rows, for name suggestions. */
     val people: StateFlow<List<String>> = dao.observeLending().map { l -> l.map { it.person.trim() }.distinct().sorted() }
-        .stateIn(scope, SharingStarted.Lazily, emptyList())
+        .stateIn(scope, WhileShown, emptyList())
 
     // ---- Goal-linked savings ----
 
-    val goalLinks: StateFlow<List<GoalLinkEntity>> = dao.observeGoalLinks().stateIn(scope, SharingStarted.Lazily, emptyList())
+    val goalLinks: StateFlow<List<GoalLinkEntity>> = dao.observeGoalLinks().stateIn(scope, WhileShown, emptyList())
     private val goalReturns = dao.observeGoalReturns()
 
     /** Names to link: SMS investments and Net worth holdings. */
     val linkChoices: StateFlow<Pair<List<String>, List<String>>> = combine(v12.events, v12.holdings) { e, h ->
         e.map { it.name }.distinct().sorted() to h.map { it.name }.distinct().sorted()
-    }.stateIn(scope, SharingStarted.Lazily, emptyList<String>() to emptyList())
+    }.stateIn(scope, WhileShown, emptyList<String>() to emptyList())
 
     val forecasts: StateFlow<Map<String, GoalForecast>> = combine(
         combine(v12.goals, goalLinks, goalReturns) { g, l, r -> Triple(g, l, r) },
@@ -259,10 +259,10 @@ class V15State(
             val linked = links.filter { it.goalId == g.id }.map { GoalLinks.linkedAmount(it.toLink(), money, holdingValues, labelled, today) }
             g.id to GoalLinks.forecast(g.toGoal(), linked, today, rate[g.id] ?: 0.0)
         }
-    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyMap())
+    }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyMap())
 
     val goalReturnRates: StateFlow<Map<String, Double>> = goalReturns.map { l -> l.associate { it.goalId to it.annualPct } }
-        .stateIn(scope, SharingStarted.Lazily, emptyMap())
+        .stateIn(scope, WhileShown, emptyMap())
 
     fun addGoalLink(l: GoalLinkEntity) = work { dao.putGoalLink(l); "Linked" }
     fun deleteGoalLink(id: String) = work { dao.deleteGoalLink(id); null }
@@ -293,7 +293,7 @@ class V15State(
     )
 
     val calendar: StateFlow<CashFlowMonth?> = combine(calendarMonth, allLite, expected) { ym, txns, e -> month(ym, txns, e) }
-        .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+        .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     // ---- Payments ahead: any range of days ----
 
@@ -305,7 +305,7 @@ class V15State(
         generateSequence(YearMonth.from(from)) { it.plusMonths(1) }.takeWhile { !it.isAfter(last) }.take(24).toList()
             .flatMap { month(it, txns, e).days }
             .filter { !it.date.isBefore(from) && !it.date.isAfter(to) }
-    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+    }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     /** True for the commitments the user can mark as already paid: payment reminders and card bills. */
     fun canMarkPaid(ref: String?): Boolean = ref != null && (ref.startsWith("bill:") || ref.startsWith("card:"))
@@ -336,7 +336,7 @@ class V15State(
 
     /** Expected payments whose date has passed with no payment seen. */
     val missed: StateFlow<List<com.myfinance.core.FlowEvent>> by lazy {
-        today.map { it.late }.stateIn(scope, SharingStarted.Lazily, emptyList())
+        today.map { it.late }.stateIn(scope, WhileShown, emptyList())
     }
 
     val forecast: StateFlow<com.myfinance.core.BalanceForecast?> = combine(allLite, expected, repo.balances) { txns, e, bal ->
@@ -347,7 +347,7 @@ class V15State(
         val flows = days.flatMap { d -> d.events.filter { it.expected }.map { com.myfinance.core.ExpectedFlow(d.date, it.title, (it.amountMinor ?: 0) * if (it.incoming) 1 else -1) } }
         val start = com.myfinance.core.Balances.totalBankMinor(bal)
         com.myfinance.core.BalanceForecasts.build(start, now, 30, flows, com.myfinance.core.BalanceForecasts.dailySpend(txns, now, zone))
-    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+    }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     /** This budget month's spending against the total of category budgets; null without budgets. */
     val pace: StateFlow<com.myfinance.core.SpendPace?> = combine(allLite, repo.monthCycle, repo.categories) { txns, cycle, cats ->
@@ -356,11 +356,11 @@ class V15State(
         val month = cycle.current()
         val spent = txns.filter { it.type == TxnType.DEBIT && cycle.periodOf(it, zone) == month }.sumOf { it.amountMinor }
         com.myfinance.core.SpendPaces.of(spent, budget, LocalDate.now(), cycle.start(month), cycle.end(month))
-    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+    }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     val annualDues: StateFlow<List<com.myfinance.core.AnnualDue>> = expected.map { e ->
         com.myfinance.core.AnnualDues.list(e.bills, e.policies, LocalDate.now())
-    }.stateIn(scope, SharingStarted.Lazily, emptyList())
+    }.stateIn(scope, WhileShown, emptyList())
 
     // ---- Today card ----
 
@@ -382,7 +382,7 @@ class V15State(
             upcomingOutMinor = upcoming.filter { !it.incoming }.sumOf { it.amountMinor ?: 0 },
             late = upcoming.filter { it.late },
         )
-    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, TodayData())
+    }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, TodayData())
 
     // ---- Quick adds: payment due, past investment, property, EPF ----
 

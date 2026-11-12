@@ -55,14 +55,30 @@ class MonthCycleTest {
         assertFalse(c.isCalendar)
         assertEquals(nov, c.periodOf(salary(2026, 10, 25), zone))
         assertEquals(nov, c.periodOf(salary(2026, 10, 31), zone))
-        // Salary paid early (before the 25th) stays in its month.
-        assertEquals(oct, c.periodOf(salary(2026, 10, 24), zone))
+        // Salary paid early (before the 25th, a Wednesday in November) stays in its month.
+        assertEquals(nov, c.periodOf(salary(2026, 11, 24), zone))
+        // 25 October is a Sunday: a salary paid on Friday the 23rd counts for November, the 22nd doesn't.
+        assertEquals(nov, c.periodOf(salary(2026, 10, 23), zone))
+        assertEquals(oct, c.periodOf(salary(2026, 10, 22), zone))
         // Spending and other credits stay in their calendar month.
         assertEquals(oct, c.periodOf(spend(2026, 10, 28), zone))
         val refund = TxnLite(5_000, TxnType.CREDIT, "Refund", "Shop", null, at(2026, 10, 28))
         assertEquals(oct, c.periodOf(refund, zone))
         // December's salary is January's income.
         assertEquals(YearMonth.of(2027, 1), c.periodOf(salary(2026, 12, 29), zone))
+    }
+
+    @Test
+    fun salaryPaidOnFridayBeforeWeekendPayDayCountsForNextMonth() {
+        // Siva's case: salary from the 25th, 25 July 2026 is a Saturday, the salary came on Friday the 24th.
+        val c = MonthCycle(salaryFromDay = 25)
+        val aug = YearMonth.of(2026, 8)
+        assertEquals(aug, c.periodOf(salary(2026, 7, 24), zone))
+        assertEquals("salary from 24 Jul counts here", c.note(aug))
+        assertTrue(at(2026, 7, 24) in c.loadRange(aug, zone))
+        // A weekday from-day is unchanged: 25 August 2026 is a Tuesday.
+        assertEquals("salary from 25 Aug counts here", c.note(YearMonth.of(2026, 9)))
+        assertEquals(aug, c.periodOf(salary(2026, 8, 24), zone))
     }
 
     @Test
