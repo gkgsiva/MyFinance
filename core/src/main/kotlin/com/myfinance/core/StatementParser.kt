@@ -25,6 +25,8 @@ data class StatementRow(
     val cardTail: String? = null,
     /** The serial / reference number printed at the start of a card statement line, when there is one. */
     val serial: String? = null,
+    /** Card statements: the amount in the currency spent ("USD 23.60") for a foreign spend, when printed. */
+    val foreign: String? = null,
 )
 
 data class ParsedStatement(
@@ -195,9 +197,23 @@ object StatementParser {
             /** Which table it was read from: a new heading (card / account number) starts a new one. */
             val section: Int = 0,
             val serial: String? = null,
+            val foreign: String? = null,
         )
 
         val lines = text.lines()
+        // ICICI prints a long narration over three lines, centred on the date line: the first above it, the last
+        // below it with a "0.00" in the balance column. Such statements show many "text 0.00" lines.
+        val zeroMarked = lines.count { zeroTail.matches(it.trim()) && lineStart.find(it.trim()) == null } >= 3
+        var prefix: String? = null
+        fun nextIsTxn(from: Int): Boolean {
+            for (k in from until lines.size) {
+                val t = lines[k].replace('\u00A0', ' ').trim()
+                if (t.isEmpty()) continue
+                val st = lineStart.find(t) ?: return false
+                return parseDate(st.groupValues[1]) != null && moneyRe.find(t.substring(st.range.last + 1)) != null
+            }
+            return false
+        }
         val parsed = ArrayList<Line>()
         var openingBalance: Long? = null
         var lastWasTxn = false
@@ -208,7 +224,7 @@ object StatementParser {
         var section = 0
         // Each account's opening ("B/F") balance, when a statement holds several.
         val openings = HashMap<String?, Long>()
-        for (raw in lines) {
+        for ((lineNo, raw) in lines.withIndex()) {
             var line = raw.replace(' ', ' ').trim()
             if (line.isEmpty()) { lastWasTxn = false; continue }
             if (parsed.isEmpty() && headerText.length < 4000) headerText.append(line).append('\n')
@@ -245,6 +261,23 @@ object StatementParser {
                 }
                 val extra = line.replace(percentRe, " ").trim()
                 if (extra.isEmpty()) continue
+                if (zeroMarked && parsed.isNotEmpty()) {
+                    // "s Bank Ltd 0.00": the end of the line above.
+                    val z = zeroTail.matchEntire(extra)
+                    if (z != null && moneyRe.find(z.groupValues[1]) == null && !isFooter(extra)) {
+                        parsed.last().desc.append(' ').append(z.groupValues[1])
+                        parsed.last().cardDesc.append(' ').append(z.groupValues[1])
+                        continue
+                    }
+                    // "NEFT-…-RENAULT NISSAN" right above a date line: the start of that line's narration.
+                    if (moneyRe.find(line) == null && extra.count(Char::isLetter) >= 3 && !isFooter(line) &&
+                        !notDescription.containsMatchIn(extra) && !headingWords.containsMatchIn(extra) && nextIsTxn(lineNo + 1)
+                    ) {
+                        prefix = listOfNotNull(prefix, extra).joinToString(" ")
+                        lastWasTxn = false
+                        continue
+                    }
+                }
                 if (lastWasTxn && continuation < 2 && moneyRe.find(line) == null && !isFooter(line) && !notDescription.containsMatchIn(extra) && parsed.isNotEmpty()) {
                     parsed.last().desc.append(' ').append(extra)
                     parsed.last().cardDesc.append(' ').append(extra)
@@ -258,12 +291,17 @@ object StatementParser {
             val time = start.groupValues[2].ifBlank { null }?.let { parseTime(it) }
             // The description is what comes before the first amount, without a second (value) date.
             // A currency column ("USD 23.60") sits between the description and the rupee amount.
-            val descText = rest.substring(0, amounts.first().range.first).replace(dateAnywhere, " ").trim()
-                .replace(currencyColumn, "").trim()
+            val beforeAmount = rest.substring(0, amounts.first().range.first).replace(dateAnywhere, " ").trim()
+            val descText = beforeAmount.replace(currencyColumn, "").trim()
+            // "USD 23.60 2,038.32": the foreign amount, so a foreign spend's SMS (in dollars) finds this line.
+            val foreign = currencyColumn.find(beforeAmount)?.groupValues?.get(1)?.takeIf { amounts.size >= 2 }
+                ?.let { code -> "$code ${amounts[amounts.size - 2].value.replace(",", "").trim()}" }
             val values = amounts.mapNotNull { m -> parseMoney(m.value) }
             val cardText = descText.replace(serialFirst, "").replace(pointsLast, "").trim()
             val serial = serialFirst.find(descText)?.value?.trim()?.takeIf { it.length >= 12 }
-            parsed += Line(date, time, StringBuilder(descText), values, line, StringBuilder(cardText), card, acct, section, serial)
+            val before = prefix?.let { "$it " }.orEmpty()
+            prefix = null
+            parsed += Line(date, time, StringBuilder(before + descText), values, line, StringBuilder(before + cardText), card, acct, section, serial, foreign)
             lastWasTxn = true
             continuation = 0
         }
@@ -301,7 +339,7 @@ object StatementParser {
                 val plus = hdfcCredit.containsMatchIn(rawCard)
                 val cardDesc = cleanDesc(rawCard.replace(hdfcCredit, "").replace(rupeeGlyph, "").replace(convertWord, " ")).ifEmpty { desc }
                 val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
-                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card, serial = l.serial)
+                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card, serial = l.serial, foreign = l.foreign)
             }
         }.let { all -> withoutRepeats(all, parsed.map { it.section }, isBank) }.filter { it.amountMinor > 0 }
         if (rows.isEmpty()) return null
@@ -520,6 +558,11 @@ object StatementParser {
     }
     private val percentRe = Regex("""\S*\d+(?:\.\d+)?%""")
     /** Lines below a transaction that are not part of its description: headings, legal text, reward panels. */
+    /** A narration's last line in ICICI's layout: "s Bank Ltd 0.00". */
+    private val zeroTail = Regex("""^(.*[A-Za-z0-9].*?)\s+0\.00$""")
+    /** Table headings repeated on each page, never part of a narration. */
+    private val headingWords = Regex("""\b(PARTICULARS|WITHDRAWALS|DEPOSITS|BALANCE|NARRATION|DESCRIPTION)\b|^DATE\b""", RegexOption.IGNORE_CASE)
+
     private val notDescription = Regex(
         """^#|^\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?$|transaction\s+details|card\s+(number|account)|category\s+of\s+service|registration\s*no|\brewards?\b|\bpoints\b|invoice\s+no|\bcin\b|^(date|serno|sl\.?\s*no)\b""",
         RegexOption.IGNORE_CASE,
@@ -613,9 +656,129 @@ object Narration {
         "OKHDFCBANK", "OKSBI",
     )
 
+    /**
+     * The merchant or person a statement line is about, read from its narration. Never empty for a narration
+     * with any text: when no name can be picked out, a short cleaned form of the narration itself.
+     */
     fun merchant(description: String): String? {
-        val d = description.trim()
+        val d = description.removePrefix("Statement: ").substringBefore("\n\nSMS: ").replace(Regex("""\s+"""), " ").trim()
         if (d.isEmpty()) return null
+        return named(d) ?: fallback(d)
+    }
+
+    /** ICICI's mode column ("NET BANKING", "DEBIT CARD") and cheque numbers printed before the narration. */
+    private val modePrefix = Regex(
+        """^(?:(?:NET BANKING|MOBILE BANKING|INTERNET BANKING|DEBIT CARD|CREDIT CARD|CMS TRANSACTION|OTHER ATMS|ICICI ATM|ATM|BRANCH|CASH|CLEARING|TRANSFER|CHEQUE\s+\d+|CHQ\s+\d+)\s+)+""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** Remarks a UPI app fills in by itself, which say nothing about the payee. */
+    private val upiFiller = Regex("""^(PAYMENT\s+(FROM|TO)\b.*|PAY\s+TO\b.*|SENT\s+(FROM|USING|VIA)\b.*|UPI(\s+.*)?|NA|NO\s+REMARKS?|TEST|PAY|PAID|COLLECT.*|REQUEST.*|PHONEPE.*|GOOGLE\s*PAY.*|PAYTM.*|[A-Z]{1,2})$""")
+    /** Card statements end the merchant with its country: "OPENAI.C US*", "PENANG MY*", "LEVALLOIS FR*". */
+    private val countryEnd = Regex("""\s+[A-Z]{2}\*$|\s+(IN|IND|INDIA)$""")
+
+    private val cardBill = Regex("""^(?:[A-Z]{3}\s+)?CREDIT\s*(CARD|BILL|CARD\s*PAY)?\b|CREDIT\s+(BILL|CARD\s+PAY)""")
+
+    /** Payees printed in a short form that is known. */
+    private fun known(field: String): String? {
+        val f = field.trim().uppercase()
+        return when {
+            f.startsWith("ADD-MONEY@PAYTM") -> "Paytm wallet"
+            f.startsWith("GOOG-PAYMENT") -> "Google Pay"
+            f == "HDFCLTD" || f == "HDFC LTD" -> "HDFC Ltd"
+            else -> null
+        }
+    }
+
+    /** Formats whose fields are known: the payee sits at a fixed place. */
+    private fun named(d0: String): String? {
+        val d1 = d0.replace(modePrefix, "").trim()
+        // A stray word before the narration proper ("/2UL4qoA0 BIL/NEFT/…"): start at the known prefix.
+        val d = Regex("""\s(BIL|UPI|MMT|NEFT|VPS|MPS|IPS|CLG)[/-]""").find(d1)?.takeIf { !d1.substring(0, it.range.first).contains(' ') }
+            ?.let { d1.substring(it.range.first + 1) } ?: d1
+        val up = d.uppercase()
+        val parts = up.split('/').map { it.trim() }
+        fun ok(s: String?) = s?.trim('.', ',', '*', '-', ' ')?.takeIf { it.count(Char::isLetter) >= 3 && it.count(Char::isDigit) <= it.count(Char::isLetter) }
+        when {
+            Regex("""^(SAL|ICSP|SALARY)\b""").containsMatchIn(up) || Regex("""\bSALARY\b""").containsMatchIn(up) -> return "Salary"
+            Regex("""^[SCI]GST\d|^[SCI]GST\b|^IGST-""").containsMatchIn(up) -> return "GST"
+            // "Principal Amount Amortization - <1/3>ALLEN CAREER INSTITUTE": an instalment of the purchase named.
+            up.startsWith("PRINCIPAL AMOUNT AMORTIZATION") || up.startsWith("INTEREST AMOUNT AMORTIZATION") -> {
+                val what = d.substringAfter('>', "").trim().takeIf { it.count(Char::isLetter) >= 3 }?.let { generic(it) }
+                val interest = up.startsWith("INTEREST")
+                return when {
+                    what == null -> if (interest) "EMI interest" else "EMI principal"
+                    interest -> "$what EMI interest"
+                    else -> "$what EMI"
+                }
+            }
+            Regex("""^(ANNUAL FEES?|ANNUAL FEE REVERSAL)""").containsMatchIn(up) -> return "Card annual fee"
+            up.startsWith("PROCESSING FEE") -> return "Processing fee"
+            // "DECS/HDFC LTD EMI DEBITS/0003050564788", "ACH/HDFCLTD/226250799": the lender.
+            (parts[0] == "DECS" || parts[0] == "ACH" || parts[0] == "NACH") && parts.size >= 2 && known(parts[1]) != null -> return known(parts[1])
+            parts[0] == "DECS" || parts[0] == "ACH" || parts[0] == "NACH" -> ok(parts.getOrNull(1)?.replace(Regex("""\bDEBITS?\b"""), ""))?.let { return title(it.replace(Regex("""\s+"""), " ").trim()) }
+            // Debit card: "VPS/S J RETAIL /20180404132111/0", "MPS/SARAVANA ST/201903291324/826075/CHENNAI".
+            parts[0] in setOf("VPS", "IPS", "MPS", "PCD", "POS", "VIN") && parts.size >= 2 -> ok(parts[1])?.let { return title(it) }
+            // "UPI/908120903862/Payment from Ph/SWIGGY8@ybl/Yes B": the remark, else the UPI id; never the bank after it.
+            parts[0] == "UPI" && parts.size >= 3 && parts[1].any(Char::isDigit) -> {
+                // Paytm: "UPI/904137972327/Oid7315154168@O/add-money@paytm/P aytm Payments/": an order id, then the payee.
+                if (Regex("""^OID""").containsMatchIn(parts[2]) && parts.size >= 4) {
+                    val payee = parts[3]
+                    known(payee)?.let { return it }
+                    ok(payee.substringBefore('@').replace(Regex("""[._\-\d]+"""), " ").trim())?.let { return title(it) }
+                    return "Paytm"
+                }
+                parts.drop(2).firstNotNullOfOrNull { known(it) }?.let { return it }
+                val vpaAt = parts.indexOfFirst { it.contains('@') }.takeIf { it >= 2 }
+                // A wrapped narration can join the remark and the UPI id in one field: "PAYMENT FROM PH SWIGGY@YBL".
+                val vpaField = vpaAt?.let { parts[it].split(' ') }
+                val vpa = vpaField?.last { it.contains('@') }
+                val remark = (parts.subList(2, vpaAt ?: minOf(parts.size, 3)) + vpaField.orEmpty().takeWhile { !it.contains('@') }).joinToString(" ").trim()
+                val vpaName = vpa?.substringBefore('@')?.replace(Regex("""^UPI(?=[A-Z])"""), "")?.replace(Regex("""[._\-\d]+"""), " ")?.trim()
+                ok(remark)?.takeIf { !upiFiller.matches(it) && !Regex("""\bBANK\b""").containsMatchIn(it) }?.let { return title(it) }
+                ok(vpaName)?.let { return title(it) }
+                vpa?.let { return "UPI ${it.lowercase()}" }
+            }
+            // "MMT/IMPS/825516410251/Muthulaxmi/SHAFEENA A/CORP00": the person paid, after the remark.
+            parts[0] == "MMT" -> {
+                if (parts.getOrNull(1) == "IMPS") {
+                    ok(parts.getOrNull(4))?.takeIf { !Regex("""\bBANK\b""").containsMatchIn(it) }?.let { return title(it) }
+                    ok(parts.getOrNull(3))?.let { return title(it) }
+                }
+                return "IMPS transfer"
+            }
+            // "BIL/001422771321/ChgRs10 GSTRs1.80 IRCTC/10000121", "BIL/ONL/001673518545/SHAREKHAN /5533655".
+            // "BIL/INFT/001504233803/From Siva G/S.NIRMALKU/ICICI Bank", "BIL/NEFT/…/muthulaxmi/NITHYA R/CNRB0003": the person paid.
+            parts[0] == "BIL" && parts.getOrNull(1) in setOf("INFT", "NEFT", "IMPS", "RTGS") -> {
+                val remark = parts.getOrNull(3)
+                if (remark != null && cardBill.containsMatchIn(remark)) return "Credit card bill"
+                val who = parts.getOrNull(4)
+                if (who == "SELF" || remark == "SELF") return "Own account transfer"
+                ok(who)?.takeIf { !Regex("""\bBANK\b""").containsMatchIn(it) && !ifsc.matches(it.replace(" ", "")) }?.let { return title(it) }
+                ok(remark)?.takeIf { !upiFiller.matches(it) }?.let { return title(it) }
+                return if (parts[1] == "INFT") "Transfer" else "${parts[1]} transfer"
+            }
+            parts[0] == "BIL" && (parts.any { cardBill.containsMatchIn(it) } ||
+                parts.any { it.contains("CREDIT") } && parts.any { Regex("""^\d{15,16}$""").matches(it) }) -> return "Credit card bill"
+            // "CLG/LIC Housing Finance Limit/HDF 12925": a cheque cleared, to the payee named.
+            parts[0] == "CLG" && parts.size >= 2 -> ok(parts[1])?.let { return title(it) }
+            parts[0] == "BIL" -> {
+                val fields = parts.drop(1).filter { it != "ONL" && it != "PAVC" && !Regex("""^\d+$""").matches(it) }
+                    .map { it.replace(Regex("""CHGRS\s*[\d.]+|GSTRS\s*[\d.]+"""), "").trim() }
+                fields.firstNotNullOfOrNull { ok(it)?.takeIf { f -> !upiFiller.matches(f) } }?.let { return title(it) }
+            }
+            parts[0] == "CMS" -> return "CMS collection"
+            // ICICI card statements: "UPI-324565732386-K PANNEE RSELVAM IN", the name broken by a space after 8 letters.
+            Regex("""^UPI-\d{9,}-""").containsMatchIn(up) -> {
+                val raw = d.substringAfter('-').substringAfter('-').replace(Regex("""\s+(IN|IND|INDIA)$""", RegexOption.IGNORE_CASE), "").trim()
+                val joined = if (raw.length > 9 && raw[8] == ' ' && raw[7] != ' ' && raw[9] != ' ') raw.removeRange(8, 9) else raw
+                ok(joined.uppercase())?.let { return title(joined) }
+            }
+            Regex("""^IRCTC\s+RFND""").containsMatchIn(up) -> return "IRCTC refund"
+        }
+        return generic(d)
+    }
+
+    private fun generic(d: String): String? {
         val up = d.uppercase()
         if (Regex("""\b(ATW|ATM|NWD|CASH\s*WDL|CASH\s*WITHDRAWAL|ATD)\b""").containsMatchIn(up)) return "ATM withdrawal"
         if (Regex("""\b(INT\.?\s*PD|INTEREST\s+(PAID|CREDIT|CAPITALISED)|CREDIT\s+INTEREST|SB\s*INT)\b""").containsMatchIn(up)) return "Interest"
@@ -642,8 +805,16 @@ object Narration {
         val plain = up.replace(Regex("""\b(POS|ECOM|PUR|PURCHASE|TXN|REF)\b|\bCYBS(\s+SI)?\b"""), " ")
             .replace(Regex("""\b[0-9X*]{6,}\b"""), " ")
             .replace(Regex("""\s+(IN|IND|INDIA)$"""), "")
+            .replace(Regex("""\s+\d{4,5}$"""), "")
             .replace(Regex("""\s+"""), " ").trim()
-        return plain.takeIf { it.count(Char::isLetter) >= 3 }?.let { title(it.take(40).trim()) }
+        return plain.replace(countryEnd, "").trim().takeIf { it.count(Char::isLetter) >= 3 }?.let { title(it.take(40).trim()) }
+    }
+
+    /** Nothing better: the narration without reference numbers, cut short. */
+    private fun fallback(d: String): String {
+        val cleaned = d.replace(modePrefix, "").replace(Regex("""\b\d{6,}\b"""), " ").replace(Regex("""[/|]+"""), " ")
+            .replace(Regex("""\s+"""), " ").trim().trim('-', ' ')
+        return title(cleaned.ifEmpty { d }.take(40).trim())
     }
 
     private val filler = Regex("""^(PAYMENT|PAID|SENT|PAY|UPI)\s+(FROM|TO|VIA|USING|INTENT)\b""")
