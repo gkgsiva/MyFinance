@@ -403,6 +403,7 @@ private fun MoreViews(vm: FinanceViewModel, open: (String) -> Unit) {
         Text("More views", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
             androidx.compose.material3.AssistChip(onClick = { open("balances") }, label = { Text("Balances & card use") })
+            androidx.compose.material3.AssistChip(onClick = { open("card-payments") }, label = { Text("Card bill payments") })
             androidx.compose.material3.AssistChip(onClick = { open("compare") }, label = { Text("vs last month") })
             androidx.compose.material3.AssistChip(onClick = { open("spend-types") }, label = { Text("Fixed vs flexible") })
             androidx.compose.material3.AssistChip(onClick = { open("savings") }, label = { Text("Savings rate") })
