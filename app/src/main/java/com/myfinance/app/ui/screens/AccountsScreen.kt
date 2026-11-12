@@ -88,7 +88,7 @@ fun AccountsScreen(vm: FinanceViewModel, onBack: () -> Unit, onOpen: (Long) -> U
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            com.myfinance.app.ui.theme.AppTopBar(
                 title = { Text("Accounts & cards") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
             )

@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.myfinance.app.data.TransactionEntity
 import com.myfinance.app.data.TxnSource
+import com.myfinance.app.data.accountLabel
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.V12ViewModel
 import com.myfinance.app.ui.v12.TransactionExtras
@@ -65,7 +66,7 @@ import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onDone: () -> Unit, startAsIncome: Boolean = false) {
+fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onDone: () -> Unit, startAsIncome: Boolean = false, onOpen: (Long) -> Unit = {}) {
     val categories by vm.categories.collectAsState()
     var original by remember { mutableStateOf<TransactionEntity?>(null) }
     var loaded by remember { mutableStateOf(id == 0L) }
@@ -107,8 +108,8 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (id == 0L) "Add transaction" else "Edit transaction") },
+            com.myfinance.app.ui.theme.AppTopBar(
+                title = { Text(if (id == 0L) "Add transaction" else "") },
                 navigationIcon = {
                     IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
@@ -125,15 +126,23 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
             Modifier.fillMaxSize().padding(inner).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf(TxnType.DEBIT to "Expense", TxnType.CREDIT to "Income").forEachIndexed { i, (t, label) ->
-                    SegmentedButton(
-                        selected = type == t,
-                        onClick = { type = t },
-                        shape = SegmentedButtonDefaults.itemShape(i, 2),
-                    ) { Text(label) }
-                }
+            var tab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+            val o = original
+            if (o != null) {
+                TxnHeader(o, nickname.ifBlank { null })
+                com.myfinance.app.ui.theme.SegmentedTabs(listOf("Details", "Activity"), tab, { tab = it })
             }
+            if (o != null && tab == 1) {
+                TxnActivity(vm, o) { otherId -> if (otherId != o.id) onOpen(otherId) }
+            } else {
+            if (o != null) {
+                TxnDetails(o, nickname.ifBlank { null }, categories.firstOrNull { it.name == o.category }?.let { Color(it.color) } ?: MaterialTheme.colorScheme.outline, extras.labels, extras.hidden)
+                com.myfinance.app.ui.theme.SectionTitle("Change details")
+            }
+            com.myfinance.app.ui.theme.SegmentedTabs(
+                listOf("Expense", "Income"), if (type == TxnType.DEBIT) 0 else 1,
+                { type = if (it == 0) TxnType.DEBIT else TxnType.CREDIT },
+            )
 
             OutlinedTextField(
                 value = amount,
@@ -280,14 +289,6 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            val shown = original
-            shown?.rawSms?.let { sms ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(if (shown.source == TxnSource.STATEMENT) "From statement" else "Original SMS", style = MaterialTheme.typography.labelMedium)
-                        Text(sms, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
             }
         }
     }
@@ -358,5 +359,134 @@ private fun CategoryPicker(selected: String, options: List<Pair<String, Color>>,
                 )
             }
         }
+    }
+}
+
+private val detailDate = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a")
+
+/** The payee in the serif face with the amount below, like a receipt. */
+@Composable
+private fun TxnHeader(t: TransactionEntity, nickname: String?) {
+    val credit = t.type == TxnType.CREDIT
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            nickname ?: t.merchant ?: if (credit) "Money received" else "Payment",
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        Text(
+            (if (credit) "+" else "") + com.myfinance.core.formatInr(t.amountMinor),
+            style = MaterialTheme.typography.titleLarge,
+            color = if (credit) com.myfinance.app.ui.theme.IncomeGreen else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/** Label and value rows with pill chips: status and type, payee, category, account, date, source and labels. */
+@Composable
+private fun TxnDetails(t: TransactionEntity, nickname: String?, categoryColor: Color, labels: List<String>, hidden: Boolean) {
+    val credit = t.type == TxnType.CREDIT
+    val pc = com.myfinance.app.ui.theme.PillColors
+    com.myfinance.app.ui.theme.DetailCard {
+        com.myfinance.app.ui.theme.DetailRow("Status & type") {
+            val (bg, fg) = when {
+                t.excluded -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+                credit -> pc.green
+                else -> pc.purple
+            }
+            if (hidden) com.myfinance.app.ui.theme.Pill("HIDDEN", container = MaterialTheme.colorScheme.surfaceVariant, content = MaterialTheme.colorScheme.onSurfaceVariant)
+            com.myfinance.app.ui.theme.Pill(
+                when { t.excluded -> "NOT COUNTED"; credit -> "RECEIVED"; else -> "PAID" },
+                container = bg, content = fg,
+            )
+        }
+        com.myfinance.app.ui.theme.DetailRow(if (credit) "From" else "Paid to") {
+            com.myfinance.app.ui.theme.Pill(t.merchant ?: "Not known")
+        }
+        if (nickname != null && nickname != t.merchant) com.myfinance.app.ui.theme.DetailRow("Your name for it") {
+            com.myfinance.app.ui.theme.Pill(nickname)
+        }
+        com.myfinance.app.ui.theme.DetailRow("Category") {
+            com.myfinance.app.ui.theme.Pill(t.category, leading = { com.myfinance.app.ui.theme.CategoryBadge(t.category, categoryColor, 22.dp) })
+        }
+        t.accountLabel?.let { acct ->
+            com.myfinance.app.ui.theme.DetailRow("Account") { com.myfinance.app.ui.theme.Pill(acct, container = pc.blue.first, content = pc.blue.second) }
+        }
+        com.myfinance.app.ui.theme.DetailRow("Date") {
+            com.myfinance.app.ui.theme.Pill(t.timestamp.toLocalDateTime().format(detailDate))
+        }
+        t.owner?.takeIf { it.isNotBlank() }?.let { who ->
+            com.myfinance.app.ui.theme.DetailRow("Person") { com.myfinance.app.ui.theme.Pill(who) }
+        }
+        com.myfinance.app.ui.theme.DetailRow("Source", divider = labels.isNotEmpty()) {
+            com.myfinance.app.ui.theme.Pill(
+                when (t.source) { TxnSource.MANUAL -> "Added by hand"; TxnSource.STATEMENT -> "Statement"; else -> "Bank SMS" },
+                container = pc.amber.first, content = pc.amber.second,
+            )
+        }
+        if (labels.isNotEmpty()) com.myfinance.app.ui.theme.DetailRow("Labels", divider = false) {
+            com.myfinance.app.ui.WrapRow(Modifier, 6.dp) {
+                labels.forEach { com.myfinance.app.ui.theme.Pill(it, container = pc.green.first, content = pc.green.second) }
+            }
+        }
+    }
+    t.note?.takeIf { it.isNotBlank() }?.let { n ->
+        com.myfinance.app.ui.theme.DetailCard {
+            Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Note", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(n, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+    }
+}
+
+/** Where the entry came from (the SMS or statement line) and the other payments to the same payee. */
+@Composable
+private fun TxnActivity(vm: FinanceViewModel, t: TransactionEntity, onOpen: (Long) -> Unit) {
+    val all by vm.allTransactions.collectAsState()
+    val categories by vm.categories.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
+    val same = remember(all, t.id) {
+        val key = t.merchant?.trim()?.lowercase()
+        if (key.isNullOrEmpty()) emptyList()
+        else all.filter { it.merchant?.trim()?.lowercase() == key && it.type == t.type }.sortedByDescending { it.timestamp }
+    }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    com.myfinance.app.ui.theme.DetailCard {
+        Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                when (t.source) { TxnSource.STATEMENT -> "From the statement"; TxnSource.MANUAL -> "Added by hand"; else -> "Original SMS" },
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(t.rawSms ?: "No message text kept for this entry.", style = MaterialTheme.typography.bodySmall, color = if (t.rawSms == null) muted else MaterialTheme.colorScheme.onSurface)
+            listOfNotNull(
+                t.bank?.let { "Bank: $it" },
+                t.reference?.let { "Reference: $it" },
+                t.balanceMinor?.let { "Balance after: ${com.myfinance.core.formatInr(it)}" },
+                if (t.userEdited) "You have edited this entry" else null,
+            ).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
+        }
+    }
+    if (same.size > 1) {
+        val total = same.sumOf { it.amountMinor }
+        com.myfinance.app.ui.theme.SectionTitle(
+            (if (t.type == TxnType.CREDIT) "From " else "Paid to ") + (t.merchant ?: "") + " before",
+        )
+        Text(
+            "${same.size} times, ${com.myfinance.core.formatInr(total)} in all, about ${com.myfinance.core.formatInr(total / same.size)} each",
+            style = MaterialTheme.typography.bodySmall, color = muted,
+        )
+        val colorOf = categories.associate { it.name to Color(it.color) }
+        same.take(12).forEach { o ->
+            MoneyRow(
+                name = nicks[o.uid.substringBefore('#')] ?: o.merchant ?: "Payment",
+                category = o.category, color = colorOf[o.category] ?: MaterialTheme.colorScheme.outline,
+                timestamp = o.timestamp, amountMinor = o.amountMinor, credit = o.type == TxnType.CREDIT,
+                detail = o.timestamp.toLocalDateTime().format(dayFormat) + if (o.id == t.id) " · this one" else "",
+            ) { onOpen(o.id) }
+        }
+    } else {
+        Text("No other payments to this payee yet.", style = MaterialTheme.typography.bodySmall, color = muted)
     }
 }

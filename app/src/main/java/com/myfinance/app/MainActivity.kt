@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -178,9 +179,9 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab("overview", "Home", Icons.Filled.Home),
     Tab("transactions", "Transactions", Icons.AutoMirrored.Filled.List),
-    Tab("dashboard", "Dashboard", Icons.Filled.Info),
+    Tab("dashboard", "Insights", Icons.Filled.Info),
     Tab("plan", "Plan", Icons.Filled.DateRange),
-    Tab("categories", "Manage", Icons.Filled.Star),
+    Tab("categories", "Manage", Icons.Filled.Settings),
 )
 
 @Composable
@@ -299,21 +300,14 @@ private fun MyFinanceRoot() {
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (tabs.any { it.route == currentRoute }) {
-                NavigationBar {
-                    tabs.forEach { tab ->
-                        NavigationBarItem(
-                            selected = currentRoute == tab.route,
-                            onClick = {
-                                nav.navigate(tab.route) {
-                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(tab.icon, contentDescription = null) },
-                            // One line whatever the font size: long names shrink instead of breaking mid-word.
-                            label = { com.myfinance.app.ui.FitText(tab.label, style = androidx.compose.material3.MaterialTheme.typography.labelMedium) },
-                        )
+                com.myfinance.app.ui.theme.PillNavBar(
+                    tabs = tabs.map { com.myfinance.app.ui.theme.NavTab(it.route, it.label, it.icon) },
+                    current = currentRoute,
+                ) { tab ->
+                    nav.navigate(tab.route) {
+                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
                     }
                 }
             }
@@ -447,6 +441,7 @@ private fun MyFinanceRoot() {
                     v12 = v12,
                     id = entry.arguments?.getLong("id") ?: 0L,
                     onDone = { nav.popBackStack() },
+                    onOpen = { other -> nav.navigate("edit/$other") },
                 )
             }
         }

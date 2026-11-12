@@ -52,7 +52,7 @@ fun V16Screen(
     }
     Scaffold(
         topBar = {
-            TopAppBar(
+            com.myfinance.app.ui.theme.AppTopBar(
                 title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = { actions() },

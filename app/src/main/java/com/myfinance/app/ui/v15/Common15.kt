@@ -58,13 +58,13 @@ fun V15Screen(
     }
     Scaffold(
         topBar = {
-            TopAppBar(
+            com.myfinance.app.ui.theme.AppTopBar(
                 title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = { actions() },
             )
         },
-        floatingActionButton = { onAdd?.let { FloatingActionButton(onClick = it) { Icon(Icons.Filled.Add, contentDescription = "Add") } } },
+        floatingActionButton = { onAdd?.let { com.myfinance.app.ui.theme.AppFab(onClick = it) { Icon(Icons.Filled.Add, contentDescription = "Add") } } },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { inner ->
         LazyColumn(

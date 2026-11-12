@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.focusRequester
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.core.TxnType
 import com.myfinance.core.formatInr
@@ -82,29 +83,17 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
+            com.myfinance.app.ui.theme.AppFab(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Add transaction") }
         },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (advanced.hasDateRange) {
-                    Text(
-                        rangeLabel(advanced.fromMillis, advanced.toMillis),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f).padding(start = 8.dp),
-                    )
-                } else {
-                    IconButton(onClick = vm::previousMonth) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
+            // Serif title with the export menu, then the month (or date range) on a white pill.
+            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("Transactions", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.align(Alignment.Center))
+                Box(Modifier.align(Alignment.CenterEnd)) {
+                    com.myfinance.app.ui.theme.RoundIconHolder {
+                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Export") }
                     }
-                    Text(month.format(monthFormat), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
-                    }
-                }
-                TextButton(onClick = { showFilters = true }) { Text(if (advanced.hasAdvanced) "Filters •" else "Filters") }
-                Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Export") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("Export to Excel") }, onClick = { menuOpen = false; xlsxLauncher.launch("$fileStem.xlsx") })
                         DropdownMenuItem(text = { Text("Export to CSV") }, onClick = { menuOpen = false; csvLauncher.launch("$fileStem.csv") })
@@ -118,30 +107,69 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                     }
                 }
             }
+            androidx.compose.material3.Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (advanced.hasDateRange) {
+                        Text(
+                            rangeLabel(advanced.fromMillis, advanced.toMillis),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f).padding(start = 12.dp, top = 12.dp, bottom = 12.dp),
+                        )
+                    } else {
+                        IconButton(onClick = vm::previousMonth) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous month")
+                        }
+                        Text(
+                            month.format(monthFormat), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                        IconButton(onClick = vm::nextMonth, enabled = month < currentMonth) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next month")
+                        }
+                    }
+                    TextButton(onClick = { showFilters = true }) { Text(if (advanced.hasAdvanced) "Filters •" else "Filters") }
+                }
+            }
             val cycle by vm.monthCycle.collectAsState()
             if (!advanced.hasDateRange) cycle.note(month)?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = 56.dp, bottom = 2.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
-            // Kept small so the list gets the screen: search opens from the icon, filters are two drop-downs on one line.
+            // A rounded search bar; Home's search bar opens it ready to type.
             var searchOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-            if (searchOpen || query.isNotEmpty()) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { vm.query.value = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    placeholder = { Text("Search", maxLines = 1) },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = { vm.query.value = ""; searchOpen = false }) { Icon(Icons.Filled.Clear, contentDescription = "Close search") }
-                    },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), 8.dp) {
-                if (!searchOpen && query.isEmpty()) {
-                    FilterChip(selected = false, onClick = { searchOpen = true }, label = { Text("Search") }, leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) })
+            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+            val askSearch by com.myfinance.app.ui.theme.UiSignals.openSearch.collectAsState()
+            androidx.compose.runtime.LaunchedEffect(askSearch) {
+                if (askSearch) {
+                    com.myfinance.app.ui.theme.UiSignals.openSearch.value = false
+                    searchOpen = true
+                    kotlinx.coroutines.delay(150)
+                    runCatching { focus.requestFocus() }
                 }
+            }
+            androidx.compose.material3.TextField(
+                value = query,
+                onValueChange = { vm.query.value = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focus),
+                placeholder = { Text("Search transactions or payees…", maxLines = 1) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = if (query.isNotEmpty()) ({
+                    IconButton(onClick = { vm.query.value = ""; searchOpen = false }) { Icon(Icons.Filled.Clear, contentDescription = "Clear search") }
+                }) else null,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                colors = androidx.compose.material3.TextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+            )
+            com.myfinance.app.ui.WrapRow(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), 8.dp) {
                 var catMenu by remember { mutableStateOf(false) }
                 Box {
                     FilterChip(
@@ -181,14 +209,17 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
 
             val spent = txns.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor }
             val received = txns.filter { it.type == TxnType.CREDIT && !it.excluded }.sumOf { it.amountMinor }
-            Text(
-                "${txns.size} entries · spent ${formatInr(spent)} · in ${formatInr(received)}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-            )
+            androidx.compose.material3.Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    SummaryFigure("Spent", formatInr(spent), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                    SummaryFigure("Received", formatInr(received), com.myfinance.app.ui.theme.IncomeGreen, Modifier.weight(1f))
+                    SummaryFigure("Entries", txns.size.toString(), MaterialTheme.colorScheme.onSurface, Modifier.weight(0.7f))
+                }
+            }
             sync.message?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
             }
@@ -206,16 +237,17 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 )
             }
 
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp)) {
                 byDay.forEach { (day, list) ->
                     item(key = "h$day") {
-                        Text(
-                            day.format(dayFormat),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-                        )
-                        HorizontalDivider()
+                        val dayOut = list.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor }
+                        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when (day) { LocalDate.now() -> "Today"; LocalDate.now().minusDays(1) -> "Yesterday"; else -> day.format(dayFormat) },
+                                style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f),
+                            )
+                            if (dayOut > 0) Text(formatInr(dayOut), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                     items(list, key = { it.id }) { t ->
                         TransactionRow(t, colorOf[t.category] ?: fallback, meta.labels(t), meta.hidden(t), nicks[t.uid.substringBefore('#')]) { onOpen(t.id) }
@@ -233,5 +265,13 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
             onDismiss = { showFilters = false },
             onApply = { vm.advancedFilter.value = it; showFilters = false },
         )
+    }
+}
+
+@Composable
+private fun SummaryFigure(label: String, value: String, color: Color, modifier: Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        com.myfinance.app.ui.FitText(value, style = MaterialTheme.typography.titleMedium, color = color)
     }
 }

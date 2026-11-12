@@ -74,7 +74,7 @@ fun ImportStatementScreen(onBack: () -> Unit, onDone: () -> Unit, open: (String)
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            com.myfinance.app.ui.theme.AppTopBar(
                 title = { Text("Import statements") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
             )

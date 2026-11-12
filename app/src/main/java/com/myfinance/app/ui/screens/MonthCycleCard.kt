@@ -51,7 +51,7 @@ fun MonthCycleCard(vm: FinanceViewModel) {
             Text("Month for budgets and reports", style = MaterialTheme.typography.titleMedium)
             Text(
                 "If your salary comes in the last week of the month, count it for the month it pays for. " +
-                    "This changes the Dashboard, budgets, budget alerts, the widget, Reports and the savings rate.",
+                    "This changes Insights, budgets, budget alerts, the widget, Reports and the savings rate.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

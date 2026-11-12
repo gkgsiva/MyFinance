@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -67,7 +69,7 @@ private fun LedgerTotal(label: String, value: String, color: androidx.compose.ui
     }
 }
 
-/** One day: its date, what went out and came in that day, and the balance at the end of the day. */
+/** One day: its date and what went out and came in, with the balance at the end of the day on the right. */
 @Composable
 private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, cycle: com.myfinance.core.MonthCycle) {
     val today = LocalDate.now()
@@ -76,18 +78,18 @@ private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, c
         today.minusDays(1) -> "Yesterday"
         else -> day.date.format(ledgerDay)
     }
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        HorizontalDivider()
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                val parts = listOfNotNull(
-                    day.outMinor.takeIf { it > 0 }?.let { "out ${formatInr(it)}" },
-                    day.inMinor.takeIf { it > 0 }?.let { "in ${formatInr(it)}" },
-                    if (day.date < cycle.start(period)) "counts for ${period.format(monthName)}" else null,
-                )
-                if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 10.dp), verticalAlignment = Alignment.Bottom) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            val parts = listOfNotNull(
+                day.outMinor.takeIf { it > 0 }?.let { "out ${formatInr(it)}" },
+                day.inMinor.takeIf { it > 0 }?.let { "in ${formatInr(it)}" },
+                if (day.date < cycle.start(period)) "counts for ${period.format(monthName)}" else null,
+            )
+            if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text("Balance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             com.myfinance.app.ui.FitText(
                 signedInr(day.closingMinor), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.End, modifier = Modifier.width(balanceCol),
@@ -96,32 +98,54 @@ private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, c
     }
 }
 
+/** A payment as a white rounded row: pastel category circle, name, "time · category", amount and the running balance. */
 @Composable
-private fun LedgerRow(row: MonthLedger.Row, name: String, onClick: () -> Unit) {
-    val t = row.txn
+fun MoneyRow(
+    name: String,
+    category: String?,
+    color: androidx.compose.ui.graphics.Color,
+    timestamp: Long,
+    amountMinor: Long,
+    credit: Boolean,
+    detail: String? = null,
+    balanceMinor: Long? = null,
+    onClick: () -> Unit,
+) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val time = java.time.Instant.ofEpochMilli(t.timestamp).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(ledgerTime)
-            Text(
-                listOfNotNull(time, t.category, t.account).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            com.myfinance.app.ui.theme.CategoryBadge(category, color)
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val time = java.time.Instant.ofEpochMilli(timestamp).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(ledgerTime)
+                Text(
+                    listOfNotNull(time, detail ?: category).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                com.myfinance.app.ui.FitText(
+                    (if (credit) "+" else "−") + formatInr(amountMinor),
+                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
+                    color = if (credit) IncomeGreen else MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
+                )
+                balanceMinor?.let {
+                    com.myfinance.app.ui.FitText(
+                        "bal " + signedInr(it), style = MaterialTheme.typography.labelSmall, color = muted,
+                        textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
+                    )
+                }
+            }
         }
-        com.myfinance.app.ui.FitText(
-            (if (row.isCredit) "+" else "−") + formatInr(t.amountMinor),
-            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
-            color = if (row.isCredit) IncomeGreen else ExpenseRed,
-            textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
-        )
-        com.myfinance.app.ui.FitText(
-            signedInr(row.balanceMinor), style = MaterialTheme.typography.bodySmall, color = muted,
-            textAlign = TextAlign.End, modifier = Modifier.width(balanceCol),
-        )
     }
 }
 
@@ -147,6 +171,16 @@ fun HomeScreen(
     val nicks by vm.nicknames.collectAsState()
     val byId = remember(allTxns) { allTxns.associateBy { it.id } }
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val owner by vm.ownerName.collectAsState()
+    val categories by vm.categories.collectAsState()
+    val colorOf = remember(categories) { categories.associate { it.name to androidx.compose.ui.graphics.Color(it.color) } }
+    val fallback = MaterialTheme.colorScheme.outline
+    val zone = java.time.ZoneId.systemDefault()
+    val todayDate = LocalDate.now()
+    val todays = remember(allTxns, todayDate) {
+        allTxns.filter { !it.excluded && com.myfinance.core.Dates.localDate(it.timestamp, zone) == todayDate }.sortedByDescending { it.timestamp }
+    }
+    var todayOpen by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
     var crash by remember { androidx.compose.runtime.mutableStateOf(com.myfinance.app.diag.CrashLog.last(ctx)) }
     var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     if (addDue) com.myfinance.app.ui.v15.QuickAddDialog(vm, com.myfinance.app.ui.v15.QuickAdd.PAYMENT_DUE) { addDue = false }
@@ -155,19 +189,35 @@ fun HomeScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(inner),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Greeting with the date, the person's initials and a refresh button, then a search bar.
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Box(Modifier.fillMaxWidth()) {
+                    Box(Modifier.align(Alignment.TopStart).clickable { open("settings") }) { com.myfinance.app.ui.theme.InitialsAvatar(owner) }
+                    Box(Modifier.align(Alignment.TopEnd)) {
+                        com.myfinance.app.ui.theme.RoundIconHolder {
+                            IconButton(onClick = onImport, enabled = !importState.running) {
+                                if (importState.running) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Filled.Refresh, contentDescription = "Read new SMS")
+                            }
+                        }
+                    }
+                    Column(Modifier.fillMaxWidth().padding(top = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        val hello = com.myfinance.app.ui.theme.greeting()
+                        Text(
+                            if (owner.isBlank() || owner.equals("Me", ignoreCase = true)) hello else "$hello, ${owner.substringBefore(' ')}",
+                            style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center,
+                        )
                         Text(LocalDate.now().format(homeDate), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = onImport, enabled = !importState.running) {
-                        if (importState.running) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Filled.Refresh, contentDescription = "Read new SMS")
-                    }
                 }
+            }
+            item {
+                com.myfinance.app.ui.theme.SearchPill("Search transactions or payees…", onClick = {
+                    com.myfinance.app.ui.theme.UiSignals.openSearch.value = true
+                    open("transactions")
+                })
             }
 
             if (!smsGranted) item {
@@ -282,13 +332,46 @@ fun HomeScreen(
                 }
             }
 
-            // Compact on top: today's total and what is due over the next few days, and anything missed.
-            item { com.myfinance.app.ui.v15.TodayCard(vm, open, showTransactions = false) }
+            // Today's spend: the count and total, with this month's balance on the right; today's payments below.
+            item {
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
+                    Row(Modifier.weight(1f).clickable { todayOpen = !todayOpen }, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Today's spend (${todays.count { it.type == com.myfinance.core.TxnType.DEBIT }})", style = MaterialTheme.typography.titleMedium)
+                        Icon(
+                            if (todayOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (todayOpen) "Hide today's payments" else "Show today's payments",
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.clickable { open("balances") }) {
+                        Text("${ledger.period.format(monthName)} balance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            signedInr(ledger.netMinor), style = MaterialTheme.typography.titleLarge,
+                            color = if (ledger.netMinor < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            if (todayOpen) {
+                if (todays.isEmpty()) item {
+                    Text("Nothing spent yet today.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+                }
+                items(todays, key = { "today-${it.id}" }) { t ->
+                    val credit = t.type == com.myfinance.core.TxnType.CREDIT
+                    MoneyRow(
+                        name = nicks[t.uid.substringBefore('#')] ?: t.merchant ?: if (credit) "Money received" else "Payment",
+                        category = t.category, color = colorOf[t.category] ?: fallback, timestamp = t.timestamp,
+                        amountMinor = t.amountMinor, credit = credit,
+                    ) { open("edit/${com.myfinance.app.ui.SplitView.originalId(t.id)}") }
+                }
+            }
+
+            // What is due over the next few days, and anything missed.
+            item { com.myfinance.app.ui.v15.TodayCard(vm, open, showTransactions = false, showToday = false) }
 
             item {
                 com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
                     AssistChip(onClick = { addDue = true }, label = { Text("+ Future payment") })
-                    AssistChip(onClick = { open("dashboard") }, label = { Text("Dashboard") })
+                    AssistChip(onClick = { open("dashboard") }, label = { Text("Insights") })
                     AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
                     AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
                     AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
@@ -297,17 +380,34 @@ fun HomeScreen(
 
             // The month as a ledger: totals, then every day newest first with a running balance.
             item {
+                com.myfinance.app.ui.theme.SectionTitle("${ledger.period.format(monthName)} so far") {
+                    Text("Insights ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { open("dashboard") })
+                }
+            }
+            item {
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${ledger.period.format(monthName)} ledger", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                            Text("Dashboard ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { open("dashboard") })
-                        }
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         cycle.note(ledger.period)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Row(Modifier.fillMaxWidth()) {
                             LedgerTotal("Money in", formatInr(ledger.inMinor), IncomeGreen, Modifier.weight(1f))
                             LedgerTotal("Money out", formatInr(ledger.outMinor), ExpenseRed, Modifier.weight(1f))
                             LedgerTotal("Balance", signedInr(ledger.netMinor), if (ledger.netMinor < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                        }
+                        if (ledger.inMinor > 0) {
+                            val used = (ledger.outMinor.toFloat() / ledger.inMinor).coerceIn(0f, 1f)
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { used },
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(8.dp),
+                                color = if (ledger.outMinor > ledger.inMinor) ExpenseRed else MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                gapSize = 0.dp,
+                                drawStopIndicator = {},
+                            )
+                            Text(
+                                "${(ledger.outMinor * 100 / ledger.inMinor).coerceAtMost(999)}% of this month's money in has gone out",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         if (balances.any { !it.isCardLimit }) {
                             Text(
@@ -328,23 +428,18 @@ fun HomeScreen(
                 )
             }
 
-            if (ledger.rowCount > 0) item {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val st = MaterialTheme.typography.labelSmall
-                    val c = MaterialTheme.colorScheme.onSurfaceVariant
-                    Text("DETAILS", style = st, color = c, modifier = Modifier.weight(1f))
-                    Text("AMOUNT", style = st, color = c, textAlign = TextAlign.End, modifier = Modifier.width(amountCol))
-                    Text("BALANCE", style = st, color = c, textAlign = TextAlign.End, modifier = Modifier.width(balanceCol))
-                }
-            }
-
             ledger.days.forEach { day ->
                 item(key = "day-${day.date}") { LedgerDayHeader(day, ledger.period, cycle) }
                 items(day.rows) { row ->
                     val entity = byId[row.txn.id]
                     val name = entity?.let { nicks[it.uid.substringBefore('#')] } ?: row.txn.merchant
                         ?: if (row.isCredit) "Money received" else "Payment"
-                    LedgerRow(row, name) {
+                    MoneyRow(
+                        name = name, category = row.txn.category, color = colorOf[row.txn.category] ?: fallback,
+                        timestamp = row.txn.timestamp, amountMinor = row.txn.amountMinor, credit = row.isCredit,
+                        detail = listOfNotNull(row.txn.category, row.txn.account).joinToString(" · "),
+                        balanceMinor = row.balanceMinor,
+                    ) {
                         if (row.txn.id != 0L) open("edit/${com.myfinance.app.ui.SplitView.originalId(row.txn.id)}")
                     }
                 }
