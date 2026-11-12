@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,20 +39,95 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.theme.ExpenseRed
 import com.myfinance.app.ui.theme.IncomeGreen
 import com.myfinance.core.Balances
+import com.myfinance.core.MonthLedger
 import com.myfinance.core.formatInr
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 private val homeDate = DateTimeFormatter.ofPattern("EEEE, d MMMM")
 private val monthName = DateTimeFormatter.ofPattern("MMMM")
+private val ledgerDay = DateTimeFormatter.ofPattern("EEE, d MMM")
+private val ledgerTime = DateTimeFormatter.ofPattern("h:mm a")
+private val amountCol = 84.dp
+private val balanceCol = 88.dp
+
+private fun signedInr(minor: Long) = (if (minor < 0) "−" else "") + formatInr(kotlin.math.abs(minor))
+
+@Composable
+private fun LedgerTotal(label: String, value: String, color: androidx.compose.ui.graphics.Color, modifier: Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        com.myfinance.app.ui.FitText(value, style = MaterialTheme.typography.titleSmall, color = color, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** One day: its date, what went out and came in that day, and the balance at the end of the day. */
+@Composable
+private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, cycle: com.myfinance.core.MonthCycle) {
+    val today = LocalDate.now()
+    val label = when (day.date) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> day.date.format(ledgerDay)
+    }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        HorizontalDivider()
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                val parts = listOfNotNull(
+                    day.outMinor.takeIf { it > 0 }?.let { "out ${formatInr(it)}" },
+                    day.inMinor.takeIf { it > 0 }?.let { "in ${formatInr(it)}" },
+                    if (day.date < cycle.start(period)) "counts for ${period.format(monthName)}" else null,
+                )
+                if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            com.myfinance.app.ui.FitText(
+                signedInr(day.closingMinor), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End, modifier = Modifier.width(balanceCol),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LedgerRow(row: MonthLedger.Row, name: String, onClick: () -> Unit) {
+    val t = row.txn
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val time = java.time.Instant.ofEpochMilli(t.timestamp).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(ledgerTime)
+            Text(
+                listOfNotNull(time, t.category, t.account).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        com.myfinance.app.ui.FitText(
+            (if (row.isCredit) "+" else "−") + formatInr(t.amountMinor),
+            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+            color = if (row.isCredit) IncomeGreen else ExpenseRed,
+            textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
+        )
+        com.myfinance.app.ui.FitText(
+            signedInr(row.balanceMinor), style = MaterialTheme.typography.bodySmall, color = muted,
+            textAlign = TextAlign.End, modifier = Modifier.width(balanceCol),
+        )
+    }
+}
 
 /**
- * Home: kept simple. Today's transactions and what is due today and over the next few days (with anything
- * missed), one line for the month so far, and links to the Dashboard and other screens.
+ * Home: a ledger of the current budget month (the salary month setting decides which month that is),
+ * with what is due over the next few days compact on top, and links to the Dashboard and other screens.
  */
 @Composable
 fun HomeScreen(
@@ -59,14 +137,15 @@ fun HomeScreen(
     open: (String) -> Unit,
 ) {
     val importState by vm.importState.collectAsState()
-    val month by vm.month.collectAsState()
-    val summary by vm.summary.collectAsState()
     val balances by vm.balances.collectAsState()
     val loaded by vm.loaded.collectAsState()
     val allTxns by vm.allTransactions.collectAsState()
     val backupDays = remember(allTxns.size) { vm.v19.backupDaysAgo() }
     val salaryNote by vm.v19.salaryNote.collectAsState()
     val cycle by vm.monthCycle.collectAsState()
+    val ledger by vm.homeLedger.collectAsState()
+    val nicks by vm.nicknames.collectAsState()
+    val byId = remember(allTxns) { allTxns.associateBy { it.id } }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var crash by remember { androidx.compose.runtime.mutableStateOf(com.myfinance.app.diag.CrashLog.last(ctx)) }
     var addDue by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
@@ -203,46 +282,90 @@ fun HomeScreen(
                 }
             }
 
-            // Today's transactions, then payments due today and in the next few days, and missed ones.
-            item { com.myfinance.app.ui.v15.TodayCard(vm, open) }
+            // Compact on top: today's total and what is due over the next few days, and anything missed.
+            item { com.myfinance.app.ui.v15.TodayCard(vm, open, showTransactions = false) }
 
-            // A payment you know is coming: once (school fees on the 15th) or repeating (rent every month).
             item {
-                FilledTonalButton(onClick = { addDue = true }, modifier = Modifier.fillMaxWidth()) { Text("+ Future payment (once or repeating)", maxLines = 1) }
+                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                    AssistChip(onClick = { addDue = true }, label = { Text("+ Future payment") })
+                    AssistChip(onClick = { open("dashboard") }, label = { Text("Dashboard") })
+                    AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
+                    AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
+                    AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
+                }
             }
 
-            // One line for the month so far; the details are on the Dashboard.
+            // The month as a ledger: totals, then every day newest first with a running balance.
             item {
-                Card(Modifier.fillMaxWidth().clickable { open("dashboard") }) {
+                Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${month.format(monthName)} so far", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                            Text("Dashboard ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                            Text("${ledger.period.format(monthName)} ledger", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text("Dashboard ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { open("dashboard") })
                         }
-                        cycle.note(month)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        Row {
-                            Text("Spent ", style = MaterialTheme.typography.bodyMedium)
-                            Text(formatInr(summary.expenseMinor), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
-                            Text("   Received ", style = MaterialTheme.typography.bodyMedium)
-                            Text(formatInr(summary.incomeMinor), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = IncomeGreen)
+                        cycle.note(ledger.period)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            LedgerTotal("Money in", formatInr(ledger.inMinor), IncomeGreen, Modifier.weight(1f))
+                            LedgerTotal("Money out", formatInr(ledger.outMinor), ExpenseRed, Modifier.weight(1f))
+                            LedgerTotal("Balance", signedInr(ledger.netMinor), if (ledger.netMinor < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
                         }
                         if (balances.any { !it.isCardLimit }) {
                             Text(
-                                "In your bank accounts: ${formatInr(Balances.totalBankMinor(balances))}",
+                                "In your bank accounts: ${formatInr(Balances.totalBankMinor(balances))} ›",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.clickable { open("balances") },
+                                modifier = Modifier.clickable { open("balances") }.padding(top = 2.dp),
                             )
                         }
                     }
                 }
             }
 
-            item {
-                com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
-                    AssistChip(onClick = { open("dashboard") }, label = { Text("Dashboard") })
-                    AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
-                    AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
-                    AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
+            if (loaded && ledger.rowCount == 0) item {
+                Text(
+                    "No transactions yet this month." + if (ledger.hiddenCount > 0) " ${ledger.hiddenCount} hidden ones still count in the totals." else "",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+
+            if (ledger.rowCount > 0) item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val st = MaterialTheme.typography.labelSmall
+                    val c = MaterialTheme.colorScheme.onSurfaceVariant
+                    Text("DETAILS", style = st, color = c, modifier = Modifier.weight(1f))
+                    Text("AMOUNT", style = st, color = c, textAlign = TextAlign.End, modifier = Modifier.width(amountCol))
+                    Text("BALANCE", style = st, color = c, textAlign = TextAlign.End, modifier = Modifier.width(balanceCol))
+                }
+            }
+
+            ledger.days.forEach { day ->
+                item(key = "day-${day.date}") { LedgerDayHeader(day, ledger.period, cycle) }
+                items(day.rows) { row ->
+                    val entity = byId[row.txn.id]
+                    val name = entity?.let { nicks[it.uid.substringBefore('#')] } ?: row.txn.merchant
+                        ?: if (row.isCredit) "Money received" else "Payment"
+                    LedgerRow(row, name) {
+                        if (row.txn.id != 0L) open("edit/${com.myfinance.app.ui.SplitView.originalId(row.txn.id)}")
+                    }
+                }
+            }
+
+            if (ledger.rowCount > 0) item {
+                Column(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (ledger.hiddenCount > 0) {
+                        Text(
+                            "${ledger.hiddenCount} hidden " + (if (ledger.hiddenCount == 1) "entry isn't" else "entries aren't") + " listed but still count in the balance.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "Own-account transfers and card bill payments are left out. Balance is money in minus money out this month.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Search and filter in Transactions ›", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { open("transactions") }.padding(vertical = 4.dp),
+                    )
                 }
             }
             item { Box(Modifier.height(72.dp)) }

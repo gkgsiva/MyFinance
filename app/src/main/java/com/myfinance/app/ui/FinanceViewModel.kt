@@ -227,6 +227,19 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     }
         .stateIn(viewModelScope, SharingStarted.Eagerly, FinanceSummary.of(emptyList()))
 
+    /**
+     * Home's ledger: the budget month today is in (salary month setting applied), whatever month the
+     * Transactions tab is showing. Left-out rows (own transfers, card bill payments) aren't in it.
+     */
+    val homeLedger: StateFlow<com.myfinance.core.MonthLedger> =
+        combine(combine(allTransactions, ownerName, mergedModes) { a, b, c -> Triple(a, b, c) }, currentMonth, monthCycle, txnMeta) { (list, me, modes), ym, cycle, meta ->
+            com.myfinance.core.MonthLedger.build(
+                list.filterNot { it.excluded }.map { it.toLite(me, modes) }, ym, cycle, ZoneId.systemDefault(), meta.hiddenIds,
+            )
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, com.myfinance.core.MonthLedger(repo.monthCycle.value.current(), 0, 0, emptyList(), 0))
+
     /** Transactions with a bill photo, by uid. */
     private val photoUids: StateFlow<Set<String>> =
         repo.v12.receiptUids.map { it.toSet() }.stateIn(viewModelScope, SharingStarted.Lazily, emptySet())
