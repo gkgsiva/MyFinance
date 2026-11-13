@@ -120,7 +120,7 @@ object Insights {
         limit: Int = 8,
     ): List<Fact> {
         val out = ArrayList<Fact>()
-        val debits = txns.filter { it.type == TxnType.DEBIT }
+        val debits = txns.filter { it.isSpend }
         val monthOf = { t: TxnLite -> YearMonth.from(Dates.localDate(t.timestamp, zone)) }
         val thisMonth = debits.filter { monthOf(it) == month }
         if (thisMonth.isEmpty()) return emptyList()

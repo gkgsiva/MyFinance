@@ -1,5 +1,6 @@
 package com.myfinance.app.ui.screens
 
+import com.myfinance.app.data.isSpend
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -81,7 +82,7 @@ fun WeeklyInsightsCard(vm: FinanceViewModel, onOpen: (Long) -> Unit) {
             .filter { (_, d) -> !d.isBefore(weekStart) && d.isBefore(end) }
             .groupBy({ it.second }, { it.first })
     }
-    val spendOf = days.associateWith { d -> byDay[d].orEmpty().filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor } }
+    val spendOf = days.associateWith { d -> byDay[d].orEmpty().filter { it.isSpend }.sumOf { it.amountMinor } }
     val weekTotal = spendOf.values.sum()
     val max = (spendOf.values.maxOrNull() ?: 0L).coerceAtLeast(1L)
     val muted = MaterialTheme.colorScheme.onSurfaceVariant

@@ -136,7 +136,7 @@ object TaxPack {
             deductionTotalMinor = TaxHelper.totalDeduction(deductions),
             gains = gainLines,
             gainTotals = GainTotals(g(true, false), g(true, true), g(false, false), g(false, true)),
-            spendMinor = inYear.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor },
+            spendMinor = inYear.filter { it.isSpend }.sumOf { it.amountMinor },
         )
     }
 

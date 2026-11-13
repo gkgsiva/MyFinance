@@ -315,7 +315,10 @@ object Ask {
                 (query.owner == null || t.owner.equals(query.owner, ignoreCase = true)) &&
                 matchesSubject(t, query.subject, labelsById)
         }
-        val matches = inScope.filter { query.type == null || it.type == query.type }.sortedByDescending { it.timestamp }
+        // "How much did I spend" leaves investments out, unless the question names them (a category or a payee).
+        val matches = inScope.filter { query.type == null || it.type == query.type }
+            .filter { query.type != TxnType.DEBIT || query.subject != null || it.isSpend }
+            .sortedByDescending { it.timestamp }
         val total = matches.sumOf { it.amountMinor }
         val count = matches.size
 
@@ -390,13 +393,14 @@ object Ask {
             }
             AskMetric.NET -> {
                 val inc = inScope.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }
-                val out = inScope.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+                val out = inScope.filter { it.isSpend }.sumOf { it.amountMinor }
+                val invested = inScope.filter { it.isInvestment }.sumOf { it.amountMinor }
                 val net = inc - out
                 val head = if (net >= 0) "Saved ${formatInr(net)} $whenText$who" else "Spent ${formatInr(-net)} more than came in $whenText$who"
                 AskAnswer(
-                    query, head, "Money in minus money out · $range",
+                    query, head, "Money in minus spending · $range",
                     net, inScope.size, inScope.sortedByDescending { it.timestamp },
-                    note = "In ${formatInr(inc)}, out ${formatInr(out)}.",
+                    note = "In ${formatInr(inc)}, spent ${formatInr(out)}." + (if (invested > 0) " Invested ${formatInr(invested)}, counted as saved." else ""),
                 )
             }
         }

@@ -3,10 +3,17 @@ package com.myfinance.core
 import java.time.YearMonth
 import java.time.ZoneId
 
-data class MonthTotals(val month: YearMonth, val incomeMinor: Long, val expenseMinor: Long) {
+data class MonthTotals(
+    val month: YearMonth,
+    val incomeMinor: Long,
+    /** Spending only: investments are in [investedMinor]. */
+    val expenseMinor: Long,
+    val investedMinor: Long = 0,
+) {
+    /** Income minus spending; money invested counts as saved. */
     val netMinor: Long get() = incomeMinor - expenseMinor
 
-    /** Income left after spending, as a percentage. Null when there was no income. */
+    /** Income not spent (investments count as saved), as a percentage. Null when there was no income. */
     val savingsRatePercent: Int? get() = if (incomeMinor <= 0) null else ((netMinor * 100) / incomeMinor).toInt()
 }
 
@@ -35,6 +42,7 @@ data class FySummary(
     val incomeMinor: Long,
     val expenseMinor: Long,
     val byCategory: List<GroupTotal>,
+    val investedMinor: Long = 0,
 ) {
     val label: String get() = Dates.financialYearLabel(startYear)
     val netMinor: Long get() = incomeMinor - expenseMinor
@@ -67,7 +75,8 @@ object Reports {
             MonthTotals(
                 month = m,
                 incomeMinor = list.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor },
-                expenseMinor = list.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor },
+                expenseMinor = list.filter { it.isSpend }.sumOf { it.amountMinor },
+                investedMinor = list.filter { it.isInvestment }.sumOf { it.amountMinor },
             )
         }
     }
@@ -89,7 +98,7 @@ object Reports {
         val index = window.withIndex().associate { (i, m) -> m to i }
         val sums = HashMap<String, LongArray>()
         for (t in txns) {
-            if (t.type != TxnType.DEBIT) continue
+            if (!t.isSpend) continue
             val i = index[cycle.periodOf(t, zone)] ?: continue
             val key = keyOf(t)?.takeIf { it.isNotBlank() } ?: "Unknown"
             sums.getOrPut(key) { LongArray(count) }[i] += t.amountMinor
@@ -115,7 +124,7 @@ object Reports {
 
     /** 3: where the money goes, by amount and by number of payments. */
     fun topMerchants(txns: List<TxnLite>, limit: Int = 10): Pair<List<MerchantStat>, List<MerchantStat>> {
-        val stats = txns.filter { it.type == TxnType.DEBIT && !it.merchant.isNullOrBlank() }
+        val stats = txns.filter { it.isSpend && !it.merchant.isNullOrBlank() }
             .groupBy { Categorizer.merchantKey(it.merchant!!) }
             .map { (_, list) ->
                 // Show the most common spelling of the merchant.
@@ -129,7 +138,7 @@ object Reports {
 
     /** 6: spending split by UPI, card, cash and net banking. */
     fun paymentModes(txns: List<TxnLite>): List<ModeShare> =
-        txns.filter { it.type == TxnType.DEBIT }
+        txns.filter { it.isSpend }
             .groupBy { it.mode }
             .map { (mode, list) -> ModeShare(mode, list.sumOf { it.amountMinor }, list.size) }
             .sortedByDescending { it.totalMinor }
@@ -139,7 +148,7 @@ object Reports {
         txns.groupBy { Dates.financialYearStart(Dates.localDate(it.timestamp, zone)) }
             .map { (year, list) ->
                 val s = FinanceSummary.of(list)
-                FySummary(year, s.incomeMinor, s.expenseMinor, s.byCategory)
+                FySummary(year, s.incomeMinor, s.expenseMinor, s.byCategory, s.investedMinor)
             }
             .sortedByDescending { it.startYear }
 
@@ -155,7 +164,7 @@ object Reports {
         minAmountMinor: Long = 100_000,
     ): List<UnusualSpend> {
         val out = ArrayList<UnusualSpend>()
-        val debits = txns.filter { it.type == TxnType.DEBIT }.sortedBy { it.timestamp }
+        val debits = txns.filter { it.isSpend }.sortedBy { it.timestamp }
         for ((_, list) in debits.groupBy { it.category }) {
             val seen = ArrayList<Long>()
             for (t in list) {

@@ -46,6 +46,7 @@ fun MonthCloseScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String) ->
             InfoCard {
                 Text(m.month.label16(), style = MaterialTheme.typography.titleSmall)
                 Row15("Spent", "${m.count} entries", formatInr(m.spentMinor))
+                if (m.investedMinor > 0) Row15("Invested", "not counted as spending", formatInr(m.investedMinor))
                 Row15("Received", null, formatInr(m.receivedMinor))
                 m.topCategories.forEach { (c, v) -> Row15(c, null, formatInr(v)) }
                 if (m.uncategorized > 0) Text("${m.uncategorized} entries have no category", color = Amber, style = MaterialTheme.typography.bodySmall)

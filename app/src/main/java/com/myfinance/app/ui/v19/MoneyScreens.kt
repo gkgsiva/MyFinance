@@ -231,7 +231,7 @@ fun SpendTypesScreen(vm: FinanceViewModel, onBack: () -> Unit) {
         monthPicker(vm)
         ff?.let { f ->
             item {
-                ChartCard("Fixed and flexible spending", subtitle = "Fixed: rent, EMIs, bills, fees, investments and payments that repeat") {
+                ChartCard("Fixed and flexible spending", subtitle = "Fixed: rent, EMIs, bills, fees and payments that repeat. Investments are not spending") {
                     Line("Fixed", formatInr(f.fixedMinor), bold = true)
                     Line("Flexible (you can cut these)", formatInr(f.flexibleMinor), bold = true)
                     UseBar(f.fixedPct)

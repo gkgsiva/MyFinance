@@ -28,6 +28,8 @@ data class YearInReview(
     val facts: List<String>,
     val incomeChangePct: Double?,
     val spendChangePct: Double?,
+    /** Money put into investments in the year; not part of [spentMinor], counted as saved. */
+    val investedMinor: Long = 0,
 ) {
     val savedMinor get() = incomeMinor - spentMinor
     val savedPct: Int? get() = if (incomeMinor > 0) (savedMinor * 100 / incomeMinor).toInt() else null
@@ -56,7 +58,7 @@ object YearReview {
         fun inRange(t: TxnLite, a: LocalDate, b: LocalDate) = Dates.localDate(t.timestamp, zone).let { !it.isBefore(a) && it.isBefore(b) }
         val year = txns.filter { inRange(it, from, to) }
         val prevYear = txns.filter { inRange(it, from.minusYears(1), from) }
-        val debits = year.filter { it.type == TxnType.DEBIT }
+        val debits = year.filter { it.isSpend }
         val credits = year.filter { it.type == TxnType.CREDIT }
         val spent = debits.sumOf { it.amountMinor }
         val income = credits.sumOf { it.amountMinor }
@@ -97,7 +99,7 @@ object YearReview {
             val refunds = credits.filter { c -> c.category == DefaultCategories.INCOME && c.merchant != null && Regex("(?i)refund|reversal|cashback").containsMatchIn(c.merchant) }
             if (refunds.isNotEmpty()) facts += "${refunds.size} refunds and cashbacks brought back ${formatInr(refunds.sumOf { it.amountMinor })}."
         }
-        val prevSpent = prevYear.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+        val prevSpent = prevYear.filter { it.isSpend }.sumOf { it.amountMinor }
         val prevIncome = prevYear.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }
         return YearInReview(
             label = if (financialYear) Dates.financialYearLabel(startYear) else startYear.toString(),
@@ -116,6 +118,7 @@ object YearReview {
             facts = facts,
             incomeChangePct = pct(income, prevIncome),
             spendChangePct = pct(spent, prevSpent),
+            investedMinor = year.filter { it.isInvestment }.sumOf { it.amountMinor },
         )
     }
 
@@ -126,6 +129,7 @@ object YearReview {
         appendLine()
         appendLine("💰 Income: ${formatInr(r.incomeMinor)}" + (r.incomeChangePct?.let { " (${sign(it)} on last year)" } ?: ""))
         appendLine("🛒 Spent: ${formatInr(r.spentMinor)} in ${r.payments} payments" + (r.spendChangePct?.let { " (${sign(it)})" } ?: ""))
+        if (r.investedMinor > 0) appendLine("📈 Invested: ${formatInr(r.investedMinor)}")
         r.savedPct?.let { appendLine("🏦 Saved: ${formatInr(r.savedMinor)} ($it% of income)") }
         if (r.topCategories.isNotEmpty()) {
             appendLine()

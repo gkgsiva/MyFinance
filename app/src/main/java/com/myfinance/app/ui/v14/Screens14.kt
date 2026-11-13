@@ -330,6 +330,7 @@ private fun ReviewHero(r: YearInReview) {
             r.savedPct?.let { Text("$it% of what came in", color = Color.White.copy(alpha = 0.9f)) }
             Text("In ${formatInr(r.incomeMinor)}" + (r.incomeChangePct?.let { " (${pctText(it)})" } ?: ""), color = Color.White)
             Text("Out ${formatInr(r.spentMinor)} in ${r.payments} payments" + (r.spendChangePct?.let { " (${pctText(it)})" } ?: ""), color = Color.White)
+            if (r.investedMinor > 0) Text("Invested ${formatInr(r.investedMinor)}, counted as saved", color = Color.White.copy(alpha = 0.9f))
         }
     }
 }

@@ -46,6 +46,12 @@ data class TransactionEntity(
     val owner: String? = null,
 )
 
+/** Money out that counts as spending: investments (SIP, mutual funds, FD ...) are left out. */
+val TransactionEntity.isSpend: Boolean get() = com.myfinance.core.Spending.isSpend(type, category)
+
+/** Money out into an investment: not spending, shown as "Invested". */
+val TransactionEntity.isInvestment: Boolean get() = com.myfinance.core.Spending.isInvestment(type, category)
+
 val TransactionEntity.accountLabel: String?
     get() = when {
         bank != null && accountTail != null -> "$bank ••$accountTail"
