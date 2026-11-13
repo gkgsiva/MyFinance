@@ -327,7 +327,8 @@ class V15State(
         val id = ref.removePrefix("bill:")
         val b = v12.dao.bills().firstOrNull { it.id == id } ?: return@work null
         v12.markBillPaid(b)
-        if (b.everyMonths == 0) "${b.name} marked paid" else "${b.name} paid; next one ${com.myfinance.core.BillReminders.markPaid(b.toBill()).nextDue.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))}"
+        val after = com.myfinance.core.BillReminders.markPaid(b.toBill())
+        if (b.everyMonths == 0) "${b.name} marked paid" else if (after.finished) "${b.name} paid; that was the last one" else "${b.name} paid; next one ${com.myfinance.core.BillReminders.markPaid(b.toBill()).nextDue.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))}"
     }
 
     fun deleteReminder(ref: String) = work { v12.dao.deleteBill(ref.removePrefix("bill:")); "Reminder deleted" }
@@ -388,16 +389,17 @@ class V15State(
 
     /** A payment due on [date]. [everyMonths] 0 = only once. */
     /** A payment due on [date]; [alreadyPaid] records this one as paid (a repeating one starts from its next date). */
-    fun addPaymentDue(name: String, amountMinor: Long?, date: LocalDate, everyMonths: Int, kind: ReminderKind, alreadyPaid: Boolean = false) = work {
+    fun addPaymentDue(name: String, amountMinor: Long?, date: LocalDate, everyMonths: Int, kind: ReminderKind, alreadyPaid: Boolean = false, endDate: LocalDate? = null) = work {
         val entity = BillReminderEntity(
             name = name.trim(), kind = kind.name, amountMinor = amountMinor, nextDueEpochDay = date.toEpochDay(),
-            everyMonths = everyMonths, remindDaysBefore = 2, matchWords = "",
+            everyMonths = everyMonths, remindDaysBefore = 2, matchWords = "", endEpochDay = endDate?.toEpochDay(),
         )
         if (alreadyPaid) v12.markBillPaid(entity) else v12.dao.upsertBill(entity)
         val day = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")
         when {
             !alreadyPaid -> "Payment due on ${date.format(day)} added"
             everyMonths == 0 -> "Added as already paid"
+            entity.copy(nextDueEpochDay = com.myfinance.core.BillReminders.markPaid(entity.toBill()).nextDue.toEpochDay()).toBill().finished -> "Added as paid; that was the last one"
             else -> "Added as paid; next one ${com.myfinance.core.BillReminders.markPaid(entity.toBill()).nextDue.format(day)}"
         }
     }

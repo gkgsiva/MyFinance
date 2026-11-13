@@ -218,6 +218,7 @@ class FinanceRepository(
         runCatching { refreshStatementMerchantsOnce() }
         runCatching { restoreSalaryOnce() }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { fillEmiEndDates() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
             DefaultCategories.all.mapIndexed { i, name ->
@@ -940,8 +941,35 @@ class FinanceRepository(
             plans = v13.observePlans().first().map { it.toPlan() }, debits = debits, recurring = emptyList(), emiBills = emptyList(),
             hidden = emptySet(), today = today, notRecurring = notRecurring,
         ).filter { !it.nextDate.isBefore(today) }.map { Triple(it.name, it.amountMinor as Long?, it.nextDate) }
-        val bills = v12.dao.bills().map { it.toBill() }.filter { !it.nextDue.isBefore(today) }.map { Triple(it.name, it.amountMinor, it.nextDue) }
+        val bills = v12.dao.bills().map { it.toBill() }.filter { !it.finished && !it.nextDue.isBefore(today) }.map { Triple(it.name, it.amountMinor, it.nextDue) }
         spent to (autos + bills).minByOrNull { it.third }
+    }
+
+    /**
+     * EMIs the user added (an EMI in Auto debits & EMIs, or a loan EMI payment reminder) without an end date take
+     * it from the card statements that print each instalment ("<4/6>"), so they stop once the last one is paid.
+     * Only fills empty end dates, once each: one the user set or cleared by hand is theirs.
+     */
+    suspend fun fillEmiEndDates() = withContext(Dispatchers.IO) {
+        // Each one is filled once: if the user clears it afterwards, it stays cleared.
+        val filled = prefs.getStringSet(KEY_EMI_END_FILLED, emptySet()).orEmpty()
+        val plans = v13.observePlans().first().filter { it.endEpochDay == null && it.id !in filled }
+        val bills = v12.dao.bills().filter { it.endEpochDay == null && "bill:${it.id}" !in filled }
+        if (plans.none { it.kind == com.myfinance.core.AutoDebitKind.EMI.name } &&
+            bills.none { it.kind == com.myfinance.core.ReminderKind.LOAN_EMI.name && it.everyMonths != 0 }) return@withContext
+        val me = ownerName.value
+        val debits = db.transactions().allOnce()
+            .filter { !it.excluded && it.type == TxnType.DEBIT && (com.myfinance.core.AutoDebits.instalmentOf(it.rawSms) != null || com.myfinance.core.AutoDebits.instalmentOf(it.merchant) != null) }
+            .map { com.myfinance.core.DebitRecord(it.toLite(me), it.rawSms) }
+        if (debits.isEmpty()) return@withContext
+        val emis = com.myfinance.core.AutoDebits.instalmentEmis(debits, LocalDate.now())
+        if (emis.isEmpty()) return@withContext
+        val done = HashSet(filled)
+        val planEnds = com.myfinance.core.RepeatEnds.forPlans(plans.map { it.toPlan() }, emis)
+        for (p in plans) planEnds[p.id]?.let { v13.upsertPlan(p.copy(endEpochDay = it.toEpochDay())); done += p.id }
+        val billEnds = com.myfinance.core.RepeatEnds.forBills(bills.map { it.toBill() }, emis)
+        for (b in bills) billEnds[b.id]?.let { v12.dao.upsertBill(b.copy(endEpochDay = it.toEpochDay())); done += "bill:${b.id}" }
+        if (done.size != filled.size) prefs.edit().putStringSet(KEY_EMI_END_FILLED, done).apply()
     }
 
     /** Sum of all monthly category budgets (0 when none are set). */
@@ -1326,6 +1354,7 @@ class FinanceRepository(
             onProgress(done, total)
         }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { fillEmiEndDates() }
         onDataChanged()
         ImportResult(added, updated, skippedClosed, addedUids)
     }
@@ -1515,6 +1544,7 @@ class FinanceRepository(
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
+        private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"

@@ -28,9 +28,13 @@ data class BillReminder(
     val matchWords: List<String> = emptyList(),
     /** A one-time reminder that was paid: nothing more is due. */
     val done: Boolean = false,
+    /** A repeating payment's last due date (an EMI's last instalment, a subscription cancelled): nothing is due after it. */
+    val endDate: LocalDate? = null,
 ) {
     val everyDays: Int get() = if (everyMonths < 0) -everyMonths else 0
     val oneTime: Boolean get() = everyMonths == 0
+    /** Nothing more is due: a paid one-time reminder, or a repeating one whose next date is past its end date. */
+    val finished: Boolean get() = done || (!oneTime && endDate != null && nextDue.isAfter(endDate))
 }
 
 /** The repeat choices offered when adding a reminder: stored value to label. */
@@ -53,7 +57,7 @@ object BillReminders {
             days < 0 -> BillState.OVERDUE
             days == 0L -> BillState.DUE_TODAY
             days <= bill.remindDaysBefore -> BillState.DUE_SOON
-            bill.done -> BillState.PAID_AHEAD
+            bill.finished -> BillState.PAID_AHEAD
             bill.everyMonths > 0 && days > 31L * bill.everyMonths -> BillState.PAID_AHEAD
             bill.everyDays > 0 && days > bill.everyDays -> BillState.PAID_AHEAD
             else -> BillState.UPCOMING
@@ -63,15 +67,25 @@ object BillReminders {
 
     /** Bills to alert about today, most urgent first. */
     fun needingAttention(bills: List<BillReminder>, today: LocalDate): List<BillStatus> =
-        bills.filterNot { it.done }.map { status(it, today) }
+        bills.filterNot { it.finished }.map { status(it, today) }
             .filter { it.state == BillState.OVERDUE || it.state == BillState.DUE_TODAY || it.state == BillState.DUE_SOON }
             .sortedBy { it.daysLeft }
 
-    /** Moves the bill to its next cycle after a payment. Keeps the original day of month where possible. */
+    /**
+     * Moves the bill to its next cycle after a payment. Keeps the original day of month where possible. Paying
+     * the last one before the end date leaves the bill [BillReminder.finished].
+     */
     fun markPaid(bill: BillReminder): BillReminder = when {
         bill.oneTime -> bill.copy(done = true)
         bill.everyDays > 0 -> bill.copy(nextDue = next(bill, bill.nextDue))
         else -> bill.copy(nextDue = bill.nextDue.plusMonths(bill.everyMonths.toLong()))
+    }
+
+    /** How many payments are left from the next one up to the end date; null without an end date. */
+    fun remaining(bill: BillReminder): Int? {
+        val end = bill.endDate ?: return null
+        if (bill.finished) return 0
+        return dueDates(bill, bill.nextDue, end).size
     }
 
     /** The due date after [from]; [from] itself for a one-time reminder. */
@@ -83,13 +97,14 @@ object BillReminders {
 
     /** Every due date of [bill] from [from] to [to] (inclusive), from its next due date on. Empty once a one-time reminder is paid. */
     fun dueDates(bill: BillReminder, from: LocalDate, to: LocalDate): List<LocalDate> {
-        if (bill.done) return emptyList()
+        if (bill.finished) return emptyList()
         if (bill.oneTime) return listOf(bill.nextDue).filter { !it.isBefore(from) && !it.isAfter(to) }
+        val until = bill.endDate?.let { minOf(it, to) } ?: to
         val out = ArrayList<LocalDate>()
         var n = 0L
         while (n < 5000) {
             val d = if (bill.everyDays > 0) bill.nextDue.plusDays(n * bill.everyDays) else bill.nextDue.plusMonths(n * bill.everyMonths)
-            if (d.isAfter(to)) break
+            if (d.isAfter(until)) break
             if (!d.isBefore(from)) out += d
             n++
         }
@@ -101,7 +116,7 @@ object BillReminders {
      * due date, and (if the bill has a fixed amount) within 15% of it.
      */
     fun matchesPayment(bill: BillReminder, merchant: String?, smsBody: String?, amountMinor: Long, paidOn: LocalDate): Boolean {
-        if (bill.done) return false
+        if (bill.finished) return false
         // No words set: the name's own words ("School fees" finds "SCHOOL"), with the amount to confirm it.
         val words = bill.matchWords.ifEmpty { nameWords(bill.name) }
         if (words.isEmpty() || (bill.matchWords.isEmpty() && bill.amountMinor == null)) return false
@@ -121,7 +136,7 @@ object BillReminders {
     fun headsUp(bills: List<BillReminder>, today: LocalDate, daysAhead: Int = 30): List<BillReminder> =
         bills.filter { b ->
             val days = ChronoUnit.DAYS.between(today, b.nextDue)
-            !b.done && (b.everyMonths >= 12 || (b.oneTime && b.kind.usuallyYearly)) && days in (b.remindDaysBefore + 1).toLong()..daysAhead.toLong()
+            !b.finished && (b.everyMonths >= 12 || (b.oneTime && b.kind.usuallyYearly)) && days in (b.remindDaysBefore + 1).toLong()..daysAhead.toLong()
         }
 
     /** Suggested match words for a new bill of this kind. */

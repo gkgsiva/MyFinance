@@ -251,6 +251,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
     var kind by remember { mutableStateOf(AssetKind.FD) }
     var error by remember { mutableStateOf(false) }
     var alreadyPaid by remember { mutableStateOf(false) }
+    var endsOn by remember { mutableStateOf<LocalDate?>(null) }
 
     val title = when (what) {
         QuickAdd.PAYMENT_DUE -> "Future payment"
@@ -269,6 +270,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
                         AmountField("Amount (₹, optional)", amount, { amount = it })
                         DateButton("Due on", date, { d -> d?.let { date = it } })
                         Dropdown("Repeats", every, repeatOptions.map { it.first }, { v -> repeatOptions.first { it.first == v }.second }, { every = it })
+                        if (every != 0) DateButton("Ends on (optional)", endsOn, { endsOn = it }, allowClear = true)
                         Dropdown("Kind", billKind, ReminderKind.entries, { it.name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase) }, { billKind = it })
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             androidx.compose.material3.Checkbox(checked = alreadyPaid, onCheckedChange = { alreadyPaid = it })
@@ -303,7 +305,7 @@ fun QuickAddDialog(vm: FinanceViewModel, what: QuickAdd, onClose: () -> Unit) {
                 val a = parseAmountToMinor(amount)
                 val b = parseAmountToMinor(second)
                 when (what) {
-                    QuickAdd.PAYMENT_DUE -> { if (name.isBlank()) { error = true; return@TextButton }; s.addPaymentDue(name, a, date, every, billKind, alreadyPaid) }
+                    QuickAdd.PAYMENT_DUE -> { if (name.isBlank()) { error = true; return@TextButton }; s.addPaymentDue(name, a, date, every, billKind, alreadyPaid, endsOn?.takeIf { every != 0 }) }
                     QuickAdd.INVESTMENT -> { if (name.isBlank() || a == null || a <= 0) { error = true; return@TextButton }; s.addPastInvestment(name, kind, date, a, b) }
                     QuickAdd.PROPERTY -> { if (name.isBlank() || (a == null && b == null)) { error = true; return@TextButton }; s.addProperty(name, a ?: b ?: 0, b ?: a ?: 0) }
                     QuickAdd.EPF -> { if (a == null || a <= 0) { error = true; return@TextButton }; s.setEpf(a, b) }

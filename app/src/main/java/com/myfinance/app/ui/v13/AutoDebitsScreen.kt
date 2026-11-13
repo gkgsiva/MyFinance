@@ -168,7 +168,8 @@ fun AutoDebitsScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                     Text("Amount: ${formatInr(item.amountMinor)}")
                     item.lastPaid?.let { Text("Last paid: ${it.format(dayFmt)}") }
                     if (item.instalmentsPaid != null && item.instalmentsTotal != null) Text("Paid ${item.instalmentsPaid} of ${item.instalmentsTotal} instalments")
-                    item.remaining?.let { Text("$it instalments left, last one ${item.endDate?.format(monthFmt)}") }
+                    item.remaining?.let { Text("$it instalments left, last one ${item.endDate?.format(monthFmt)}" + if (item.endInferred) " (from your statements)" else "") }
+                    if (item.endDate == null && item.source != AutoDebitSource.MANUAL) Muted("To set when it ends, tap Add to my list and pick the last instalment.")
                     item.remainingMinor?.let { Text("Still to pay: about ${formatInr(it)}") }
                     item.account?.let { Text("Account: $it") }
                     if (item.occurrences > 0) Muted("Found ${item.occurrences} payments in your SMS and statements.")
@@ -234,6 +235,7 @@ private fun planFrom(i: AutoDebitItem) = AutoDebitPlan(
     amountMinor = i.amountMinor,
     firstDue = i.nextDate,
     everyMonths = i.everyMonths,
+    endDate = i.endDate,
     matchWords = com.myfinance.core.Categorizer.merchantKey(i.name).split(' ').filter { it.length >= 3 }.take(2),
     account = i.account,
 )
