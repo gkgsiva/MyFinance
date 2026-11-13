@@ -424,6 +424,7 @@ private fun MyFinanceRoot() {
             composable("review") { com.myfinance.app.ui.v16.ReviewInboxScreen(vm, back, openTxn) { route -> nav.navigate(route) } }
             composable("family-upi") { com.myfinance.app.ui.v16.FamilyUpiScreen(vm, back, openTxn) }
             composable("transfers") { com.myfinance.app.ui.v16.TransfersScreen(vm, back, openTxn) }
+            composable("statements") { com.myfinance.app.ui.v19.StatementsScreen(vm, back, openTxn) }
             composable("reversals") { com.myfinance.app.ui.v16.ReversalsScreen(vm, back, openTxn) }
             composable("month-close") { com.myfinance.app.ui.v16.MonthCloseScreen(vm, back) { route -> nav.navigate(route) } }
             composable("health") { com.myfinance.app.ui.v16.HealthScreen(vm, back, openTxn) { route -> nav.navigate(route) } }

@@ -72,6 +72,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
         item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
+        item { SettingTile("Statements", "", "A card's or account's entries for a bill cycle, month or any dates") { open("statements") } }
         item { SettingTile("My cards & accounts", "", "Your and your family's card and account numbers, so statements and SMS go to the right person") { open("my-accounts") } }
         item {
             val day by vm.v14.statementReminderDay.collectAsState()
