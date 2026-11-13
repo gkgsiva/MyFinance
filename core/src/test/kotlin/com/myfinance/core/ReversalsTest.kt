@@ -152,4 +152,17 @@ class ReversalsTest {
         val later = line.copy(timestamp = at(9, 19, 38))
         assertTrue(StatementImport.storedSmsDoubles(listOf(sms), listOf(later), zone = zone).isEmpty())
     }
+
+    /** Siva: the Jio payment was UPI on the RuPay card ••7002; the consolidated statement filed it under ••5010. */
+    @Test fun theCardTheSmsNamesIsKept() {
+        val upiOnCard = "INR 2,576.71 spent using ICICI Bank Card XX7002 on 04-Nov-26 on yblec123879a52a4806a6fc. Avl Limit: INR 1,20,000"
+        assertEquals("7002", StatementImport.keptTail("5010", "7002", upiOnCard))
+        // ICICI's 3-digit account in SMS is the statement's 4-digit one: the statement's stays.
+        assertEquals("4144", StatementImport.keptTail("4144", "144", "Acct XX144 debited"))
+        // A debit card's SMS names the card, not the account.
+        assertEquals("4144", StatementImport.keptTail("4144", "1234", "Rs 500 spent on ICICI Bank Debit Card XX1234 at DMART"))
+        // Paying a card bill from the bank: the SMS names the card paid, the line is the bank account.
+        assertEquals("4144", StatementImport.keptTail("4144", "5010", "Payment of Rs 40,000 towards ICICI Bank Credit Card XX5010 from Acct XX144"))
+        assertEquals("7002", StatementImport.keptTail(null, "7002", upiOnCard))
+    }
 }

@@ -318,6 +318,9 @@ class FinanceRepository(
             line.copy(
                 rawSms = statementText(line.rawSms.orEmpty(), s.rawSms),
                 reference = line.reference ?: s.reference, bank = line.bank ?: s.bank,
+                // The card the SMS names (a UPI payment on the RuPay card) and the SMS's time of day.
+                accountTail = StatementImport.keptTail(line.accountTail, s.accountTail, s.rawSms),
+                timestamp = statementTime(com.myfinance.core.Dates.localDate(line.timestamp, ZoneId.systemDefault()), s.timestamp),
                 category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, s.category, line.userEdited, s.userEdited),
                 note = line.note ?: s.note,
                 excluded = if (edits) s.excluded else line.excluded || s.excluded,
@@ -1420,8 +1423,8 @@ class FinanceRepository(
                             t.copy(
                                 amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
                                 merchant = official,
-                                accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
-                                owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
+                                accountTail = StatementImport.keptTail(c.accountTail, t.accountTail, t.rawSms), bank = c.bank ?: t.bank,
+                                owner = ownerOf(StatementImport.keptTail(c.accountTail, t.accountTail, t.rawSms), c.bank ?: t.bank) ?: t.owner,
                                 reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                                 source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
                                 excluded = t.excluded || (!t.userEdited && (c.ownTransfer || com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement))),
@@ -1613,7 +1616,7 @@ class FinanceRepository(
                 smsKey = sms.smsKey, rawSms = statementText(line.rawSms.orEmpty(), sms.rawSms),
                 // A salary SMS keeps the line in Salary, so it counts as salary (and for the salary month).
                 category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, sms.category, line.userEdited, false),
-                reference = line.reference ?: sms.reference, accountTail = line.accountTail ?: sms.accountTail,
+                reference = line.reference ?: sms.reference, accountTail = StatementImport.keptTail(line.accountTail, sms.accountTail, sms.rawSms),
                 bank = line.bank ?: sms.bank,
             ),
         )

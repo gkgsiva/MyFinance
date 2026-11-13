@@ -203,6 +203,18 @@ object StatementImport {
     private val debitCardNarration = Regex("""^(DEBIT CARD\b|ICICI ATM\b|OTHER ATMS\b)|\b(VPS|IPS|MPS|PCD|POS|ATM|NFS|VIN|DCARD)/|\bPOS\s|\bATM\s?WDL|CASH WDL""", RegexOption.IGNORE_CASE)
 
     /** An SMS about a debit card ("Debit Card XX1234"), which names the card, not the account. */
+    /**
+     * The account to keep when a statement line and its SMS name different ones: the SMS names the card actually
+     * used (a UPI payment on a RuPay credit card, ••7002, filed under ••5010 by a consolidated statement), so it wins.
+     * A debit card's SMS names the card, not the account, and a card bill payment's SMS names the card it paid:
+     * there the line's account stays.
+     */
+    fun keptTail(lineTail: String?, smsTail: String?, smsText: String?): String? =
+        if (lineTail != null && smsTail != null && !sameAccount(lineTail, smsTail) && !debitCardSms(smsText) &&
+            !SelfTransfers.isCardPayment(null, smsText)
+        ) smsTail
+        else lineTail ?: smsTail
+
     private fun debitCardSms(text: String?) = text != null && debitCardWords.containsMatchIn(text) && !creditCardWords.containsMatchIn(text)
     private fun debitCardLine(narration: String) = debitCardNarration.containsMatchIn(narration.trim())
 
