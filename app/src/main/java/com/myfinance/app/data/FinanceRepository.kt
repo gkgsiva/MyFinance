@@ -218,6 +218,8 @@ class FinanceRepository(
         runCatching { refreshStatementMerchantsOnce() }
         runCatching { restoreSalaryOnce() }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { nameCodePayeesOnce() }
+        runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
@@ -413,6 +415,66 @@ class FinanceRepository(
         changed.size
     }
 
+    // ---- 1.14: failed payments, reversals, refunds and autopay holds ----
+
+    private fun TransactionEntity.checkRow() = com.myfinance.core.CheckRow(
+        id, uid, type, amountMinor, accountTail, timestamp, merchant, rawSms, category, owner.orEmpty(),
+        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference,
+    )
+
+    /**
+     * A payment and the money that came back for it (failed and reversed, refunded, an autopay hold released):
+     * both stop counting as spending and income, and the pair is remembered so it can be listed and undone.
+     * Pairs the user undid ("Not a reversal") are never made again. Returns how many pairs were made.
+     */
+    suspend fun leaveOutReversals(from: Long = 0, to: Long = Long.MAX_VALUE): Int = withContext(Dispatchers.IO) {
+        val rows = if (from == 0L && to == Long.MAX_VALUE) db.transactions().allOnce() else db.transactions().rangeOnce(from, to)
+        val answers = v16.answersOnce().filter { it.key.startsWith("rev:") }
+        val dismissed = answers.filter { it.answer == REV_NOT }.mapTo(HashSet()) { it.key }
+        val pairs = com.myfinance.core.Reversals.find(rows.filter { !it.excluded }.map { it.checkRow() }, dismissed)
+        if (pairs.isEmpty()) return@withContext 0
+        val ids = pairs.flatMap { listOf(it.debit.id, it.credit.id) }.toHashSet()
+        val changed = rows.filter { it.id in ids }.map { it.copy(excluded = true) }
+        // Remembered first, so the list can show the pair even if the update below is interrupted.
+        for (p in pairs) v16.answer(ReviewAnswerEntity(p.key, REV_PAIR + ":" + p.kind.name))
+        db.withTransaction { db.transactions().updateAll(changed) }
+        onDataChanged()
+        pairs.size
+    }
+
+    /** Reversal pairs remembered in [answers]: (key, kind name) for the ones still paired. */
+    fun reversalKeys(answers: List<ReviewAnswerEntity>): List<Pair<String, String>> =
+        answers.filter { it.key.startsWith("rev:") && it.answer.startsWith(REV_PAIR) }
+            .map { it.key to it.answer.substringAfter(':', "") }
+
+    val reviewAnswers: Flow<List<ReviewAnswerEntity>> get() = v16.observeAnswers()
+
+    /** "Not a reversal": both entries count again, and this pair is never made again. */
+    suspend fun undoReversal(key: String) = withContext(Dispatchers.IO) {
+        val (d, c) = com.myfinance.core.ReversalPair.uidsOf(key) ?: return@withContext
+        val rows = db.transactions().allOnce().filter { it.uid == d || it.uid == c }
+        v16.answer(ReviewAnswerEntity(key, REV_NOT))
+        val changed = rows.filter { it.excluded }.map { it.copy(excluded = false) }
+        if (changed.isNotEmpty()) db.withTransaction { db.transactions().updateAll(changed) }
+        onDataChanged()
+    }
+
+    /**
+     * Once (1.14): payees stored as a UPI code ("yblec123879a52a") whose message names the brand ("JioFiber") take
+     * the brand's name. Entries the user edited and payees the user named are left alone.
+     */
+    private suspend fun nameCodePayeesOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_CODE_PAYEES, false)) return@withContext
+        prefs.edit().putBoolean(KEY_CODE_PAYEES, true).apply()
+        val changed = db.transactions().allOnce().mapNotNull { t ->
+            val m = t.merchant ?: return@mapNotNull null
+            if (t.userEdited || !com.myfinance.core.PayeeNames.isCode(m)) return@mapNotNull null
+            val better = com.myfinance.core.PayeeNames.brandIn(t.rawSms) ?: return@mapNotNull null
+            t.copy(merchant = better)
+        }
+        if (changed.isNotEmpty()) db.withTransaction { changed.chunked(500).forEach { db.transactions().updateAll(it) } }
+    }
+
     /** How many repeated statement lines the 1.11.1 cleanup moved to Recently deleted (0 when none). */
     val statementRepeatsRemoved: Int get() = prefs.getInt(KEY_STMT_REPEAT_REMOVED, 0)
 
@@ -489,6 +551,8 @@ class FinanceRepository(
         if (added) {
             // The other side of a card bill payment may already be here (bank debit and card credit).
             runCatching { val w = 5L * 24 * 60 * 60 * 1000; leaveOutCardPaymentPairs(timestamp - w, timestamp + w) }
+            // A failed payment's money coming back (or the payment it came back for).
+            runCatching { val w = 11L * 24 * 60 * 60 * 1000; leaveOutReversals(timestamp - w, timestamp + w) }
             runCatching { v12.onNewTransaction(row, rule) }
             runCatching { applyLabelRules(row, parsed.merchant) }
             // A late SMS for a month already closed: added, and shown in the review inbox.
@@ -1354,6 +1418,7 @@ class FinanceRepository(
             onProgress(done, total)
         }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
         onDataChanged()
         ImportResult(added, updated, skippedClosed, addedUids)
@@ -1545,6 +1610,9 @@ class FinanceRepository(
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
+        private const val KEY_CODE_PAYEES = "code_payees_1_14"
+        const val REV_PAIR = "reversal"
+        const val REV_NOT = "not_reversal"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"

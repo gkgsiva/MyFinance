@@ -79,6 +79,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         }
         item { SettingTile("Card bill check", "", "Card statements against what you paid") { open("card-bills") } }
         item { SettingTile("Card bill payments", "", "Payments from the bank to your cards, matched every month") { open("card-payments") } }
+        item { SettingTile("Reversed & refunded", "", "Failed payments that came back, refunds and autopay holds: not counted") { open("reversals") } }
 
         item { Group("Messages") }
         item { SettingTile("Rescan messages", "", "Read the SMS inbox again without making duplicates") { open("rescan") } }

@@ -46,6 +46,10 @@ object SmsParser {
             """\brefund\s+(?:has\s+been\s+|is\s+)?initiated\b""", """\bwill\s+(?:be\s+)?reflect""",
             """\b(?:credit\s+)?limit\s+(?:has\s+been\s+)?(?:increased|enhanced|upgraded)\b""",
             """\b(?:collect|mandate|autopay)\s+request\b""",
+            // Autopay / UPI mandate notices: setting one up, the pre-debit notice and an amount held for it move no money.
+            """\b(?:mandate|auto[\s-]?pay)\b.{0,80}\b(?:created|registered|set\s*up|modified|revoked|paused|cancell?ed|approved|activated)\b""",
+            """\bpre-?debit\s+(?:notification|intimation|alert|notice)\b""",
+            """\b(?:blocked|unblocked|on\s+hold)\b.{0,60}\b(?:mandate|auto[\s-]?pay)\b|\b(?:mandate|auto[\s-]?pay)\b.{0,60}\b(?:blocked|unblocked|on\s+hold)\b""",
             """\b(?:is|was|remains)\s+pending\b|\bin\s+progress\b|\bprocessing\s+(?:your\s+)?(?:payment|request|transaction)\b""",
         ).joinToString("|"),
         RegexOption.IGNORE_CASE,
@@ -151,7 +155,8 @@ object SmsParser {
         return ParsedTransaction(
             amountMinor = amount,
             type = type,
-            merchant = extractMerchant(text, type),
+            // A code for a payee ("yblec123879a52a") gives way to the brand the message names ("Jio broadband").
+            merchant = PayeeNames.better(extractMerchant(text, type), text),
             accountTail = accountTail,
             bank = instrument(text) ?: bankFromSender(sender) ?: bankFromBody(text),
             reference = refRegex.find(text)?.groupValues?.get(1) ?: channelRef.find(text)?.groupValues?.get(1),

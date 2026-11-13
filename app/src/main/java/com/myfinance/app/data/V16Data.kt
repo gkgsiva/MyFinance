@@ -71,6 +71,7 @@ interface V16Dao {
     @Query("DELETE FROM late_arrivals WHERE month = :month") suspend fun clearLateMonth(month: String)
 
     @Query("SELECT * FROM review_answers") fun observeAnswers(): Flow<List<ReviewAnswerEntity>>
+    @Query("SELECT * FROM review_answers") suspend fun answersOnce(): List<ReviewAnswerEntity>
     @Upsert suspend fun answer(a: ReviewAnswerEntity)
     @Query("DELETE FROM review_answers WHERE `key` = :key") suspend fun forget(key: String)
 }

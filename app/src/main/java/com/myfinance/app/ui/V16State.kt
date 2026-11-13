@@ -124,6 +124,43 @@ class V16State(
     fun answer(key: String, value: String = "ok") = work { dao.answer(ReviewAnswerEntity(key, value)); null }
     fun forgetAnswer(key: String) = work { dao.forget(key); null }
 
+    // ---- Failed payments, reversals, refunds and autopay holds (1.14) ----
+
+    /** A payment and the money that came back for it, both left out of totals. */
+    data class ReversalView(
+        val key: String,
+        val kind: com.myfinance.core.ReversalKind,
+        val debit: TransactionEntity,
+        val credit: TransactionEntity,
+    ) {
+        val amountMinor: Long get() = debit.amountMinor
+    }
+
+    /** Newest first; pairs whose entries were deleted are left out. */
+    val reversals: StateFlow<List<ReversalView>> =
+        combine(stored, repo.reviewAnswers) { list, answers ->
+            val byUid = list.associateBy { it.uid }
+            repo.reversalKeys(answers).mapNotNull { (key, kindName) ->
+                val (d, c) = com.myfinance.core.ReversalPair.uidsOf(key) ?: return@mapNotNull null
+                val kind = runCatching { com.myfinance.core.ReversalKind.valueOf(kindName) }.getOrDefault(com.myfinance.core.ReversalKind.REFUND)
+                ReversalView(key, kind, byUid[d] ?: return@mapNotNull null, byUid[c] ?: return@mapNotNull null)
+            }.sortedByDescending { it.credit.timestamp }
+        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+
+    /** The pair each entry belongs to, by uid, for the edit screen. */
+    val reversalByUid: StateFlow<Map<String, ReversalView>> =
+        reversals.map { l -> l.flatMap { r -> listOf(r.debit.uid to r, r.credit.uid to r) }.toMap() }
+            .stateIn(scope, SharingStarted.Lazily, emptyMap())
+
+    /** "Not a reversal": both count again, and the pair is never made again. */
+    fun undoReversal(key: String) = work { repo.undoReversal(key); "Both entries count again" }
+
+    /** Looks for pairs again across all entries (they are also found as messages and statements come in). */
+    fun findReversals() = work {
+        val n = repo.leaveOutReversals()
+        if (n == 0) "No new ones found" else if (n == 1) "1 pair found and left out of totals" else "$n pairs found and left out of totals"
+    }
+
     // ---- Transfers between own accounts and card bill payments ----
 
     val transfers: StateFlow<List<TransferMatch>> =
