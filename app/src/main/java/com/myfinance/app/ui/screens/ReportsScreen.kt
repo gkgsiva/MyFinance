@@ -169,7 +169,7 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (Strin
                     showZero = true,
                 )
                 Text(
-                    "Money left over each month (income minus spending), and the share of income you kept:",
+                    "Money left over each month (income minus spending; investments count as saved), and the share of income you kept:",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

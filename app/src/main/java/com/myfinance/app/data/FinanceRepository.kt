@@ -217,6 +217,7 @@ class FinanceRepository(
         runCatching { removeSmsDoublesOnce() }
         runCatching { refreshStatementMerchantsOnce() }
         runCatching { restoreSalaryOnce() }
+        runCatching { findInvestmentsOnce() }
         runCatching { leaveOutCardPaymentPairs() }
         runCatching { fillEmiEndDates() }
         if (db.categories().count() > 0) return
@@ -346,6 +347,25 @@ class FinanceRepository(
      * (the line kept "Transfers" or "Income"), so the salary didn't count as salary or move to the salary month.
      * Found by the SMS set aside in Recently deleted, or by "salary" in the text. Entries the user edited stay.
      */
+    /**
+     * Once (1.14): uncategorised payments that the new investment words now recognise (CAMS, KFintech, BSE StAR MF,
+     * clearing corporations, more brokers, FD/RD, NPS ...) move to Investments, so they stop counting as spending.
+     * Only entries still in "Uncategorized" that the user never edited; nothing else changes.
+     */
+    private suspend fun findInvestmentsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_INVEST_FIND, false)) return@withContext
+        prefs.edit().putBoolean(KEY_INVEST_FIND, true).apply()
+        val cat = categorizer()
+        val changed = db.transactions().allOnce()
+            .filter { it.type == TxnType.DEBIT && it.category == DefaultCategories.OTHER && !it.userEdited && !it.excluded }
+            .filter { cat.categorize(it.merchant, it.type, it.rawSms) == DefaultCategories.INVESTMENTS }
+            .map { it.copy(category = DefaultCategories.INVESTMENTS) }
+        if (changed.isNotEmpty()) {
+            db.withTransaction { changed.chunked(500).forEach { db.transactions().updateAll(it) } }
+            onDataChanged()
+        }
+    }
+
     private suspend fun restoreSalaryOnce() = withContext(Dispatchers.IO) {
         if (prefs.getBoolean(KEY_SALARY_RESTORE, false)) return@withContext
         prefs.edit().putBoolean(KEY_SALARY_RESTORE, true).apply()
@@ -912,13 +932,14 @@ class FinanceRepository(
 
     // ---- Budgets, reminders, widget ----
 
-    data class MonthTotals(val incomeMinor: Long, val expenseMinor: Long)
+    data class MonthTotals(val incomeMinor: Long, val expenseMinor: Long, val investedMinor: Long = 0)
 
     suspend fun monthTotals(month: YearMonth = monthCycle.value.current()): MonthTotals {
         val list = monthRows(month).filterNot { it.excluded }
         return MonthTotals(
             incomeMinor = list.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor },
-            expenseMinor = list.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor },
+            expenseMinor = list.filter { it.isSpend }.sumOf { it.amountMinor },
+            investedMinor = list.filter { it.isInvestment }.sumOf { it.amountMinor },
         )
     }
 
@@ -928,7 +949,7 @@ class FinanceRepository(
         val today = LocalDate.now()
         val start = today.atStartOfDay(zone).toInstant().toEpochMilli()
         val spent = db.transactions().rangeOnce(start, System.currentTimeMillis())
-            .filter { !it.excluded && it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+            .filter { !it.excluded && it.isSpend }.sumOf { it.amountMinor }
         val me = ownerName.value
         val recentFrom = today.minusDays(60).atStartOfDay(zone).toInstant().toEpochMilli()
         val debits = db.transactions().rangeOnce(recentFrom, System.currentTimeMillis())
@@ -1015,7 +1036,7 @@ class FinanceRepository(
         val cycle = monthCycle.value
         val today = LocalDate.now()
         val paces = buildList {
-            if (categoryBudgets.isNotEmpty()) add("Total" to com.myfinance.core.SpendPaces.of(rows.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }, categoryBudgets.values.sum(), today, cycle.start(month), cycle.end(month)))
+            if (categoryBudgets.isNotEmpty()) add("Total" to com.myfinance.core.SpendPaces.of(rows.filter { it.isSpend }.sumOf { it.amountMinor }, categoryBudgets.filterKeys { !com.myfinance.core.Spending.isInvestmentCategory(it) }.values.sum(), today, cycle.start(month), cycle.end(month)))
             categoryBudgets.forEach { (c, b) -> add(c to com.myfinance.core.SpendPaces.of(spent[c] ?: 0, b, today, cycle.start(month), cycle.end(month))) }
         }
         for ((name, p) in paces) {
@@ -1544,6 +1565,7 @@ class FinanceRepository(
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
+        private const val KEY_INVEST_FIND = "investments_find_1_14"
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"

@@ -1,5 +1,7 @@
 package com.myfinance.app.ui.screens
 
+import com.myfinance.app.data.isInvestment
+import com.myfinance.app.data.isSpend
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
@@ -208,7 +210,8 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 }
             }
 
-            val spent = remember(txns) { txns.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor } }
+            val spent = remember(txns) { txns.filter { it.isSpend && !it.excluded }.sumOf { it.amountMinor } }
+            val invested = remember(txns) { txns.filter { it.isInvestment && !it.excluded }.sumOf { it.amountMinor } }
             val received = remember(txns) { txns.filter { it.type == TxnType.CREDIT && !it.excluded }.sumOf { it.amountMinor } }
             androidx.compose.material3.Surface(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
@@ -217,6 +220,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
             ) {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                     SummaryFigure("Spent", formatInr(spent), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                    if (invested > 0) SummaryFigure("Invested", formatInr(invested), com.myfinance.app.ui.theme.InvestBlue, Modifier.weight(1f))
                     SummaryFigure("Received", formatInr(received), com.myfinance.app.ui.theme.IncomeGreen, Modifier.weight(1f))
                     SummaryFigure("Entries", txns.size.toString(), MaterialTheme.colorScheme.onSurface, Modifier.weight(0.7f))
                 }
@@ -241,7 +245,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
             LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp)) {
                 byDay.forEach { (day, list) ->
                     item(key = "h$day") {
-                        val dayOut = list.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor }
+                        val dayOut = list.filter { it.isSpend && !it.excluded }.sumOf { it.amountMinor }
                         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 when (day) { LocalDate.now() -> "Today"; LocalDate.now().minusDays(1) -> "Yesterday"; else -> day.format(dayFormat) },

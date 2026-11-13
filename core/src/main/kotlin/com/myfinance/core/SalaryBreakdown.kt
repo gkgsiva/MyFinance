@@ -108,7 +108,7 @@ object SalaryBreakdown {
         var prev: GrowthYear? = null
         for ((y, list) in years) {
             val income = list.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }
-            val spent = list.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+            val spent = list.filter { it.isSpend }.sumOf { it.amountMinor }
             val sal = list.filter { it.type == TxnType.CREDIT && (it.category == DefaultCategories.SALARY || isBonusLabel(it)) }.sumOf { it.amountMinor }
             val bonus = bonuses.filter { yearOf(it.month) == y }.sumOf { it.extraMinor }
             val g = GrowthYear(

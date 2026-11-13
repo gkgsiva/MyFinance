@@ -25,6 +25,10 @@ data class DashboardData(
     val months: List<YearMonth> = emptyList(),
     val spentMinor: Long = 0,
     val receivedMinor: Long = 0,
+    /** Money put into investments; not part of [spentMinor]. */
+    val investedMinor: Long = 0,
+    /** Investments by category, largest first. */
+    val byInvestment: List<GroupTotal> = emptyList(),
     val count: Int = 0,
     val topCategory: GroupTotal? = null,
     /** Spending per month over the last 12 months to the month shown (the trend line). */
@@ -64,15 +68,17 @@ object Dashboard {
 
         val months = period.months(end)
         val inPeriod = months.flatMap { byMonth[it].orEmpty() }
-        val debits = inPeriod.filter { it.type == TxnType.DEBIT }
+        val debits = inPeriod.filter { it.isSpend }
         val summary = FinanceSummary.of(inPeriod)
         return DashboardData(
             months = months,
             spentMinor = summary.expenseMinor,
             receivedMinor = summary.incomeMinor,
+            investedMinor = summary.investedMinor,
+            byInvestment = summary.byInvestment,
             count = inPeriod.size,
             topCategory = summary.byCategory.firstOrNull(),
-            trend = Reports.months(end, 12).map { m -> m to byMonth[m].orEmpty().filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor } },
+            trend = Reports.months(end, 12).map { m -> m to byMonth[m].orEmpty().filter { it.isSpend }.sumOf { it.amountMinor } },
             byCategory = summary.byCategory,
             topMerchants = Reports.topMerchants(debits.filterNot { it.id in hiddenIds }, 8).first,
             byAccount = debits.groupBy { accountOf(it) }

@@ -88,6 +88,10 @@ fun DashboardSection(vm: FinanceViewModel, onOpenCategory: (String) -> Unit) {
             )
             Kpi("Transactions", d.count.toString(), Sky, Modifier.weight(1f))
         }
+        if (d.investedMinor > 0) Kpi(
+            "Invested", compactInr(d.investedMinor), com.myfinance.app.ui.theme.InvestBlue, Modifier.fillMaxWidth(),
+            "Not counted as spending" + d.byInvestment.firstOrNull()?.let { " · most in ${it.key}" }.orEmpty(),
+        )
         if (cardDues > 0) Kpi("Card bills due", compactInr(cardDues), Amber, Modifier.fillMaxWidth(), "Unpaid credit card bills")
 
         if (d.trend.any { it.second > 0 }) {

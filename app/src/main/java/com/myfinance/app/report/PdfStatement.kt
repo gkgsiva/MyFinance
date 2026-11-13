@@ -36,6 +36,7 @@ object PdfStatement {
         w.heading("Summary")
         w.row("Income", formatInr(summary.incomeMinor))
         w.row("Spent", formatInr(summary.expenseMinor))
+        if (summary.investedMinor > 0) w.row("Invested", formatInr(summary.investedMinor), "not counted as spending")
         w.row("Net", formatInr(summary.netMinor))
         summary.savingsRatePercent?.let { w.row("Savings rate", "$it%") }
 
