@@ -142,6 +142,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
 
         item { Group("About") }
         item { SettingTile("MyFinance", "v$version", "Your data stays on this phone") {} }
+        item { SettingTile("What's new", "", "Every version from 1.0 and what it changed") { open("whats-new") } }
     }
 }
 
