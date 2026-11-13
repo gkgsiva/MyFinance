@@ -70,6 +70,7 @@ fun PlanScreen(vm: V12ViewModel, open: (String) -> Unit) {
         }
         item { Tile("EMIs & loan payoff", "End dates", "When each EMI ends, interest paid, and what prepaying saves") { open("loans") } }
         item { Tile("Card bill check", "Bills vs paid", "Each card statement against what you paid; flags gaps and late payments") { open("card-bills") } }
+        item { Tile("Card bill payments", "Each month", "Bank payments to your cards, matched month by month with the card") { open("card-payments") } }
         item { Tile("Refund tracker", "Waiting", "IRCTC, Amazon and other refunds still to come back") { open("refunds") } }
         item { Tile("Year in review", "Share", "Your year on one page, ready for WhatsApp") { open("year-review") } }
         item { Tile("Subscription audit", "Check", "Price hikes, duplicates and ones you don't use") { open("subscriptions") } }
