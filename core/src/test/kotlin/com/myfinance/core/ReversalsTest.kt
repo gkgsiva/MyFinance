@@ -114,4 +114,22 @@ class ReversalsTest {
         assertNull(SmsParser.parse("JD-ICICIT", "Pre-debit notification: Rs 2,576.71 for Jio AutoPay on 05-Nov from a/c XX144", 1_700_000_000_000))
         assertNull(SmsParser.parse("JD-ICICIT", "Rs 2,576.71 blocked in a/c XX144 for UPI mandate to Jio", 1_700_000_000_000))
     }
+
+    private val jioReceipt = "Dear Customer, \nPayment of Rs. 2576.71 for your JioHome connection with JioFixedVoice Number +914435673238 through UPI Payments has been received on 04-Nov-26. Thank You! \nNow setup JioAutoPay and enjoy the convenience of automatic bill payments.\nTo register for JioAutoPay, click http://tiny.jio.com/JioPay \nTeam JioHome"
+
+    /** Siva's 4 Nov "Money received" +2,576.71 was JioHome's receipt for the payment, not money in. */
+    @Test fun billerReceiptIsNotIncomeButNamesThePayee() {
+        assertNull(SmsParser.parse("JM-JIOHOM", jioReceipt, 1_700_000_000_000))
+        assertEquals(2_576_71L to "Jio broadband", SmsParser.billerReceipt("JM-JIOHOM", jioReceipt))
+        // Money that did reach an account or card is still read.
+        assertEquals(TxnType.CREDIT, SmsParser.parse("JD-ICICIT", "Payment of Rs 5,000.00 received on your ICICI Bank Credit Card XX5010. Thank you", 1L)?.type)
+        assertEquals(TxnType.CREDIT, SmsParser.parse("JD-ICICIT", "ICICI Bank Acct XX144 is credited with Rs 2,576.71 on 04-Nov-26 from JIO. UPI:530912345678", 1L)?.type)
+        assertNull(SmsParser.billerReceipt("JD-ICICIT", "Payment of Rs 5,000.00 received on your ICICI Bank Credit Card XX5010. Thank you"))
+    }
+
+    @Test fun twoJioDebitsWithoutTheReceiptAreNotPaired() {
+        val first = row(TxnType.DEBIT, 2_576_71, at(4, 14, 58), "yblec123879a52a")
+        val second = row(TxnType.DEBIT, 2_576_71, at(4, 19, 38), "yblec123879a52a")
+        assertTrue(Reversals.find(listOf(first, second)).isEmpty())
+    }
 }

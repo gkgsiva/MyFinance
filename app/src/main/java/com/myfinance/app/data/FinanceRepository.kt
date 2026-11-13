@@ -218,6 +218,7 @@ class FinanceRepository(
         runCatching { refreshStatementMerchantsOnce() }
         runCatching { restoreSalaryOnce() }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { removeBillerReceiptsOnce() }
         runCatching { nameCodePayeesOnce() }
         runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
@@ -460,6 +461,48 @@ class FinanceRepository(
     }
 
     /**
+     * A biller's receipt for [amountMinor] names the payee: a debit of that amount within a day whose payee is a UPI
+     * code or missing takes [brand], and the code is remembered as that payee's name for next time.
+     */
+    private suspend fun nameFromReceipt(amountMinor: Long, brand: String, at: Long) {
+        val day = 24 * 60 * 60 * 1000L
+        val rows = db.transactions().rangeOnce(at - day, at + day).filter { t ->
+            t.type == TxnType.DEBIT && t.amountMinor == amountMinor && !t.userEdited &&
+                (t.merchant == null || com.myfinance.core.PayeeNames.isCode(t.merchant))
+        }
+        if (rows.isEmpty()) return
+        rows.mapNotNull { it.merchant }.distinct().forEach { code ->
+            if (payeeName(code) == null) v13.putPayeeNames(listOf(PayeeNameEntity(Categorizer.merchantKey(code), brand)))
+        }
+        db.transactions().updateAll(rows.map { it.copy(merchant = brand) })
+    }
+
+    /**
+     * Once (1.14): billers' receipts ("Payment of Rs. 2576.71 for your JioHome connection has been received") that
+     * earlier versions stored as money received. They name the payee of the matching debit, then go to Recently
+     * deleted (restorable) and are remembered, so a rescan won't add them back.
+     */
+    private suspend fun removeBillerReceiptsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_RECEIPTS_REMOVED, false)) return@withContext
+        prefs.edit().putBoolean(KEY_RECEIPTS_REMOVED, true).apply()
+        val receipts = db.transactions().allOnce().mapNotNull { t ->
+            if (t.type != TxnType.CREDIT || t.userEdited || t.source != TxnSource.SMS) return@mapNotNull null
+            val body = t.rawSms ?: return@mapNotNull null
+            val sender = t.smsKey?.substringBefore('|') ?: ""
+            SmsParser.billerReceipt(sender, body)?.let { t to it }
+        }
+        if (receipts.isEmpty()) return@withContext
+        for ((t, r) in receipts) r.second?.let { brand -> runCatching { nameFromReceipt(r.first, brand, t.timestamp) } }
+        val now = System.currentTimeMillis()
+        for ((t, _) in receipts) {
+            runCatching { v13.putTrash(DeletedTxnEntity.from(t, now)) }
+            runCatching { v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now)) }
+        }
+        db.withTransaction { receipts.map { it.first.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) } }
+        onDataChanged()
+    }
+
+    /**
      * Once (1.14): payees stored as a UPI code ("yblec123879a52a") whose message names the brand ("JioFiber") take
      * the brand's name. Entries the user edited and payees the user named are left alone.
      */
@@ -511,6 +554,11 @@ class FinanceRepository(
         // Electricity, water, gas, broadband and property tax bills fill in their payment reminder.
         runCatching { com.myfinance.core.UtilityBills.parse(sender, body, timestamp)?.let { v12.onUtilityBill(it) } }
 
+        // A biller's receipt (JioHome "payment received") is not income; it names the payee of the bank's debit.
+        SmsParser.billerReceipt(sender, body)?.let { (amount, brand) ->
+            if (brand != null) runCatching { nameFromReceipt(amount, brand, timestamp) }
+            return Ingest.NOT_A_TRANSACTION
+        }
         val parsed = SmsParser.parse(sender, body, timestamp, _fxRates.value) ?: return Ingest.NOT_A_TRANSACTION
         if (v13.isSmsDeleted(key) > 0) return Ingest.DELETED_BEFORE
         // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
@@ -1611,6 +1659,7 @@ class FinanceRepository(
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
         private const val KEY_CODE_PAYEES = "code_payees_1_14"
+        private const val KEY_RECEIPTS_REMOVED = "biller_receipts_1_14"
         const val REV_PAIR = "reversal"
         const val REV_NOT = "not_reversal"
         private const val IMPORT_CHUNK = 200

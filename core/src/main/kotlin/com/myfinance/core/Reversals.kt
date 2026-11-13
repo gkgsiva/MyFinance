@@ -153,7 +153,7 @@ object PayeeNames {
     }
 
     private val brands: List<Pair<Regex, String>> = listOf(
-        """\bjio\s*(?:fiber|fibre|air\s*fiber|airfiber|broadband|home)\b|\bjio\b.{0,40}\bbroadband\b|\bbroadband\b.{0,40}\bjio\b""" to "Jio broadband",
+        """\bjio\s*(?:fiber|fibre|air\s*fiber|airfiber|broadband|home|fixed\s*voice)|\bjiohom|\bjio\b.{0,40}\bbroadband\b|\bbroadband\b.{0,40}\bjio\b""" to "Jio broadband",
         """\bairtel\s*(?:xstream|fiber|fibre|broadband|black)\b|\bairtel\b.{0,40}\bbroadband\b""" to "Airtel broadband",
         """\breliance\s*jio\b|\bjio\b|\bjiomobility\b|\brjil\b""" to "Jio",
         """\bairtel\b|\bbharti\s*airtel\b""" to "Airtel",

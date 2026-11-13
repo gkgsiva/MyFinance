@@ -139,6 +139,9 @@ object SmsParser {
         if (otpRegex.containsMatchIn(text)) return null
         if (ignoreRegex.containsMatchIn(text)) return null
         if (cardBillRegex.containsMatchIn(text) && !completedMoney.containsMatchIn(text)) return null
+        // A biller's own receipt ("Payment of Rs 2576.71 for your JioHome connection has been received"): the
+        // bank's debit is the transaction; this is not money coming in.
+        if (isBillerReceipt(sender, text)) return null
 
         val amountMatch = findTransactionAmount(text)
         // A foreign amount before any rupee amount ("Spent USD 12.99 on card ..."): convert it.
@@ -166,6 +169,35 @@ object SmsParser {
             fxRate = rate,
             counterTail = (if (type == TxnType.DEBIT) toOwnAccount else fromOwnAccount).find(text)?.groupValues?.get(1),
         )
+    }
+
+    private val receiptWords = Regex(
+        """\bpayment\s+(?:of\s+)?(?:rs\.?|inr|₹)\s?[\d,]+(?:\.\d{1,2})?.{0,140}?\b(?:has\s+been\s+|is\s+|was\s+)?received\b|\bthank\s+you\s+for\s+(?:your\s+|the\s+)?payment\b|\bwe\s+have\s+received\s+(?:your\s+|the\s+)?payment\b|\breceived\s+your\s+payment\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** Words that put the money into one of the user's own accounts or cards. */
+    private val ownAccountWords = Regex(
+        """\b(?:a/c|acct|account|card|wallet)\b|\bcredited\s+(?:to|in)\b|\bin\s+your\s+(?:bank|a/c|account)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * A biller's receipt for a payment the user made (JioHome, BESCOM, an insurer): sent by the biller, not a bank,
+     * and naming no account or card of the user's. The bank's debit SMS is the transaction; this is not income.
+     */
+    fun isBillerReceipt(sender: String, body: String): Boolean {
+        val text = body.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
+        if (!receiptWords.containsMatchIn(text)) return false
+        if (bankFromSender(sender) != null || ownAccountWords.containsMatchIn(text) || accountTail(text) != null) return false
+        return true
+    }
+
+    /** The amount and brand of a biller's receipt ("Rs. 2576.71", "Jio broadband"), or null when it isn't one. */
+    fun billerReceipt(sender: String, body: String): Pair<Long, String?>? {
+        if (!isBillerReceipt(sender, body)) return null
+        val text = body.replace('\n', ' ').replace(Regex("\\s+"), " ").trim()
+        val amount = findTransactionAmount(text)?.groupValues?.get(1)?.let(::parseAmountToMinor)?.takeIf { it > 0 } ?: return null
+        return amount to PayeeNames.brandIn("$sender $text")
     }
 
     // Meal cards and FASTag are their own instruments, whichever bank issues them.
