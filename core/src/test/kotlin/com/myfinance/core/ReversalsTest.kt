@@ -132,4 +132,24 @@ class ReversalsTest {
         val second = row(TxnType.DEBIT, 2_576_71, at(4, 19, 38), "yblec123879a52a")
         assertTrue(Reversals.find(listOf(first, second)).isEmpty())
     }
+
+    /** Siva's 4 Nov: the 2:58 pm SMS (bank a/c XX144) and the statement line filed under card 5010 at 7:38 pm are one payment. */
+    @Test fun smsAndStatementLineWithTheSameUpiPayeeAreOnePaymentAcrossAccounts() {
+        val zone = ZoneOffset.UTC
+        val sms = ExistingTxn(
+            2_576_71, TxnType.DEBIT, at(4, 14, 58), "XX144", null, "ICICIT|abc", 7,
+            text = "ICICI Bank Acct XX144 debited for Rs 2576.71 on 04-Nov-26; yblec123879a52a4806a6fc@ybl credited. UPI:530912345678.",
+        )
+        val line = ExistingTxn(
+            2_576_71, TxnType.DEBIT, at(4, 19, 38), "5010", null, "STMT|x", 9, true,
+            "Statement: UPI/530900000000/Yblec123879a52a4806a6fc Cb/Payment/YES BANK",
+        )
+        assertEquals(listOf(0 to 0), StatementImport.storedSmsDoubles(listOf(sms), listOf(line), zone = zone))
+        // A different payee code on another account stays two payments.
+        val other = line.copy(text = "Statement: UPI/530900000000/paytmqr2810050501xyz/Payment/YES BANK")
+        assertTrue(StatementImport.storedSmsDoubles(listOf(sms), listOf(other), zone = zone).isEmpty())
+        // Days apart, the same payee is a new month's bill, not the same payment.
+        val later = line.copy(timestamp = at(9, 19, 38))
+        assertTrue(StatementImport.storedSmsDoubles(listOf(sms), listOf(later), zone = zone).isEmpty())
+    }
 }

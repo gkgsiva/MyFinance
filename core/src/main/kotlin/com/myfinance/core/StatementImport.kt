@@ -151,10 +151,12 @@ object StatementImport {
                 // Another card number is another transaction, unless it is the same statement line imported
                 // again (an older version of the app, or a different card number typed on import), or a debit
                 // card's SMS for a card payment from this bank account.
-                if (!sameAccount(c.accountTail, et) && !(e.fromStatement && sameLine(c.row.description, e.text)) &&
-                    !(!e.fromStatement && !c.cardStatement && debitCardSms(e.text) && debitCardLine(c.row.description))
-                ) continue
                 val gap = abs(day(e.timestamp) - cd)
+                if (!sameAccount(c.accountTail, et) && !(e.fromStatement && sameLine(c.row.description, e.text)) &&
+                    !(!e.fromStatement && !c.cardStatement && debitCardSms(e.text) && debitCardLine(c.row.description)) &&
+                    // The same UPI payee code on both, within a day: one payment, whichever account each names.
+                    !(!e.fromStatement && gap <= 1 && samePayeeCode(c.row.description, e.text))
+                ) continue
                 if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (et != null && c.accountTail != null && sameAccount(et, c.accountTail)) 0 else 1))
             }
             for ((i, fx) in foreignSms) {
@@ -220,6 +222,18 @@ object StatementImport {
         return (xs intersect ys).size * 10 >= minOf(xs.size, ys.size) * 7
     }
 
+    /**
+     * True when a statement narration and an SMS name the same UPI payee code ("yblec123879a52a4806a6fc"): the
+     * same payment even when the SMS names the bank account and the line was filed under a card (or the other way).
+     */
+    fun samePayeeCode(narration: String?, smsText: String?): Boolean {
+        if (narration == null || smsText == null) return false
+        val sms = smsText.lowercase()
+        return narration.removePrefix("Statement: ").substringBefore("\n\nSMS: ").split(Regex("""[^A-Za-z0-9]+"""))
+            .filter { it.length >= 12 && PayeeNames.isCode(it) }
+            .any { sms.contains(it.lowercase().take(12)) }
+    }
+
     /** A match with a stored SMS / entry is an update; with another statement's line or this batch, a skip. */
     private fun linked(c: ImportCandidate, e: ExistingTxn, reason: DuplicateReason) =
         if (e.id > 0 && !e.fromStatement) c.copy(duplicateOf = reason, matchedId = e.id)
@@ -253,7 +267,8 @@ object StatementImport {
         same.filter { i ->
             val lt = tail(lines[i].accountTail)
             val account = if (needAccount) st != null && lt != null && sameAccount(st, lt) else sameAccount(st, lt)
-            (account || debitCard && debitCardLine(lines[i].text.orEmpty().removePrefix("Statement: "))) && gap(i) <= windowDays
+            (account || debitCard && debitCardLine(lines[i].text.orEmpty().removePrefix("Statement: ")) ||
+                gap(i) <= 1 && samePayeeCode(lines[i].text, sms.text)) && gap(i) <= windowDays
         }.minWithOrNull(
             compareBy<Int> { gap(it) }
                 .thenBy { if (st != null && tail(lines[it].accountTail) != null && sameAccount(tail(lines[it].accountTail), st)) 0 else 1 },
