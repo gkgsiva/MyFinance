@@ -213,7 +213,7 @@ class V14State(
     private val watches = dao.observeRefunds()
 
     val refunds: StateFlow<List<RefundItem>> =
-        combine(watches, allLite, allTransactions, refundOverdueDays) { w, lite, all, days ->
+        combine(watches, allLiteWithExcluded, allTransactions, refundOverdueDays) { w, lite, all, days ->
             val idOf = all.associate { it.uid to it.id }
             Refunds.track(w.mapNotNull { e -> idOf[e.uid]?.let { RefundWatch(it, e.expectedMinor, e.since, e.closed) } }, lite, LocalDate.now(), days, zone)
         }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())

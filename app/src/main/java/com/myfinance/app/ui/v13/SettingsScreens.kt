@@ -72,6 +72,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
         item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
+        item { SettingTile("Statements", "", "A card's or account's entries for a bill cycle, month or any dates") { open("statements") } }
         item { SettingTile("My cards & accounts", "", "Your and your family's card and account numbers, so statements and SMS go to the right person") { open("my-accounts") } }
         item {
             val day by vm.v14.statementReminderDay.collectAsState()
@@ -79,6 +80,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         }
         item { SettingTile("Card bill check", "", "Card statements against what you paid") { open("card-bills") } }
         item { SettingTile("Card bill payments", "", "Payments from the bank to your cards, matched every month") { open("card-payments") } }
+        item { SettingTile("Reversed & refunded", "", "Failed payments that came back, refunds and autopay holds: not counted") { open("reversals") } }
 
         item { Group("Messages") }
         item { SettingTile("Rescan messages", "", "Read the SMS inbox again without making duplicates") { open("rescan") } }
@@ -140,6 +142,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
 
         item { Group("About") }
         item { SettingTile("MyFinance", "v$version", "Your data stays on this phone") {} }
+        item { SettingTile("What's new", "", "Every version from 1.0 and what it changed") { open("whats-new") } }
     }
 }
 

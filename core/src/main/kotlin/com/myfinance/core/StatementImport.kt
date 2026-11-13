@@ -151,10 +151,12 @@ object StatementImport {
                 // Another card number is another transaction, unless it is the same statement line imported
                 // again (an older version of the app, or a different card number typed on import), or a debit
                 // card's SMS for a card payment from this bank account.
-                if (!sameAccount(c.accountTail, et) && !(e.fromStatement && sameLine(c.row.description, e.text)) &&
-                    !(!e.fromStatement && !c.cardStatement && debitCardSms(e.text) && debitCardLine(c.row.description))
-                ) continue
                 val gap = abs(day(e.timestamp) - cd)
+                if (!sameAccount(c.accountTail, et) && !(e.fromStatement && sameLine(c.row.description, e.text)) &&
+                    !(!e.fromStatement && !c.cardStatement && debitCardSms(e.text) && debitCardLine(c.row.description)) &&
+                    // The same UPI payee code on both, within a day: one payment, whichever account each names.
+                    !(!e.fromStatement && gap <= 1 && samePayeeCode(c.row.description, e.text))
+                ) continue
                 if (gap <= windowDays) pairs += Triple(ci, i, gap * 10 + (if (et != null && c.accountTail != null && sameAccount(et, c.accountTail)) 0 else 1))
             }
             for ((i, fx) in foreignSms) {
@@ -201,6 +203,18 @@ object StatementImport {
     private val debitCardNarration = Regex("""^(DEBIT CARD\b|ICICI ATM\b|OTHER ATMS\b)|\b(VPS|IPS|MPS|PCD|POS|ATM|NFS|VIN|DCARD)/|\bPOS\s|\bATM\s?WDL|CASH WDL""", RegexOption.IGNORE_CASE)
 
     /** An SMS about a debit card ("Debit Card XX1234"), which names the card, not the account. */
+    /**
+     * The account to keep when a statement line and its SMS name different ones: the SMS names the card actually
+     * used (a UPI payment on a RuPay credit card, ••7002, filed under ••5010 by a consolidated statement), so it wins.
+     * A debit card's SMS names the card, not the account, and a card bill payment's SMS names the card it paid:
+     * there the line's account stays.
+     */
+    fun keptTail(lineTail: String?, smsTail: String?, smsText: String?): String? =
+        if (lineTail != null && smsTail != null && !sameAccount(lineTail, smsTail) && !debitCardSms(smsText) &&
+            !SelfTransfers.isCardPayment(null, smsText)
+        ) smsTail
+        else lineTail ?: smsTail
+
     private fun debitCardSms(text: String?) = text != null && debitCardWords.containsMatchIn(text) && !creditCardWords.containsMatchIn(text)
     private fun debitCardLine(narration: String) = debitCardNarration.containsMatchIn(narration.trim())
 
@@ -218,6 +232,18 @@ object StatementImport {
         val xs = x.split(' ').toSet()
         val ys = y.split(' ').toSet()
         return (xs intersect ys).size * 10 >= minOf(xs.size, ys.size) * 7
+    }
+
+    /**
+     * True when a statement narration and an SMS name the same UPI payee code ("yblec123879a52a4806a6fc"): the
+     * same payment even when the SMS names the bank account and the line was filed under a card (or the other way).
+     */
+    fun samePayeeCode(narration: String?, smsText: String?): Boolean {
+        if (narration == null || smsText == null) return false
+        val sms = smsText.lowercase()
+        return narration.removePrefix("Statement: ").substringBefore("\n\nSMS: ").split(Regex("""[^A-Za-z0-9]+"""))
+            .filter { it.length >= 12 && PayeeNames.isCode(it) }
+            .any { sms.contains(it.lowercase().take(12)) }
     }
 
     /** A match with a stored SMS / entry is an update; with another statement's line or this batch, a skip. */
@@ -253,7 +279,8 @@ object StatementImport {
         same.filter { i ->
             val lt = tail(lines[i].accountTail)
             val account = if (needAccount) st != null && lt != null && sameAccount(st, lt) else sameAccount(st, lt)
-            (account || debitCard && debitCardLine(lines[i].text.orEmpty().removePrefix("Statement: "))) && gap(i) <= windowDays
+            (account || debitCard && debitCardLine(lines[i].text.orEmpty().removePrefix("Statement: ")) ||
+                gap(i) <= 1 && samePayeeCode(lines[i].text, sms.text)) && gap(i) <= windowDays
         }.minWithOrNull(
             compareBy<Int> { gap(it) }
                 .thenBy { if (st != null && tail(lines[it].accountTail) != null && sameAccount(tail(lines[it].accountTail), st)) 0 else 1 },

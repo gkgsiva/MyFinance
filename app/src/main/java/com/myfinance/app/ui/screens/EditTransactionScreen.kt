@@ -211,6 +211,29 @@ fun EditTransactionScreen(vm: FinanceViewModel, v12: V12ViewModel, id: Long, onD
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            // 1.14: a payment and the money that came back for it.
+            val reversals by vm.v16.reversalByUid.collectAsState()
+            original?.let { o -> reversals[o.uid] }?.let { r ->
+                val other = if (r.debit.uid == original?.uid) r.credit else r.debit
+                androidx.compose.material3.Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(r.kind.label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            (if (other.type == TxnType.CREDIT) "The money came back on " else "This came back for the payment on ") +
+                                java.time.Instant.ofEpochMilli(other.timestamp).atZone(ZoneId.systemDefault())
+                                    .format(java.time.format.DateTimeFormatter.ofPattern("d MMM, h:mm a")) +
+                                ". Neither is counted as spending or money received.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row {
+                            androidx.compose.material3.TextButton(onClick = { onOpen(other.id) }) { Text("Open the other entry") }
+                            androidx.compose.material3.TextButton(onClick = { vm.v16.undoReversal(r.key); excluded = false }) { Text("Not a reversal") }
+                        }
+                    }
+                }
+            }
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Leave out of totals")

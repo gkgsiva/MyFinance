@@ -663,7 +663,8 @@ object Narration {
     fun merchant(description: String): String? {
         val d = description.removePrefix("Statement: ").substringBefore("\n\nSMS: ").replace(Regex("""\s+"""), " ").trim()
         if (d.isEmpty()) return null
-        return named(d) ?: fallback(d)
+        // A UPI code for a payee ("yblec123879a52a") gives way to the brand the narration names.
+        return PayeeNames.better(named(d) ?: fallback(d), d)
     }
 
     /** ICICI's mode column ("NET BANKING", "DEBIT CARD") and cheque numbers printed before the narration. */

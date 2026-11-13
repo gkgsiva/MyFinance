@@ -219,6 +219,9 @@ class FinanceRepository(
         runCatching { restoreSalaryOnce() }
         runCatching { findInvestmentsOnce() }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { removeBillerReceiptsOnce() }
+        runCatching { nameCodePayeesOnce() }
+        runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
@@ -287,9 +290,10 @@ class FinanceRepository(
      * nickname). The SMS entry goes to Recently deleted and is remembered, so a rescan won't add it back.
      */
     private suspend fun removeSmsDoublesOnce() = withContext(Dispatchers.IO) {
-        if (prefs.getBoolean(KEY_SMS_DOUBLE_CLEANUP, false)) return@withContext
+        // Run again once in 1.14: a statement line and its SMS kept apart since 1.11.3 (Jio, 4 Nov) are put together.
+        if (prefs.getBoolean(KEY_SMS_DOUBLE_CLEANUP_2, false)) return@withContext
         // Marked done first: if anything below fails, the app must not try (and fail) again at every start.
-        prefs.edit().putBoolean(KEY_SMS_DOUBLE_CLEANUP, true).apply()
+        prefs.edit().putBoolean(KEY_SMS_DOUBLE_CLEANUP, true).putBoolean(KEY_SMS_DOUBLE_CLEANUP_2, true).apply()
         val all = db.transactions().allOnce()
         val sms = all.filter { it.source == TxnSource.SMS && it.smsKey != null && !it.smsKey.startsWith("STMT|") }
         // Statement lines not yet linked to an SMS.
@@ -315,6 +319,9 @@ class FinanceRepository(
             line.copy(
                 rawSms = statementText(line.rawSms.orEmpty(), s.rawSms),
                 reference = line.reference ?: s.reference, bank = line.bank ?: s.bank,
+                // The card the SMS names (a UPI payment on the RuPay card) and the SMS's time of day.
+                accountTail = StatementImport.keptTail(line.accountTail, s.accountTail, s.rawSms),
+                timestamp = statementTime(com.myfinance.core.Dates.localDate(line.timestamp, ZoneId.systemDefault()), s.timestamp),
                 category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, s.category, line.userEdited, s.userEdited),
                 note = line.note ?: s.note,
                 excluded = if (edits) s.excluded else line.excluded || s.excluded,
@@ -433,6 +440,108 @@ class FinanceRepository(
         changed.size
     }
 
+    // ---- 1.14: failed payments, reversals, refunds and autopay holds ----
+
+    private fun TransactionEntity.checkRow() = com.myfinance.core.CheckRow(
+        id, uid, type, amountMinor, accountTail, timestamp, merchant, rawSms, category, owner.orEmpty(),
+        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference,
+    )
+
+    /**
+     * A payment and the money that came back for it (failed and reversed, refunded, an autopay hold released):
+     * both stop counting as spending and income, and the pair is remembered so it can be listed and undone.
+     * Pairs the user undid ("Not a reversal") are never made again. Returns how many pairs were made.
+     */
+    suspend fun leaveOutReversals(from: Long = 0, to: Long = Long.MAX_VALUE): Int = withContext(Dispatchers.IO) {
+        val rows = if (from == 0L && to == Long.MAX_VALUE) db.transactions().allOnce() else db.transactions().rangeOnce(from, to)
+        val answers = v16.answersOnce().filter { it.key.startsWith("rev:") }
+        val dismissed = answers.filter { it.answer == REV_NOT }.mapTo(HashSet()) { it.key }
+        val pairs = com.myfinance.core.Reversals.find(rows.filter { !it.excluded }.map { it.checkRow() }, dismissed)
+        if (pairs.isEmpty()) return@withContext 0
+        val ids = pairs.flatMap { listOf(it.debit.id, it.credit.id) }.toHashSet()
+        val changed = rows.filter { it.id in ids }.map { it.copy(excluded = true) }
+        // Remembered first, so the list can show the pair even if the update below is interrupted.
+        for (p in pairs) v16.answer(ReviewAnswerEntity(p.key, REV_PAIR + ":" + p.kind.name))
+        db.withTransaction { db.transactions().updateAll(changed) }
+        onDataChanged()
+        pairs.size
+    }
+
+    /** Reversal pairs remembered in [answers]: (key, kind name) for the ones still paired. */
+    fun reversalKeys(answers: List<ReviewAnswerEntity>): List<Pair<String, String>> =
+        answers.filter { it.key.startsWith("rev:") && it.answer.startsWith(REV_PAIR) }
+            .map { it.key to it.answer.substringAfter(':', "") }
+
+    val reviewAnswers: Flow<List<ReviewAnswerEntity>> get() = v16.observeAnswers()
+
+    /** "Not a reversal": both entries count again, and this pair is never made again. */
+    suspend fun undoReversal(key: String) = withContext(Dispatchers.IO) {
+        val (d, c) = com.myfinance.core.ReversalPair.uidsOf(key) ?: return@withContext
+        val rows = db.transactions().allOnce().filter { it.uid == d || it.uid == c }
+        v16.answer(ReviewAnswerEntity(key, REV_NOT))
+        val changed = rows.filter { it.excluded }.map { it.copy(excluded = false) }
+        if (changed.isNotEmpty()) db.withTransaction { db.transactions().updateAll(changed) }
+        onDataChanged()
+    }
+
+    /**
+     * A biller's receipt for [amountMinor] names the payee: a debit of that amount within a day whose payee is a UPI
+     * code or missing takes [brand], and the code is remembered as that payee's name for next time.
+     */
+    private suspend fun nameFromReceipt(amountMinor: Long, brand: String, at: Long) {
+        val day = 24 * 60 * 60 * 1000L
+        val rows = db.transactions().rangeOnce(at - day, at + day).filter { t ->
+            t.type == TxnType.DEBIT && t.amountMinor == amountMinor && !t.userEdited &&
+                (t.merchant == null || com.myfinance.core.PayeeNames.isCode(t.merchant))
+        }
+        if (rows.isEmpty()) return
+        rows.mapNotNull { it.merchant }.distinct().forEach { code ->
+            if (payeeName(code) == null) v13.putPayeeNames(listOf(PayeeNameEntity(Categorizer.merchantKey(code), brand)))
+        }
+        db.transactions().updateAll(rows.map { it.copy(merchant = brand) })
+    }
+
+    /**
+     * Once (1.14): billers' receipts ("Payment of Rs. 2576.71 for your JioHome connection has been received") that
+     * earlier versions stored as money received. They name the payee of the matching debit, then go to Recently
+     * deleted (restorable) and are remembered, so a rescan won't add them back.
+     */
+    private suspend fun removeBillerReceiptsOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_RECEIPTS_REMOVED, false)) return@withContext
+        prefs.edit().putBoolean(KEY_RECEIPTS_REMOVED, true).apply()
+        val receipts = db.transactions().allOnce().mapNotNull { t ->
+            if (t.type != TxnType.CREDIT || t.userEdited || t.source != TxnSource.SMS) return@mapNotNull null
+            val body = t.rawSms ?: return@mapNotNull null
+            val sender = t.smsKey?.substringBefore('|') ?: ""
+            SmsParser.billerReceipt(sender, body)?.let { t to it }
+        }
+        if (receipts.isEmpty()) return@withContext
+        for ((t, r) in receipts) r.second?.let { brand -> runCatching { nameFromReceipt(r.first, brand, t.timestamp) } }
+        val now = System.currentTimeMillis()
+        for ((t, _) in receipts) {
+            runCatching { v13.putTrash(DeletedTxnEntity.from(t, now)) }
+            runCatching { v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now)) }
+        }
+        db.withTransaction { receipts.map { it.first.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) } }
+        onDataChanged()
+    }
+
+    /**
+     * Once (1.14): payees stored as a UPI code ("yblec123879a52a") whose message names the brand ("JioFiber") take
+     * the brand's name. Entries the user edited and payees the user named are left alone.
+     */
+    private suspend fun nameCodePayeesOnce() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_CODE_PAYEES, false)) return@withContext
+        prefs.edit().putBoolean(KEY_CODE_PAYEES, true).apply()
+        val changed = db.transactions().allOnce().mapNotNull { t ->
+            val m = t.merchant ?: return@mapNotNull null
+            if (t.userEdited || !com.myfinance.core.PayeeNames.isCode(m)) return@mapNotNull null
+            val better = com.myfinance.core.PayeeNames.brandIn(t.rawSms) ?: return@mapNotNull null
+            t.copy(merchant = better)
+        }
+        if (changed.isNotEmpty()) db.withTransaction { changed.chunked(500).forEach { db.transactions().updateAll(it) } }
+    }
+
     /** How many repeated statement lines the 1.11.1 cleanup moved to Recently deleted (0 when none). */
     val statementRepeatsRemoved: Int get() = prefs.getInt(KEY_STMT_REPEAT_REMOVED, 0)
 
@@ -469,6 +578,11 @@ class FinanceRepository(
         // Electricity, water, gas, broadband and property tax bills fill in their payment reminder.
         runCatching { com.myfinance.core.UtilityBills.parse(sender, body, timestamp)?.let { v12.onUtilityBill(it) } }
 
+        // A biller's receipt (JioHome "payment received") is not income; it names the payee of the bank's debit.
+        SmsParser.billerReceipt(sender, body)?.let { (amount, brand) ->
+            if (brand != null) runCatching { nameFromReceipt(amount, brand, timestamp) }
+            return Ingest.NOT_A_TRANSACTION
+        }
         val parsed = SmsParser.parse(sender, body, timestamp, _fxRates.value) ?: return Ingest.NOT_A_TRANSACTION
         if (v13.isSmsDeleted(key) > 0) return Ingest.DELETED_BEFORE
         // The user's own rules ("any SMS with SWIGGY goes to Food") come before everything else.
@@ -509,6 +623,8 @@ class FinanceRepository(
         if (added) {
             // The other side of a card bill payment may already be here (bank debit and card credit).
             runCatching { val w = 5L * 24 * 60 * 60 * 1000; leaveOutCardPaymentPairs(timestamp - w, timestamp + w) }
+            // A failed payment's money coming back (or the payment it came back for).
+            runCatching { val w = 11L * 24 * 60 * 60 * 1000; leaveOutReversals(timestamp - w, timestamp + w) }
             runCatching { v12.onNewTransaction(row, rule) }
             runCatching { applyLabelRules(row, parsed.merchant) }
             // A late SMS for a month already closed: added, and shown in the review inbox.
@@ -1328,8 +1444,8 @@ class FinanceRepository(
                             t.copy(
                                 amountMinor = r.amountMinor, type = r.type, timestamp = statementTime(r.date, t.timestamp),
                                 merchant = official,
-                                accountTail = c.accountTail ?: t.accountTail, bank = c.bank ?: t.bank,
-                                owner = ownerOf(c.accountTail ?: t.accountTail, c.bank ?: t.bank) ?: t.owner,
+                                accountTail = StatementImport.keptTail(c.accountTail, t.accountTail, t.rawSms), bank = c.bank ?: t.bank,
+                                owner = ownerOf(StatementImport.keptTail(c.accountTail, t.accountTail, t.rawSms), c.bank ?: t.bank) ?: t.owner,
                                 reference = t.reference ?: r.reference, balanceMinor = r.balanceMinor ?: t.balanceMinor,
                                 source = TxnSource.STATEMENT, rawSms = statementText(r.description, t.rawSms),
                                 excluded = t.excluded || (!t.userEdited && (c.ownTransfer || com.myfinance.core.SelfTransfers.isCardBillPayment(r.type, official, r.description, c.cardStatement))),
@@ -1375,6 +1491,7 @@ class FinanceRepository(
             onProgress(done, total)
         }
         runCatching { leaveOutCardPaymentPairs() }
+        runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
         onDataChanged()
         ImportResult(added, updated, skippedClosed, addedUids)
@@ -1408,6 +1525,40 @@ class FinanceRepository(
         v18.putBatch(b.copy(undone = true))
         onDataChanged()
         removed
+    }
+
+    /**
+     * "Keep only SMS" for a period (1.14): statement lines dated [from]..[to] go. A line that only came from a
+     * statement moves to Recently deleted (not remembered, so a later statement can bring it back); a line joined
+     * with its SMS goes back to being the SMS entry (the SMS's amount, card, payee and time), keeping the user's
+     * category, note and labels. Returns (removed, turned back into SMS).
+     */
+    suspend fun keepOnlySms(from: java.time.LocalDate, to: java.time.LocalDate): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        val zone = ZoneId.systemDefault()
+        val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val lines = db.transactions().rangeOnce(start, end - 1).filter { it.source == TxnSource.STATEMENT && it.timestamp in start until end }
+        val pure = lines.filter { it.smsKey == null || it.smsKey.startsWith("STMT|") }
+        val joined = lines.filter { it.smsKey != null && !it.smsKey.startsWith("STMT|") }
+        val back = joined.map { t ->
+            val sms = t.rawSms?.takeIf { it.contains("\n\nSMS: ") }?.substringAfter("\n\nSMS: ")
+            val p = sms?.let { SmsParser.parse(t.smsKey!!.substringBefore('|'), it, t.timestamp, _fxRates.value) }
+            t.copy(
+                source = TxnSource.SMS, rawSms = sms ?: t.rawSms,
+                amountMinor = p?.amountMinor ?: t.amountMinor, type = p?.type ?: t.type,
+                merchant = if (t.userEdited) t.merchant else (p?.merchant ?: t.merchant),
+                accountTail = p?.accountTail ?: t.accountTail, bank = p?.bank ?: t.bank,
+                reference = p?.reference ?: t.reference, balanceMinor = p?.balanceMinor,
+            )
+        }
+        val now = System.currentTimeMillis()
+        runCatching { v13Db.withTransaction { for (t in pure) v13.putTrash(DeletedTxnEntity.from(t, now)) } }
+        db.withTransaction {
+            if (back.isNotEmpty()) db.transactions().updateAll(back)
+            pure.map { it.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) }
+        }
+        onDataChanged()
+        pure.size to back.size
     }
 
     // ---- 1.10: uncategorised cleanup ----
@@ -1520,7 +1671,7 @@ class FinanceRepository(
                 smsKey = sms.smsKey, rawSms = statementText(line.rawSms.orEmpty(), sms.rawSms),
                 // A salary SMS keeps the line in Salary, so it counts as salary (and for the salary month).
                 category = com.myfinance.core.SalaryRepair.mergedCategory(line.category, sms.category, line.userEdited, false),
-                reference = line.reference ?: sms.reference, accountTail = line.accountTail ?: sms.accountTail,
+                reference = line.reference ?: sms.reference, accountTail = StatementImport.keptTail(line.accountTail, sms.accountTail, sms.rawSms),
                 bank = line.bank ?: sms.bank,
             ),
         )
@@ -1562,11 +1713,16 @@ class FinanceRepository(
         private const val KEY_STMT_REPEAT_CLEANUP = "stmt_repeat_cleanup_1_11_1"
         private const val KEY_STMT_REPEAT_REMOVED = "stmt_repeat_removed_1_11_1"
         private const val KEY_SMS_DOUBLE_CLEANUP = "sms_double_cleanup_1_11_3"
+        private const val KEY_SMS_DOUBLE_CLEANUP_2 = "sms_double_cleanup_1_14"
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
         private const val KEY_INVEST_FIND = "investments_find_1_14"
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
+        private const val KEY_CODE_PAYEES = "code_payees_1_14"
+        private const val KEY_RECEIPTS_REMOVED = "biller_receipts_1_14"
+        const val REV_PAIR = "reversal"
+        const val REV_NOT = "not_reversal"
         private const val IMPORT_CHUNK = 200
         private const val KEY_LAST_EXPORT = "last_export_at"
         private const val KEY_FIRST_USE = "first_use_at"

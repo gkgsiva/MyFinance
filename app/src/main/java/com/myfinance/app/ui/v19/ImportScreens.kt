@@ -61,6 +61,18 @@ fun ImportHistoryScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String)
     Messages(vm)
     val batches by vm.v19.importBatches.collectAsState()
     var confirm by remember { mutableStateOf<com.myfinance.app.data.ImportBatchEntity?>(null) }
+    var smsFrom by remember { mutableStateOf<LocalDate?>(null) }
+    var smsTo by remember { mutableStateOf<LocalDate?>(LocalDate.now()) }
+    var askSms by remember { mutableStateOf(false) }
+    if (askSms) {
+        AlertDialog(
+            onDismissRequest = { askSms = false },
+            title = { Text("Keep only SMS?") },
+            text = { Text("Statement entries from ${smsFrom?.format(dayFmt)} to ${smsTo?.format(dayFmt)} are taken out (they go to Recently deleted). Entries that matched an SMS go back to being that SMS, with your category and notes.") },
+            confirmButton = { TextButton(onClick = { vm.v19.keepOnlySms(smsFrom!!, smsTo!!); askSms = false }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { askSms = false }) { Text("Cancel") } },
+        )
+    }
     SimpleScreen("Import history", onBack) {
         item { Muted("Every statement import, newest first. Undo takes out all the entries that import added, so you can import the files again cleanly. Entries from SMS that took a statement's details stay as they are.") }
         if (batches.isEmpty()) item {
@@ -69,6 +81,19 @@ fun ImportHistoryScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String)
                     Text("No imports yet", fontWeight = FontWeight.SemiBold)
                     Muted("Statements you import from now on are listed here.")
                     OutlinedButton(onClick = { open("import-statement") }) { Text("Import statements") }
+                }
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Keep only SMS for a period", fontWeight = FontWeight.SemiBold)
+                    Muted("Takes statement entries dated in these days out of MyFinance and keeps your SMS. Use it for a period whose statement isn't final yet; import the full statement later.")
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.myfinance.app.ui.v12.DateButton("From", smsFrom, { smsFrom = it })
+                        com.myfinance.app.ui.v12.DateButton("To", smsTo, { smsTo = it })
+                    }
+                    OutlinedButton(onClick = { askSms = true }, enabled = smsFrom != null && smsTo != null && !smsTo!!.isBefore(smsFrom!!)) { Text("Remove statement entries") }
                 }
             }
         }
