@@ -357,6 +357,7 @@ private fun MyFinanceRoot() {
             composable("reports") { ReportsScreen(vm = vm, onExplore = { nav.navigate("explore") }, open = { route -> nav.navigate(route) }) }
             // v1.4
             composable("label-suggestions") { com.myfinance.app.ui.v14.SuggestionsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }
+            composable("card-payments") { com.myfinance.app.ui.v14.CardPaymentsScreen(vm = vm, onBack = { nav.popBackStack() }, onImport = { nav.navigate("import-statement") }, onCardBills = { nav.navigate("card-bills") }) }
             composable("card-bills") { com.myfinance.app.ui.v14.CardBillsScreen(vm = vm, onBack = { nav.popBackStack() }, onImport = { nav.navigate("import-statement") }) }
             composable("loans") { com.myfinance.app.ui.v14.LoansScreen(vm = vm, onBack = { nav.popBackStack() }, onOpenAutoDebits = { nav.navigate("autodebits") }) }
             composable("refunds") { com.myfinance.app.ui.v14.RefundsScreen(vm = vm, onBack = { nav.popBackStack() }, onOpen = { id -> nav.navigate("edit/$id") }) }

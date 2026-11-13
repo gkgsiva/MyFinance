@@ -78,6 +78,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
             SettingTile("Statement reminders", if (day == 0) "Off" else "Day $day", "A monthly nudge to import the latest bank and card statements") { open("statement-reminders") }
         }
         item { SettingTile("Card bill check", "", "Card statements against what you paid") { open("card-bills") } }
+        item { SettingTile("Card bill payments", "", "Payments from the bank to your cards, matched every month") { open("card-payments") } }
 
         item { Group("Messages") }
         item { SettingTile("Rescan messages", "", "Read the SMS inbox again without making duplicates") { open("rescan") } }

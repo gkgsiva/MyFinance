@@ -57,6 +57,18 @@ data class PinnedReport(
 )
 
 /** An EMI with its loan details, for the loan payoff screen. */
+/** The card bill payments list, with display names for cards (by last 4 digits) and bank accounts (by debit id). */
+data class CardPaymentsView(
+    val months: List<com.myfinance.core.CardMonth> = emptyList(),
+    val cardNames: Map<String, String> = emptyMap(),
+    val bankNames: Map<Long, String> = emptyMap(),
+    val ready: Boolean = false,
+    /** Each card's 14th-to-14th (statement day) cycle against the statement total. */
+    val cycles: List<com.myfinance.core.CardCycle> = emptyList(),
+    /** Each bank account per month: whether every entry is there (the running balance adds up). */
+    val bankMonths: List<com.myfinance.core.BankMonth> = emptyList(),
+)
+
 data class LoanRow(val item: AutoDebitItem, val ratePct: Double?)
 
 /**
@@ -139,6 +151,32 @@ class V14State(
             }
             CardBills.check(list, lite, LocalDate.now(), zone)
         }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
+
+    // ---- Card bill payments, month by month ----
+
+    /**
+     * Card bills paid from the bank account, matched each month with the payment received on the card. Worked out
+     * only while the screen is open.
+     */
+    val cardPayments: StateFlow<CardPaymentsView> =
+        combine(allTransactions, repo.bills, repo.myAccounts) { all, bills, mine ->
+            val cardWords = Regex("""credit\s*card""", RegexOption.IGNORE_CASE)
+            fun tail4(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.takeIf { it.isNotEmpty() }
+            val cards = mine.filter { it.isCard }.mapTo(HashSet()) { it.tail }
+            bills.map { it.toBill() }.filter { it.kind == com.myfinance.core.BillKind.CREDIT_CARD }.mapNotNullTo(cards) { tail4(it.accountTail) }
+            all.filter { it.type == TxnType.CREDIT && it.rawSms?.let(cardWords::containsMatchIn) == true }.mapNotNullTo(cards) { tail4(it.accountTail) }
+            mine.filter { !it.isCard }.forEach { cards -= it.tail }
+            val lines = all.filter { it.source != com.myfinance.app.data.TxnSource.MANUAL || it.accountTail != null }
+                .map { com.myfinance.core.PayLine(it.id, it.type, it.amountMinor, it.timestamp, it.accountTail, it.merchant, it.rawSms, it.bank, it.balanceMinor) }
+            val cardBills = bills.map { it.toBill() }
+            val months = com.myfinance.core.CardPayments.monthly(lines, cards, cardBills, LocalDate.now(), zone)
+            val billDays = mine.filter { it.isCard && it.billDay != null }.associate { it.tail to it.billDay!! }
+            val cycles = com.myfinance.core.CardReconcile.cycles(lines, cards, cardBills, billDays, LocalDate.now(), zone)
+            val bankMonths = com.myfinance.core.CardReconcile.bankMonths(lines, cards, mine.filter { !it.isCard }.mapTo(HashSet()) { it.tail }, zone)
+            val names = mine.filter { it.isCard }.associate { it.tail to (it.label + (it.owner?.takeIf { o -> o.isNotBlank() }?.let { o -> " · $o" } ?: "")) }
+            val banks = all.filter { it.type == TxnType.DEBIT }.associate { it.id to (it.bank?.let { b -> "$b " }.orEmpty() + (it.accountTail?.let { t -> "a/c ••${t.filter(Char::isDigit).takeLast(4)}" } ?: "bank")) }
+            CardPaymentsView(months, names, banks, ready = true, cycles = cycles, bankMonths = bankMonths)
+        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.WhileSubscribed(5_000), CardPaymentsView())
 
     // ---- EMI end dates and loan payoff ----
 
