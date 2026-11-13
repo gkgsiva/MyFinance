@@ -289,9 +289,10 @@ class FinanceRepository(
      * nickname). The SMS entry goes to Recently deleted and is remembered, so a rescan won't add it back.
      */
     private suspend fun removeSmsDoublesOnce() = withContext(Dispatchers.IO) {
-        if (prefs.getBoolean(KEY_SMS_DOUBLE_CLEANUP, false)) return@withContext
+        // Run again once in 1.14: a statement line and its SMS kept apart since 1.11.3 (Jio, 4 Nov) are put together.
+        if (prefs.getBoolean(KEY_SMS_DOUBLE_CLEANUP_2, false)) return@withContext
         // Marked done first: if anything below fails, the app must not try (and fail) again at every start.
-        prefs.edit().putBoolean(KEY_SMS_DOUBLE_CLEANUP, true).apply()
+        prefs.edit().putBoolean(KEY_SMS_DOUBLE_CLEANUP, true).putBoolean(KEY_SMS_DOUBLE_CLEANUP_2, true).apply()
         val all = db.transactions().allOnce()
         val sms = all.filter { it.source == TxnSource.SMS && it.smsKey != null && !it.smsKey.startsWith("STMT|") }
         // Statement lines not yet linked to an SMS.
@@ -1654,6 +1655,7 @@ class FinanceRepository(
         private const val KEY_STMT_REPEAT_CLEANUP = "stmt_repeat_cleanup_1_11_1"
         private const val KEY_STMT_REPEAT_REMOVED = "stmt_repeat_removed_1_11_1"
         private const val KEY_SMS_DOUBLE_CLEANUP = "sms_double_cleanup_1_11_3"
+        private const val KEY_SMS_DOUBLE_CLEANUP_2 = "sms_double_cleanup_1_14"
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
         private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
