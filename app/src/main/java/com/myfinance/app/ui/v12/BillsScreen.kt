@@ -64,11 +64,19 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                     }
                     b.amountMinor?.let { Text(formatInr(it), fontWeight = FontWeight.SemiBold) }
                 }
-                val due = if (s.bill.done) "Paid (was due ${s.bill.nextDue.format(shortDate)})"
-                    else "Due ${s.bill.nextDue.format(shortDate)} (" + com.myfinance.app.ui.screens.relativeDay(s.bill.nextDue) + ")"
-                Text(due, color = if (!s.bill.done && (s.state == BillState.OVERDUE || s.state == BillState.DUE_TODAY)) ExpenseRed else MaterialTheme.colorScheme.onSurface)
+                val ended = !s.bill.done && s.bill.finished
+                val due = when {
+                    s.bill.done -> "Paid (was due ${s.bill.nextDue.format(shortDate)})"
+                    ended -> "Ended ${s.bill.endDate?.format(shortDate).orEmpty()}: nothing more is due"
+                    else -> "Due ${s.bill.nextDue.format(shortDate)} (" + com.myfinance.app.ui.screens.relativeDay(s.bill.nextDue) + ")"
+                }
+                Text(due, color = if (!s.bill.finished && (s.state == BillState.OVERDUE || s.state == BillState.DUE_TODAY)) ExpenseRed else MaterialTheme.colorScheme.onSurface)
+                if (!s.bill.finished) s.bill.endDate?.let { end ->
+                    val left = BillReminders.remaining(s.bill)
+                    Text("Ends ${end.format(shortDate)}" + (left?.let { " · $it left" }.orEmpty()), style = MaterialTheme.typography.bodySmall)
+                }
                 com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
-                    if (!s.bill.done) TextButton(onClick = { vm.markBillPaid(b) }) { Text("Already paid") }
+                    if (!s.bill.finished) TextButton(onClick = { vm.markBillPaid(b) }) { Text("Already paid") }
                     TextButton(onClick = { editing = b }) { Text("Edit") }
                     TextButton(onClick = { vm.deleteBill(b.id) }) { Text("Delete") }
                 }
@@ -85,6 +93,7 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
         var every by remember { mutableStateOf(b?.everyMonths ?: 1) }
         var remind by remember { mutableStateOf((b?.remindDaysBefore ?: 3).toString()) }
         var words by remember { mutableStateOf(b?.matchWords ?: BillReminders.defaultWords(ReminderKind.ELECTRICITY).joinToString(", ")) }
+        var end by remember { mutableStateOf(b?.endEpochDay?.let(LocalDate::ofEpochDay)) }
         var error by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { adding = false; editing = null },
@@ -100,6 +109,10 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                     AmountField("Usual amount (₹, optional)", amount, { amount = it })
                     DateButton("Next due", due, { it?.let { d -> due = d } })
                     Dropdown("Repeats", every, repeatOptions.map { it.first }, { m -> repeatOptions.first { it.first == m }.second }, { every = it })
+                    if (every != 0) {
+                        DateButton("Ends on (optional)", end, { end = it }, allowClear = true)
+                        Hint12("The last payment, e.g. an EMI's last instalment or when a subscription stops. Nothing is due after it. Loan EMIs take it from your card statements when they show the instalments.")
+                    }
                     OutlinedTextField(remind, { v -> remind = v.filter { it.isDigit() }.take(2) }, label = { Text("Remind days before") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(words, { words = it }, label = { Text("Words in the payment SMS (comma separated)") }, modifier = Modifier.fillMaxWidth())
                 }
@@ -113,6 +126,7 @@ fun BillsScreen(vm: V12ViewModel, onBack: () -> Unit) {
                             name = name.trim(), kind = kind.name, amountMinor = parseAmountToMinor(amount)?.takeIf { it > 0 },
                             nextDueEpochDay = due.toEpochDay(), everyMonths = every, remindDaysBefore = remind.toIntOrNull() ?: 3,
                             matchWords = words,
+                            endEpochDay = end?.takeIf { every != 0 }?.toEpochDay(),
                             // A new date makes a paid one-time reminder due again.
                             lastPaidAt = if (base.nextDueEpochDay != due.toEpochDay()) null else base.lastPaidAt,
                         ),

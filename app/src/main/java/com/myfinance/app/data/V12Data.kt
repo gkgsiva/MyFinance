@@ -102,6 +102,8 @@ data class BillReminderEntity(
     /** Comma-separated words that identify the payment in an SMS. */
     val matchWords: String,
     val lastPaidAt: Long? = null,
+    /** 1.13: the last due date of a repeating payment (an EMI's last instalment); null = no end. */
+    val endEpochDay: Long? = null,
 ) {
     fun toBill() = BillReminder(
         id, name, ReminderKind.entries.firstOrNull { it.name == kind } ?: ReminderKind.OTHER, amountMinor,
@@ -109,6 +111,7 @@ data class BillReminderEntity(
         matchWords.split(',').map { it.trim() }.filter { it.isNotEmpty() },
         // A one-time reminder is done once paid.
         done = everyMonths == 0 && lastPaidAt != null,
+        endDate = endEpochDay?.let(LocalDate::ofEpochDay),
     )
 }
 
@@ -257,7 +260,7 @@ interface V12Dao {
         LiabilityEntity::class, BillReminderEntity::class, SplitEntity::class, SettlementEntity::class,
         ReceiptEntity::class, TaxTagEntity::class, CustomRuleEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class V12Database : RoomDatabase() {
@@ -266,6 +269,13 @@ abstract class V12Database : RoomDatabase() {
     companion object {
         const val FILE = "myfinance-v12.db"
         fun create(context: Context): V12Database =
-            Room.databaseBuilder(context, V12Database::class.java, FILE).build()
+            Room.databaseBuilder(context, V12Database::class.java, FILE).addMigrations(MIGRATION_1_2).build()
+
+        /** 1.13: an end date on repeating payment reminders. */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE bill_reminders ADD COLUMN endEpochDay INTEGER")
+            }
+        }
     }
 }

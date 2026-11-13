@@ -95,7 +95,7 @@ object AnnualDues {
     fun list(bills: List<BillReminder>, policies: List<Policy>, today: LocalDate): List<AnnualDue> {
         val until = today.plusMonths(12)
         val out = ArrayList<AnnualDue>()
-        bills.filter { !it.done && (it.everyMonths >= 12 || (it.oneTime && it.kind.usuallyYearly)) }.forEach { b ->
+        bills.filter { !it.finished && (it.everyMonths >= 12 || (it.oneTime && it.kind.usuallyYearly)) }.forEach { b ->
             BillReminders.dueDates(b, today, until).firstOrNull()?.let { out += AnnualDue(b.name, it, b.amountMinor, "Reminder", "bill:${b.id}") }
         }
         policies.filter { it.everyMonths >= 12 || it.everyMonths == 0 }.forEach { p ->

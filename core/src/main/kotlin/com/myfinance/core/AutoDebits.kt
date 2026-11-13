@@ -66,6 +66,8 @@ data class AutoDebitItem(
     val instalmentsTotal: Int? = null,
     /** What is still to pay: [remaining] times the instalment, when known. */
     val remainingMinor: Long? = null,
+    /** True when [endDate] was read from the statements rather than set by the user. */
+    val endInferred: Boolean = false,
 )
 
 data class AutoDebitTotals(val next30DaysMinor: Long, val next30DaysCount: Int, val monthlyMinor: Long)
@@ -358,8 +360,20 @@ object AutoDebits {
         zone: ZoneId = ZoneId.systemDefault(),
         notRecurring: Set<String> = emptySet(),
     ): List<AutoDebitItem> {
-        val planItems = plans.mapNotNull { planItem(it, debits, today, zone) }
         val emiItems = instalmentEmis(debits, today, zone)
+        // An EMI plan without an end date takes the last instalment printed on the statements.
+        val inferredEnds = RepeatEnds.forPlans(plans, emiItems)
+        val planItems = plans.mapNotNull { p ->
+            val end = inferredEnds[p.id] ?: return@mapNotNull planItem(p, debits, today, zone)
+            val item = planItem(p.copy(endDate = end), debits, today, zone) ?: return@mapNotNull null
+            val e = RepeatEnds.emiFor(p.name, p.amountMinor, p.account, p.matchWords, emiItems)
+            item.copy(
+                endInferred = true,
+                instalmentsTotal = e?.instalmentsTotal,
+                instalmentsPaid = e?.instalmentsTotal?.let { t -> item.remaining?.let { t - it } },
+                remainingMinor = item.remaining?.let { it * p.amountMinor },
+            )
+        }
         // EMI lines are read above; as plain payments they would show again as a recurring "EMI principal".
         fun isEmiLine(name: String?) = name != null && (instalmentOf(name) != null || name.startsWith("EMI principal") || name.startsWith("EMI interest") ||
             name.endsWith(" EMI") || name.endsWith(" EMI interest"))

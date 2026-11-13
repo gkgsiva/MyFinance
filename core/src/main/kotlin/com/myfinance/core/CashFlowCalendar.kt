@@ -145,7 +145,7 @@ object CashFlowCalendar {
             for (b in bills) {
                 // Once, every few days or every few months; paid one-time reminders are gone.
                 val dates = BillReminders.dueDates(b, maxOf(first, today), last)
-                if (!b.done && b.nextDue.isBefore(today) && YearMonth.from(today) == month) {
+                if (!b.finished && b.nextDue.isBefore(today) && YearMonth.from(today) == month) {
                     expected += FlowEvent(today, "${b.name} (was due ${b.nextDue.dayOfMonth} ${b.nextDue.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }})", b.amountMinor, false, FlowKind.BILL, true, late = true, ref = "bill:${b.id}")
                 }
                 for (d in dates) {
