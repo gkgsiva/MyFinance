@@ -121,7 +121,8 @@ class SalaryDetectTest {
         assertTrue(g.alreadySalary)
         val c = MonthCycle(salaryFromDay = g.fromDay)
         assertEquals(java.time.YearMonth.of(2026, 11), c.periodOf(t[3], zone))
-        assertEquals("salary from 24 Oct counts here", c.note(java.time.YearMonth.of(2026, 11)))
+        // 24 Oct 2026 is a Saturday, so a salary on Friday the 23rd counts too.
+        assertEquals("salary from 23 Oct counts here", c.note(java.time.YearMonth.of(2026, 11)))
     }
 
     @Test fun steadyPayerWithoutSalaryCategoryIsFound() {

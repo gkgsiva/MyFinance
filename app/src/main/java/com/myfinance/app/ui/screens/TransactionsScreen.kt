@@ -65,7 +65,7 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     val usedLabels by vm.usedLabels.collectAsState()
     val labelFilter by vm.labelFilter.collectAsState()
     val showHidden by vm.showHidden.collectAsState()
-    val colorOf = categories.associate { it.name to Color(it.color) }
+    val colorOf = remember(categories) { categories.associate { it.name to Color(it.color) } }
     val fallback = MaterialTheme.colorScheme.outline
 
     var showFilters by remember { mutableStateOf(false) }
@@ -79,7 +79,8 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
     ) { uri -> uri?.let { vm.exportStatement(it, excel = true) } }
     val fileStem = "myfinance-statement-${LocalDate.now()}"
 
-    val byDay = txns.groupBy { it.timestamp.toLocalDateTime().toLocalDate() }
+    // Worked out once per list, not on every redraw (typing, scrolling, menus).
+    val byDay = remember(txns) { txns.groupBy { it.timestamp.toLocalDateTime().toLocalDate() } }
 
     Scaffold(
         floatingActionButton = {
@@ -207,8 +208,8 @@ fun TransactionsScreen(vm: FinanceViewModel, onOpen: (Long) -> Unit, onAdd: () -
                 }
             }
 
-            val spent = txns.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor }
-            val received = txns.filter { it.type == TxnType.CREDIT && !it.excluded }.sumOf { it.amountMinor }
+            val spent = remember(txns) { txns.filter { it.type == TxnType.DEBIT && !it.excluded }.sumOf { it.amountMinor } }
+            val received = remember(txns) { txns.filter { it.type == TxnType.CREDIT && !it.excluded }.sumOf { it.amountMinor } }
             androidx.compose.material3.Surface(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,

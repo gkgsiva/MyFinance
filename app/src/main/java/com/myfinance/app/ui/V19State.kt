@@ -61,7 +61,7 @@ class V19State(
     // A view that fails to work out shows nothing (and the error is kept for a crash report) instead of closing the app.
     private fun <T> state(initial: T, flow: kotlinx.coroutines.flow.Flow<T>, scope: CoroutineScope): StateFlow<T> =
         flow.catch { e -> com.myfinance.app.diag.CrashLog.recovered("views", e); emit(initial) }
-            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, initial)
+            .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, initial)
 
     val balancesOverview: StateFlow<BalancesOverview> = state(
         BalancesOverview(emptyList(), emptyList()),
@@ -183,7 +183,8 @@ class V19State(
     private val salaryGuess: StateFlow<com.myfinance.core.SalaryGuess?> = state(
         null,
         combine(allLite, _salaryState) { txns, st ->
-            if (st == "user" || st == "dismissed") null else com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)
+            // Set by the user: still found, so the payer's credits that didn't say "salary" go in Salary (below).
+            if (st == "dismissed") null else com.myfinance.core.SalaryDetect.guess(txns, LocalDate.now(), zone)
         },
         scope,
     )
@@ -211,7 +212,17 @@ class V19State(
             combine(salaryGuess, cycle, _salaryState) { g, c, st -> Triple(g, c, st) }
                 .catch { e -> com.myfinance.app.diag.CrashLog.recovered("salary month", e) }
                 .collect { (g, c, st) ->
-                if (g == null || !g.alreadySalary || st == "user" || st == "dismissed") return@collect
+                if (g == null || !g.alreadySalary || st == "dismissed") return@collect
+                if (st == "user") {
+                    // The user chose the day; the salary payer's credits still need the Salary category to count.
+                    val ids = g.toCategorise.filterNot { it in triedSalaryIds }
+                    if (c.salaryFromDay != null && ids.isNotEmpty()) {
+                        triedSalaryIds += ids
+                        runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
+                            .onFailure { com.myfinance.app.diag.CrashLog.recovered("salary month", it) }
+                    }
+                    return@collect
+                }
                 val fresh = st == null && c.salaryFromDay == null
                 val ours = st == "applied" || st == "ok"
                 val newIds = g.toCategorise.filterNot { it in triedSalaryIds }

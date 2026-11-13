@@ -110,7 +110,7 @@ class V16State(
         repo.allTransactions().stateIn(scope, SharingStarted.Lazily, emptyList())
 
     private val answers: StateFlow<Map<String, String>> =
-        dao.observeAnswers().map { l -> l.associate { it.key to it.answer } }.stateIn(scope, SharingStarted.Lazily, emptyMap())
+        dao.observeAnswers().map { l -> l.associate { it.key to it.answer } }.stateIn(scope, WhileShown, emptyMap())
 
     private fun TransactionEntity.check(me: String) = CheckRow(
         id, uid, type, amountMinor, accountLabel, timestamp, merchant, rawSms, category, owner ?: me,
@@ -119,7 +119,7 @@ class V16State(
 
     private val checkRows: StateFlow<List<CheckRow>> =
         combine(stored, ownerName) { list, me -> list.filterNot { it.excluded }.map { it.check(me) } }
-            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+            .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     fun answer(key: String, value: String = "ok") = work { dao.answer(ReviewAnswerEntity(key, value)); null }
     fun forgetAnswer(key: String) = work { dao.forget(key); null }
@@ -128,7 +128,7 @@ class V16State(
 
     val transfers: StateFlow<List<TransferMatch>> =
         combine(checkRows, answers) { rows, a -> SelfTransfers.find(rows, a.keys) }
-            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+            .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     /** Leaves both sides out of totals (they stay in the list, marked "not counted"). */
     fun dontCount(matches: List<TransferMatch>) = work {
@@ -149,7 +149,7 @@ class V16State(
 
     val health: StateFlow<HealthReport?> =
         combine(checkRows, answers) { rows, a -> DataHealth.check(rows, LocalDate.now(), a.keys, zone) }
-            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+            .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
     /** Moves the newer entry of a duplicate pair to Recently deleted. */
     fun removeDuplicate(p: DuplicatePair) = work {
@@ -177,10 +177,10 @@ class V16State(
                 val person = set[base] ?: FamilyUpi.personFromLabels(labels) ?: FamilyUpi.personFromSms(t.rawSms) ?: FamilyUpi.DEFAULT_PERSON
                 FamilyPayment(t.uid, t.id, person, t.amountMinor, t.timestamp, t.merchant)
             }
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     val familyLimits: StateFlow<Map<String, Long>> =
-        dao.observeLimits().map { l -> l.associate { it.person to it.monthlyMinor } }.stateIn(scope, SharingStarted.Lazily, emptyMap())
+        dao.observeLimits().map { l -> l.associate { it.person to it.monthlyMinor } }.stateIn(scope, WhileShown, emptyMap())
 
     val family: StateFlow<FamilyData> =
         combine(familyPayments, familyLimits, familyMonth) { pays, limits, month ->
@@ -190,7 +190,7 @@ class V16State(
                 payments = pays.filter { YearMonth.from(com.myfinance.core.Dates.localDate(it.timestamp, zone)) == month }.sortedByDescending { it.timestamp },
                 history = FamilyUpi.history(pays, month, 6, zone),
             )
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, FamilyData())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, FamilyData())
 
     fun setPerson(uid: String, person: String) = work {
         val base = uid.substringBefore('#')
@@ -222,7 +222,7 @@ class V16State(
     // ---- Monthly close ----
 
     private val closed: StateFlow<Set<YearMonth>> =
-        dao.observeClosed().map { l -> l.mapNotNull { MonthClose.parse(it.month) }.toSet() }.stateIn(scope, SharingStarted.Lazily, emptySet())
+        dao.observeClosed().map { l -> l.mapNotNull { MonthClose.parse(it.month) }.toSet() }.stateIn(scope, WhileShown, emptySet())
 
     val monthClose: StateFlow<MonthCloseData> =
         combine(closed, allLite, repo.monthCycle) { c, lite, cycle ->
@@ -232,7 +232,7 @@ class V16State(
                 closed = c.sortedDescending(),
                 open = MonthClose.openPastMonths(LocalDate.now(), c, first).map { MonthClose.summary(it, byMonth[it].orEmpty()) },
             )
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, MonthCloseData())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, MonthCloseData())
 
     fun closeMonth(m: YearMonth) = work {
         dao.close(ClosedMonthEntity(MonthClose.key(m), System.currentTimeMillis()))
@@ -246,7 +246,7 @@ class V16State(
         combine(dao.observeLate(), allTransactions, ownerName) { l, all, me ->
             val uids = l.mapTo(HashSet()) { it.txnUid }
             all.filter { it.uid in uids }.map { it.toLite(me) }
-        }.stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.stateIn(scope, WhileShown, emptyList())
 
     // ---- Review inbox ----
 
@@ -267,7 +267,7 @@ class V16State(
                 dismissed = a.keys,
                 zoneMillisOf = { d -> d.atStartOfDay(zone).toInstant().toEpochMilli() },
             )
-        }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+        }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     fun lateSeen(item: ReviewItem) = work {
         allTransactions.value.firstOrNull { it.id == item.txnId }?.let { dao.clearLate(it.uid) }
@@ -312,7 +312,7 @@ class V16State(
 
     val foreign: StateFlow<List<ForeignRow>> =
         allTransactions.map { all -> all.mapNotNull { t -> Fx.parseNote(t.note)?.let { ForeignRow(t, it) } }.sortedByDescending { it.txn.timestamp } }
-            .flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
+            .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, emptyList())
 
     // ---- Heavy spends ----
 

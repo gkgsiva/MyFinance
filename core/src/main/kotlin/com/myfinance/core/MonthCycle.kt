@@ -13,7 +13,8 @@ import java.time.format.DateTimeFormatter
  *    to 24 November. 1 is the normal calendar month.
  *  - [salaryFromDay]: a credit in the Salary category on or after this day of the month counts for
  *    the next month (salary on 28 October is November's income). Spending stays in its own month.
- *    Null turns it off.
+ *    When that day falls on a weekend, a salary paid on the Friday before counts too (employers pay early
+ *    when pay day is a Saturday or Sunday). Null turns it off.
  */
 data class MonthCycle(val startDay: Int = 1, val salaryFromDay: Int? = null) {
 
@@ -40,9 +41,24 @@ data class MonthCycle(val startDay: Int = 1, val salaryFromDay: Int? = null) {
     fun periodOf(t: TxnLite, zone: ZoneId): YearMonth = periodOf(t.timestamp, t.type, t.category, zone)
 
     /** True when this salary credit is moved to the next month. */
-    fun shiftsSalary(date: LocalDate, type: TxnType, category: String): Boolean =
-        salaryFromDay != null && type == TxnType.CREDIT &&
-            category.equals(DefaultCategories.SALARY, ignoreCase = true) && date.dayOfMonth >= salaryFromDay
+    fun shiftsSalary(date: LocalDate, type: TxnType, category: String): Boolean {
+        if (salaryFromDay == null || type != TxnType.CREDIT || !category.equals(DefaultCategories.SALARY, ignoreCase = true)) return false
+        return !date.isBefore(salaryStart(YearMonth.from(date))!!)
+    }
+
+    /**
+     * The first day in calendar month [ym] from which a salary counts for the next month: [salaryFromDay], or the
+     * Friday before it when that day is a Saturday or Sunday. Null when salaries don't shift.
+     */
+    fun salaryStart(ym: YearMonth): LocalDate? {
+        val d = salaryFromDay ?: return null
+        val day = ym.atDay(minOf(d, ym.lengthOfMonth()))
+        return when (day.dayOfWeek) {
+            java.time.DayOfWeek.SATURDAY -> day.minusDays(1)
+            java.time.DayOfWeek.SUNDAY -> day.minusDays(2)
+            else -> day
+        }
+    }
 
     /** First day of the budget month [period]. */
     fun start(period: YearMonth): LocalDate = if (startDay == 1) period.atDay(1) else period.minusMonths(1).atDay(startDay)
@@ -72,7 +88,7 @@ data class MonthCycle(val startDay: Int = 1, val salaryFromDay: Int? = null) {
     fun note(period: YearMonth): String? {
         val parts = listOfNotNull(
             rangeLabel(period),
-            salaryFromDay?.let { d -> val prev = period.minusMonths(1); "salary from ${minOf(d, prev.lengthOfMonth())} ${prev.format(monthShort)} counts here" },
+            salaryStart(period.minusMonths(1))?.let { "salary from ${it.dayOfMonth} ${it.format(monthShort)} counts here" },
         )
         return parts.joinToString(" · ").ifEmpty { null }
     }

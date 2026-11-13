@@ -55,7 +55,24 @@ val TransactionEntity.accountLabel: String?
 
 /** [mergedModes] holds the payment modes of rows merged from other phones, keyed by uid. */
 fun TransactionEntity.paymentMode(mergedModes: Map<String, String> = emptyMap()): PaymentMode =
-    PaymentMode.fromName(mergedModes[uid]) ?: PaymentMode.detect(rawSms, source == TxnSource.MANUAL, category)
+    PaymentMode.fromName(mergedModes[uid]) ?: ModeMemo.detect(this)
+
+/**
+ * Payment modes read from the SMS text, remembered per entry: working them out runs several patterns over the
+ * whole text, and every screen asks again for every entry each time anything changes.
+ */
+private object ModeMemo {
+    private class Seen(val rawSms: String?, val manual: Boolean, val category: String, val mode: PaymentMode)
+    private val seen = java.util.concurrent.ConcurrentHashMap<Long, Seen>()
+
+    fun detect(t: TransactionEntity): PaymentMode {
+        val manual = t.source == TxnSource.MANUAL
+        seen[t.id]?.let { if (it.manual == manual && it.category == t.category && it.rawSms == t.rawSms) return it.mode }
+        val mode = PaymentMode.detect(t.rawSms, manual, t.category)
+        if (t.id != 0L) seen[t.id] = Seen(t.rawSms, manual, t.category, mode)
+        return mode
+    }
+}
 
 fun TransactionEntity.toLite(defaultOwner: String?, mergedModes: Map<String, String> = emptyMap()) =
     TxnLite(

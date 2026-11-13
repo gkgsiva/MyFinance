@@ -218,7 +218,7 @@ class V12ViewModel(app: Application) : AndroidViewModel(app) {
     val people: StateFlow<List<String>> = combine(allTxns, repo.splits, main.ownerName) { txns, s, me ->
         (listOf(me) + txns.mapNotNull { it.owner } + s.flatMap { it.toSplit().shares.keys + it.paidBy })
             .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     suspend fun splitFor(txnUid: String): SplitEntity? = repo.dao.splitFor(txnUid)
 

@@ -178,7 +178,10 @@ fun HomeScreen(
     val zone = java.time.ZoneId.systemDefault()
     val todayDate = LocalDate.now()
     val todays = remember(allTxns, todayDate) {
-        allTxns.filter { !it.excluded && com.myfinance.core.Dates.localDate(it.timestamp, zone) == todayDate }.sortedByDescending { it.timestamp }
+        // By time range (the list is newest first), not by working out a date for every stored entry.
+        val from = todayDate.atStartOfDay(zone).toInstant().toEpochMilli()
+        val to = todayDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        allTxns.filter { !it.excluded && it.timestamp in from until to }.sortedByDescending { it.timestamp }
     }
     var todayOpen by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
     var crash by remember { androidx.compose.runtime.mutableStateOf(com.myfinance.app.diag.CrashLog.last(ctx)) }
