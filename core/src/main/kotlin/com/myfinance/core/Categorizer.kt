@@ -113,8 +113,15 @@ class Categorizer(private val userRules: Map<String, String> = emptyMap()) {
             DefaultCategories.RENT to listOf("rent", "nobroker", "society", "maintenance", "housing"),
             DefaultCategories.EDUCATION to listOf("school", "college", "university", "udemy", "coursera", "byju", "unacademy", "tuition", "fees"),
             DefaultCategories.INVESTMENTS to listOf(
-                "zerodha", "groww", "upstox", "kuvera", "coin by", "mutual fund", "sip", "nps", "ppf", "smallcase",
+                "zerodha", "groww", "upstox", "kuvera", "coin by", "mutual fund", "mutualfund", "sip", "nps", "ppf", "smallcase",
                 "indmoney", "angel one", "icici direct", "hdfc securities",
+                // Registrars, exchanges' clearing houses and more brokers / apps.
+                "cams", "camsonline", "kfintech", "kfin tech", "bse star", "bsestarmf", "nse clearing", "indian clearing", "iccl",
+                "paytm money", "et money", "etmoney", "dhan", "5paisa", "motilal oswal", "sharekhan", "kotak securities",
+                "axis securities", "sbicap", "sbi securities", "fyers", "scripbox", "fundsindia", "mf utilities", "mfcentral",
+                // Deposits, schemes and bonds.
+                "fixed deposit", "recurring deposit", "term deposit", "fd booked", "fd booking", "fd opened", "rd instal",
+                "national pension", "nps trust", "sukanya", "sovereign gold", "elss", "systematic investment",
             ),
             DefaultCategories.EMI to listOf("emi", "loan", "bajaj finance", "home credit", "credit card bill", "cc payment"),
         )

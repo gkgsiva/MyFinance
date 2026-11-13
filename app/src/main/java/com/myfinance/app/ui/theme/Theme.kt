@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.sp
 
 val IncomeGreen = Color(0xFF16A34A)
 val ExpenseRed = Color(0xFFE5484D)
+/** Money put into investments: not spending, so not red. */
+val InvestBlue = Color(0xFF2F6FDE)
 
 // Soft brand colours: a calm purple accent with pastel companions.
 val Indigo = Color(0xFF7A5AF8)

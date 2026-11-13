@@ -1,5 +1,6 @@
 package com.myfinance.app.ui
 
+import com.myfinance.core.isSpend
 import android.content.Context
 import android.net.Uri
 import com.myfinance.app.backup.AutoBackup
@@ -352,10 +353,10 @@ class V15State(
 
     /** This budget month's spending against the total of category budgets; null without budgets. */
     val pace: StateFlow<com.myfinance.core.SpendPace?> = combine(allLite, repo.monthCycle, repo.categories) { txns, cycle, cats ->
-        val budget = cats.sumOf { it.monthlyBudgetMinor ?: 0L }
+        val budget = cats.filterNot { com.myfinance.core.Spending.isInvestmentCategory(it.name) }.sumOf { it.monthlyBudgetMinor ?: 0L }
         if (budget <= 0) return@combine null
         val month = cycle.current()
-        val spent = txns.filter { it.type == TxnType.DEBIT && cycle.periodOf(it, zone) == month }.sumOf { it.amountMinor }
+        val spent = txns.filter { it.isSpend && cycle.periodOf(it, zone) == month }.sumOf { it.amountMinor }
         com.myfinance.core.SpendPaces.of(spent, budget, LocalDate.now(), cycle.start(month), cycle.end(month))
     }.flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
@@ -376,9 +377,9 @@ class V15State(
             .flatMap { d -> d.events.filter { it.expected } }
             .sortedBy { it.date }
         TodayData(
-            spentMinor = todays.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor },
+            spentMinor = todays.filter { it.isSpend }.sumOf { it.amountMinor },
             receivedMinor = todays.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor },
-            payments = todays.count { it.type == TxnType.DEBIT },
+            payments = todays.count { it.isSpend },
             upcoming = upcoming,
             upcomingOutMinor = upcoming.filter { !it.incoming }.sumOf { it.amountMinor ?: 0 },
             late = upcoming.filter { it.late },

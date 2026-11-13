@@ -205,7 +205,8 @@ fun DashboardScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "Net this month " + (if (summary.netMinor < 0) "−" else "+") + formatInr(kotlin.math.abs(summary.netMinor)) +
-                            (summary.savingsRatePercent?.takeIf { it >= 0 }?.let { " · saved $it%" } ?: ""),
+                            (summary.savingsRatePercent?.takeIf { it >= 0 }?.let { " · saved $it%" } ?: "") +
+                            (if (summary.investedMinor > 0) " · invested ${formatInr(summary.investedMinor)}" else ""),
                         style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f),
                         color = if (summary.netMinor < 0) ExpenseRed else IncomeGreen,
                     )

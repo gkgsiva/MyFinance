@@ -101,15 +101,15 @@ object MonthCompare {
         val by = txns.groupBy { cycle.periodOf(it, zone) }
         val now = by[month].orEmpty()
         val before = by[last].orEmpty()
-        fun spent(l: List<TxnLite>) = l.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor }
+        fun spent(l: List<TxnLite>) = l.filter { it.isSpend }.sumOf { it.amountMinor }
         fun received(l: List<TxnLite>) = l.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }
         val start = cycle.start(month)
         val running = !today.isBefore(start) && !today.isAfter(cycle.end(month))
         val dayIndex = if (running) ChronoUnit.DAYS.between(start, today) else null
         val lastStart = cycle.start(last)
         val sameDay = if (dayIndex == null) spent(before) else spent(before.filter { Dates.localDate(it.timestamp, zone) <= lastStart.plusDays(dayIndex) })
-        val cats = (now + before).filter { it.type == TxnType.DEBIT }.map { it.category }.distinct().map { c ->
-            CategoryChange(c, now.filter { it.type == TxnType.DEBIT && it.category == c }.sumOf { it.amountMinor }, before.filter { it.type == TxnType.DEBIT && it.category == c }.sumOf { it.amountMinor })
+        val cats = (now + before).filter { it.isSpend }.map { it.category }.distinct().map { c ->
+            CategoryChange(c, now.filter { it.isSpend && it.category == c }.sumOf { it.amountMinor }, before.filter { it.isSpend && it.category == c }.sumOf { it.amountMinor })
         }.sortedByDescending { kotlin.math.abs(it.changeMinor) }
         return MonthComparison(month, spent(now), spent(before), sameDay, received(now), received(before), cats, dayIndex?.let { it.toInt() + 1 })
     }
@@ -121,7 +121,7 @@ object MonthCompare {
 object ModeSplit {
     /** Spending in [months] by how it was paid, largest first. */
     fun of(txns: List<TxnLite>, months: Set<YearMonth>, cycle: MonthCycle = MonthCycle.CALENDAR, zone: ZoneId = ZoneId.systemDefault()): List<ModeShare> =
-        txns.filter { it.type == TxnType.DEBIT && cycle.periodOf(it, zone) in months }
+        txns.filter { it.isSpend && cycle.periodOf(it, zone) in months }
             .groupBy { it.mode }
             .map { (m, l) -> ModeShare(m, l.sumOf { it.amountMinor }, l.size) }
             .sortedByDescending { it.totalMinor }
@@ -135,10 +135,10 @@ data class FixedFlexible(val fixedMinor: Long, val flexibleMinor: Long, val fixe
 
 object FixedSpend {
     /** Categories that are commitments: they come every month whatever you do. */
-    val fixedCategories = setOf(DefaultCategories.RENT, DefaultCategories.EMI, DefaultCategories.BILLS, DefaultCategories.EDUCATION, DefaultCategories.INVESTMENTS)
+    val fixedCategories = setOf(DefaultCategories.RENT, DefaultCategories.EMI, DefaultCategories.BILLS, DefaultCategories.EDUCATION)
 
     /**
-     * Splits a month's spending into fixed (rent, EMIs, bills, fees, SIPs, and payments seen repeating:
+     * Splits a month's spending into fixed (rent, EMIs, bills, fees, and payments seen repeating:
      * [recurringMerchants] as merchant keys) and flexible (everything else, which you can cut).
      */
     fun of(
@@ -148,7 +148,7 @@ object FixedSpend {
         cycle: MonthCycle = MonthCycle.CALENDAR,
         zone: ZoneId = ZoneId.systemDefault(),
     ): FixedFlexible {
-        val debits = txns.filter { it.type == TxnType.DEBIT && cycle.periodOf(it, zone) == month }
+        val debits = txns.filter { it.isSpend && cycle.periodOf(it, zone) == month }
         val (fixed, flex) = debits.partition { t ->
             t.category in fixedCategories || t.merchant?.let { Categorizer.merchantKey(it) in recurringMerchants } == true
         }
@@ -170,7 +170,7 @@ object SavingsTrend {
         val by = txns.groupBy { cycle.periodOf(it, zone) }
         return Reports.months(end, months).map { m ->
             val l = by[m].orEmpty()
-            SavingsPoint(m, l.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }, l.filter { it.type == TxnType.DEBIT }.sumOf { it.amountMinor })
+            SavingsPoint(m, l.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }, l.filter { it.isSpend }.sumOf { it.amountMinor })
         }
     }
 
@@ -190,12 +190,15 @@ object FamilySummary {
     /** A short plain-text month summary for WhatsApp: totals, each person's spending, top categories. */
     fun text(txns: List<TxnLite>, month: YearMonth, me: String, cycle: MonthCycle = MonthCycle.CALENDAR, zone: ZoneId = ZoneId.systemDefault()): String {
         val l = txns.filter { cycle.periodOf(it, zone) == month }
-        val debits = l.filter { it.type == TxnType.DEBIT }
+        val debits = l.filter { it.isSpend }
         val spent = debits.sumOf { it.amountMinor }
+        val invested = l.filter { it.isInvestment }.sumOf { it.amountMinor }
         val received = l.filter { it.type == TxnType.CREDIT }.sumOf { it.amountMinor }
         val sb = StringBuilder()
         sb.append("*MyFinance: ${month.format(monthName)}*\n")
-        sb.append("Spent ${formatInr(spent)} · Received ${formatInr(received)}")
+        sb.append("Spent ${formatInr(spent)}")
+        if (invested > 0) sb.append(" · Invested ${formatInr(invested)}")
+        sb.append(" · Received ${formatInr(received)}")
         if (received > 0) sb.append(" · Saved ${((received - spent) * 100 / received)}%")
         sb.append('\n')
         val people = debits.groupBy { it.owner?.takeIf { o -> o.isNotBlank() } ?: me }
@@ -290,7 +293,7 @@ object Weekly {
     fun digest(txns: List<TxnLite>, today: LocalDate, due: List<Triple<String, Long?, LocalDate>>, zone: ZoneId = ZoneId.systemDefault()): WeeklyDigest {
         val start = lastWeekStart(today)
         fun week(from: LocalDate) = txns.filter { t ->
-            t.type == TxnType.DEBIT && Dates.localDate(t.timestamp, zone).let { !it.isBefore(from) && it.isBefore(from.plusDays(7)) }
+            t.isSpend && Dates.localDate(t.timestamp, zone).let { !it.isBefore(from) && it.isBefore(from.plusDays(7)) }
         }
         val w = week(start)
         return WeeklyDigest(

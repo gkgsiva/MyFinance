@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import com.myfinance.app.data.isInvestment
+import com.myfinance.app.data.isSpend
 import com.myfinance.app.ui.FinanceViewModel
 import com.myfinance.app.ui.theme.ExpenseRed
 import com.myfinance.app.ui.theme.IncomeGreen
@@ -82,7 +84,8 @@ private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, c
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.titleSmall)
             val parts = listOfNotNull(
-                day.outMinor.takeIf { it > 0 }?.let { "out ${formatInr(it)}" },
+                day.outMinor.takeIf { it > 0 }?.let { "spent ${formatInr(it)}" },
+                day.investedMinor.takeIf { it > 0 }?.let { "invested ${formatInr(it)}" },
                 day.inMinor.takeIf { it > 0 }?.let { "in ${formatInr(it)}" },
                 if (day.date < cycle.start(period)) "counts for ${period.format(monthName)}" else null,
             )
@@ -109,6 +112,8 @@ fun MoneyRow(
     credit: Boolean,
     detail: String? = null,
     balanceMinor: Long? = null,
+    /** Money put into an investment: shown in blue, not as spending. */
+    investment: Boolean = false,
     onClick: () -> Unit,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -135,7 +140,11 @@ fun MoneyRow(
                 com.myfinance.app.ui.FitText(
                     (if (credit) "+" else "−") + formatInr(amountMinor),
                     style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
-                    color = if (credit) IncomeGreen else MaterialTheme.colorScheme.onSurface,
+                    color = when {
+                        credit -> IncomeGreen
+                        investment -> com.myfinance.app.ui.theme.InvestBlue
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
                     textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
                 )
                 balanceMinor?.let {
@@ -339,7 +348,7 @@ fun HomeScreen(
             item {
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
                     Row(Modifier.weight(1f).clickable { todayOpen = !todayOpen }, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Today's spend (${todays.count { it.type == com.myfinance.core.TxnType.DEBIT }})", style = MaterialTheme.typography.titleMedium)
+                        Text("Today's spend (${todays.count { it.isSpend }})", style = MaterialTheme.typography.titleMedium)
                         Icon(
                             if (todayOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                             contentDescription = if (todayOpen) "Hide today's payments" else "Show today's payments",
@@ -363,7 +372,7 @@ fun HomeScreen(
                     MoneyRow(
                         name = nicks[t.uid.substringBefore('#')] ?: t.merchant ?: if (credit) "Money received" else "Payment",
                         category = t.category, color = colorOf[t.category] ?: fallback, timestamp = t.timestamp,
-                        amountMinor = t.amountMinor, credit = credit,
+                        amountMinor = t.amountMinor, credit = credit, investment = t.isInvestment,
                     ) { open("edit/${com.myfinance.app.ui.SplitView.originalId(t.id)}") }
                 }
             }
@@ -393,7 +402,8 @@ fun HomeScreen(
                         cycle.note(ledger.period)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         Row(Modifier.fillMaxWidth()) {
                             LedgerTotal("Money in", formatInr(ledger.inMinor), IncomeGreen, Modifier.weight(1f))
-                            LedgerTotal("Money out", formatInr(ledger.outMinor), ExpenseRed, Modifier.weight(1f))
+                            LedgerTotal("Spent", formatInr(ledger.outMinor), ExpenseRed, Modifier.weight(1f))
+                            if (ledger.investedMinor > 0) LedgerTotal("Invested", formatInr(ledger.investedMinor), com.myfinance.app.ui.theme.InvestBlue, Modifier.weight(1f))
                             LedgerTotal("Balance", signedInr(ledger.netMinor), if (ledger.netMinor < 0) ExpenseRed else MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
                         }
                         if (ledger.inMinor > 0) {
@@ -408,8 +418,17 @@ fun HomeScreen(
                                 drawStopIndicator = {},
                             )
                             Text(
-                                "${(ledger.outMinor * 100 / ledger.inMinor).coerceAtMost(999)}% of this month's money in has gone out",
+                                "${(ledger.outMinor * 100 / ledger.inMinor).coerceAtMost(999)}% of this month's money in is spent" +
+                                    if (ledger.investedMinor > 0) ", ${(ledger.investedMinor * 100 / ledger.inMinor).coerceAtMost(999)}% invested" else "",
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (ledger.investments.isNotEmpty()) {
+                            Text(
+                                "Invested, not counted as spending: " + ledger.investments.take(4).joinToString(" · ") { "${it.key} ${formatInr(it.totalMinor)}" } +
+                                    if (ledger.investments.size > 4) " · +${ledger.investments.size - 4} more" else "",
+                                style = MaterialTheme.typography.bodySmall, color = com.myfinance.app.ui.theme.InvestBlue,
+                                modifier = Modifier.padding(top = 2.dp),
                             )
                         }
                         if (balances.any { !it.isCardLimit }) {
@@ -440,8 +459,9 @@ fun HomeScreen(
                     MoneyRow(
                         name = name, category = row.txn.category, color = colorOf[row.txn.category] ?: fallback,
                         timestamp = row.txn.timestamp, amountMinor = row.txn.amountMinor, credit = row.isCredit,
-                        detail = listOfNotNull(row.txn.category, row.txn.account).joinToString(" · "),
+                        detail = listOfNotNull(if (row.isInvestment) "Investment" else null, row.txn.category.takeUnless { row.isInvestment && it == com.myfinance.core.DefaultCategories.INVESTMENTS }, row.txn.account).joinToString(" · "),
                         balanceMinor = row.balanceMinor,
+                        investment = row.isInvestment,
                     ) {
                         if (row.txn.id != 0L) open("edit/${com.myfinance.app.ui.SplitView.originalId(row.txn.id)}")
                     }
@@ -457,7 +477,7 @@ fun HomeScreen(
                         )
                     }
                     Text(
-                        "Own-account transfers and card bill payments are left out. Balance is money in minus money out this month.",
+                        "Own-account transfers and card bill payments are left out. Investments (SIP, mutual funds, FD, PPF ...) are not counted as spending, but they still leave your account. Balance is money in minus spending and investments this month.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
