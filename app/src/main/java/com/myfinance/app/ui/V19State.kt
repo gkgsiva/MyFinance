@@ -134,6 +134,12 @@ class V19State(
         _message.value = "Removed $n entries from that import. You can import the same files again."
     }
 
+    /** Statement entries in [from]..[to] removed; SMS kept (see [FinanceRepository.keepOnlySms]). */
+    fun keepOnlySms(from: java.time.LocalDate, to: java.time.LocalDate) = scope.launch {
+        val (removed, back) = runCatching { repo.keepOnlySms(from, to) }.getOrElse { e -> _message.value = "Could not remove: ${e.message}"; return@launch }
+        _message.value = "Removed $removed statement entries" + (if (back > 0) "; $back went back to their SMS" else "") + ". Recently deleted has them."
+    }
+
     val coverage: StateFlow<List<com.myfinance.core.AccountCoverage>> = state(
         emptyList(),
         combine(allTransactions, ownerName) { all, me ->

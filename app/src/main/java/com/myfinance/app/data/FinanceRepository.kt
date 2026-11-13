@@ -1506,6 +1506,40 @@ class FinanceRepository(
         removed
     }
 
+    /**
+     * "Keep only SMS" for a period (1.14): statement lines dated [from]..[to] go. A line that only came from a
+     * statement moves to Recently deleted (not remembered, so a later statement can bring it back); a line joined
+     * with its SMS goes back to being the SMS entry (the SMS's amount, card, payee and time), keeping the user's
+     * category, note and labels. Returns (removed, turned back into SMS).
+     */
+    suspend fun keepOnlySms(from: java.time.LocalDate, to: java.time.LocalDate): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        val zone = ZoneId.systemDefault()
+        val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val lines = db.transactions().rangeOnce(start, end - 1).filter { it.source == TxnSource.STATEMENT && it.timestamp in start until end }
+        val pure = lines.filter { it.smsKey == null || it.smsKey.startsWith("STMT|") }
+        val joined = lines.filter { it.smsKey != null && !it.smsKey.startsWith("STMT|") }
+        val back = joined.map { t ->
+            val sms = t.rawSms?.takeIf { it.contains("\n\nSMS: ") }?.substringAfter("\n\nSMS: ")
+            val p = sms?.let { SmsParser.parse(t.smsKey!!.substringBefore('|'), it, t.timestamp, _fxRates.value) }
+            t.copy(
+                source = TxnSource.SMS, rawSms = sms ?: t.rawSms,
+                amountMinor = p?.amountMinor ?: t.amountMinor, type = p?.type ?: t.type,
+                merchant = if (t.userEdited) t.merchant else (p?.merchant ?: t.merchant),
+                accountTail = p?.accountTail ?: t.accountTail, bank = p?.bank ?: t.bank,
+                reference = p?.reference ?: t.reference, balanceMinor = p?.balanceMinor,
+            )
+        }
+        val now = System.currentTimeMillis()
+        runCatching { v13Db.withTransaction { for (t in pure) v13.putTrash(DeletedTxnEntity.from(t, now)) } }
+        db.withTransaction {
+            if (back.isNotEmpty()) db.transactions().updateAll(back)
+            pure.map { it.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) }
+        }
+        onDataChanged()
+        pure.size to back.size
+    }
+
     // ---- 1.10: uncategorised cleanup ----
 
     /**
