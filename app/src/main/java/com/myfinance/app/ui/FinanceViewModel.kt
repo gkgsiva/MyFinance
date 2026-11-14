@@ -234,12 +234,32 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, FinanceSummary.of(emptyList()))
 
     /**
+     * The family's credit cards (last 4 digits), and the card bills paid from a bank account (stored as left out
+     * of totals), for Home's ledger: card spends go on the card bill, the bank balance drops when the bill is paid.
+     */
+    private val ledgerCards: StateFlow<Pair<Set<String>, List<TxnLite>>> =
+        combine(allTransactions, repo.bills, repo.myAccounts, ownerName) { all, bills, mine, me ->
+            val cards = knownCardTails(all, bills, mine)
+            fun tail4(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.takeIf { it.length == 4 }
+            val paid = all.filter {
+                it.excluded && it.type == TxnType.DEBIT && tail4(it.accountTail) !in cards &&
+                    com.myfinance.core.SelfTransfers.isCardPayment(it.merchant, it.rawSms)
+            }.map { it.toLite(me) }
+            cards to paid
+        }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet<String>() to emptyList())
+
+    /**
      * Home's ledger: the budget month today is in (salary month setting applied), whatever month the
      * Transactions tab is showing. Left-out rows (own transfers, card bill payments) aren't in it.
      */
     val homeLedger: StateFlow<com.myfinance.core.MonthLedger> =
-        combine(allLite, currentMonth, monthCycle, txnMeta) { lite, ym, cycle, meta ->
-            com.myfinance.core.MonthLedger.build(lite, ym, cycle, ZoneId.systemDefault(), meta.hiddenIds)
+        combine(combine(allLite, ledgerCards) { l, c -> l to c }, currentMonth, monthCycle, txnMeta) { (lite, cards), ym, cycle, meta ->
+            com.myfinance.core.MonthLedger.build(
+                lite, ym, cycle, ZoneId.systemDefault(), meta.hiddenIds,
+                cardTails = cards.first, cardBillPayments = cards.second,
+            )
         }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Eagerly, com.myfinance.core.MonthLedger(repo.monthCycle.value.current(), 0, 0, emptyList(), 0))

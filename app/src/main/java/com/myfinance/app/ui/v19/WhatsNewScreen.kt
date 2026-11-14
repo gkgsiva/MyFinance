@@ -21,6 +21,13 @@ data class Release(val version: String, val title: String, val changes: List<Str
 /** Every release from 1.0, newest first. Add the new release at the top when publishing one. */
 val releaseNotes: List<Release> = listOf(
     Release(
+        "1.15", "Card spends stay on the card until the bill is paid",
+        listOf(
+            "Home: credit card spends count as spending in the month you make them, but no longer take money off the bank balance. They show \"on card bill\" and add up in a new \"Card due so far\" line.",
+            "Home: paying the card bill from the bank is listed (\"Card bill paid\") and moves the bank balance, without counting the spending a second time.",
+        ),
+    ),
+    Release(
         "1.14", "Money that comes back, statements per period",
         listOf(
             "A failed payment and its money back, a refund, or an autopay hold that was released cancel out: neither counts as spending or income. Settings > Reversed & refunded lists them; \"Not a reversal\" undoes one.",

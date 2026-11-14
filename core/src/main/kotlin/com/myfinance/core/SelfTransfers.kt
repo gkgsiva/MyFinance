@@ -119,6 +119,9 @@ object SelfTransfers {
         return texts.any { cardStatementPayment.containsMatchIn(it) } && texts.none { notPayment.containsMatchIn(it) }
     }
 
+    /** Text that reads like a purchase made on a credit card ("INR 324 spent on Credit Card XX7002"), not paying its bill. */
+    fun readsLikeCardSpend(text: String?): Boolean = text != null && cardSpend.containsMatchIn(text) && !isCardPayment(null, text)
+
     fun isCardPayment(merchant: String?, text: String?): Boolean {
         val texts = listOfNotNull(merchant, text)
         if (texts.none { cardPayment.containsMatchIn(it) }) return false
