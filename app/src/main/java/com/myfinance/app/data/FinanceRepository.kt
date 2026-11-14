@@ -1647,11 +1647,13 @@ class FinanceRepository(
      * Gives entries [ids] the [category], and remembers it for their payee so new SMS and any statement
      * imported later (old years too) get it by themselves.
      */
-    suspend fun categorise(ids: List<Long>, merchant: String?, category: String): Int = withContext(Dispatchers.IO) {
+    /** [keepEdited]: entries whose category the user chose stay as they are (for changes the app makes by itself). */
+    suspend fun categorise(ids: List<Long>, merchant: String?, category: String, keepEdited: Boolean = false): Int = withContext(Dispatchers.IO) {
         var n = 0
         db.withTransaction {
             for (id in ids) {
                 val t = db.transactions().get(id) ?: continue
+                if (keepEdited && t.userEdited) continue
                 if (t.category != category) { db.transactions().update(t.copy(category = category)); n++ }
             }
             merchant?.takeIf { it.isNotBlank() }?.let { learn(it, category) }
