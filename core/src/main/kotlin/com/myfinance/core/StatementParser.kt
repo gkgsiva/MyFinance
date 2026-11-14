@@ -188,6 +188,24 @@ object StatementParser {
      * its description.
      */
     fun fromText(text: String): ParsedStatement? {
+        cardWebView(text)?.let { return it }
+        val numbered = numberedBank(text) ?: return fromLines(text)
+        // A file that joins years in two layouts (older pages in the column layout, newer ones numbered): the rest is
+        // read the usual way and both parts are kept.
+        val all = text.lines()
+        val rest = fromLines(all.filterIndexed { i, _ -> i !in numbered.second }.joinToString("\n"))
+        val n = numbered.first
+        if (rest == null || rest.rows.isEmpty()) return n
+        val joined = rest.rows + n.rows.map { it.copy(cardTail = it.cardTail ?: n.accountTail) }
+        // The file's account: the one most of its lines are on.
+        val tail = joined.mapNotNull { it.cardTail }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: n.accountTail ?: rest.accountTail
+        return ParsedStatement(
+            joined, StatementKind.BANK, rest.bank ?: n.bank, tail,
+            numbersSeen = rest.numbersSeen + n.numbersSeen,
+        )
+    }
+
+    private fun fromLines(text: String): ParsedStatement? {
         data class Line(
             val date: LocalDate, val time: LocalTime?, val desc: StringBuilder, val amounts: List<Pair<Long, TxnType?>>, val raw: String,
             /** The description without card-statement columns (serial number before it, reward points after it). */
@@ -298,7 +316,7 @@ object StatementParser {
                 ?.let { code -> "$code ${amounts[amounts.size - 2].value.replace(",", "").trim()}" }
             val values = amounts.mapNotNull { m -> parseMoney(m.value) }
             val cardText = descText.replace(serialFirst, "").replace(pointsLast, "").trim()
-            val serial = serialFirst.find(descText)?.value?.trim()?.takeIf { it.length >= 12 }
+            val serial = serialFirst.find(descText)?.value?.trim()?.takeIf { it.length >= 10 }
             val before = prefix?.let { "$it " }.orEmpty()
             prefix = null
             parsed += Line(date, time, StringBuilder(before + descText), values, line, StringBuilder(before + cardText), card, acct, section, serial, foreign)
@@ -325,6 +343,8 @@ object StatementParser {
         val chained = bankDirs?.count { it != null } ?: 0
         val isBank = bankDirs != null && chained >= (parsed.size - 1) * 0.6 && !looksLikeCard(headerText.toString())
 
+        val cardMarksCredits = parsed.count { it.amounts.last().second == TxnType.CREDIT } >= 1 &&
+            parsed.none { it.amounts.last().second == TxnType.DEBIT }
         val rows = parsed.mapIndexed { i, l ->
             val desc = cleanDesc(l.desc.toString())
             if (isBank) {
@@ -338,7 +358,9 @@ object StatementParser {
                 val rawCard = l.cardDesc.toString()
                 val plus = hdfcCredit.containsMatchIn(rawCard)
                 val cardDesc = cleanDesc(rawCard.replace(hdfcCredit, "").replace(rupeeGlyph, "").replace(convertWord, " ")).ifEmpty { desc }
-                val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
+                // A statement that marks its credits ("1,170.00 CR") makes every unmarked line a charge, even one
+                // whose words sound like money in ("Refund Amt Transfer to Bank Acc": a card refund paid out to the bank).
+                val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else if (cardMarksCredits) TxnType.DEBIT else guessType(cardDesc, StatementKind.CARD)
                 StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw) ?: l.serial, cardTail = l.card, serial = l.serial, foreign = l.foreign)
             }
         }.let { all -> withoutRepeats(all, parsed.map { it.section }, isBank) }.filter { it.amountMinor > 0 }
@@ -386,7 +408,7 @@ object StatementParser {
     }
 
     private val creditWords = Regex(
-        """\b(neft\s*cr|imps\s*cr|upi\s*/?\s*cr|by\s+transfer|by\s+clg|deposit|salary|sal\b|refund|reversal|cashback|interest\s+(?:paid|credit)|int\.?pd|credit\s+interest|payment\s+received|thank\s*you|received)""",
+        """\b(neft\s*cr|imps\s*cr|upi\s*/?\s*cr|by\s+transfer|by\s+clg|deposit|salary|sal\b|refund|reversal|cashback|interest\s+(?:paid|credit)|int\.?pd|credit\s+interest|payment\s+received|thank\s*you|received|\brev\b)""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -501,6 +523,141 @@ object StatementParser {
 
     private fun isFooter(line: String) = footerWords.containsMatchIn(line)
 
+    /** ICICI's savings statement (2022 on): "12 05.04.2022 209579555629", the remarks with the amount and balance below. */
+    private val numberedStart = Regex("""^(\d{1,5})\s+(\d{2}[./-]\d{2}[./-]\d{4})\b\s*(.*)$""")
+    private val amountAndBalance = Regex("""^(.*?)\s*(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s*$""")
+    /** "Statement of Transactions in Saving Account no. 602801514144": the account each year's table is for. */
+    private val numberedAccount = Regex("""statement\s+of\s+transactions\s+in\s+\w+\s+account\s+(?:no\.?\s*)?[Xx*\d]*?(\d{4})\b""", RegexOption.IGNORE_CASE)
+    private val numberedHeaderLine = Regex("""^(s\s*no\.?\s+transaction.*|date\s+cheque\s+number.*|amount\s+\(inr\).*)$""", RegexOption.IGNORE_CASE)
+    private val numberedHeader = Regex("""S\s*No\.?\s+Transaction""", RegexOption.IGNORE_CASE)
+    private val pageNoise = Regex(
+        """^(\d{1,4}|www\.\S+.*|please\s+call.*|never\s+share.*|s\s*no\.?\s+transaction.*|date\s+cheque.*|amount\s+\(inr\).*|.*legends?\s+used.*|.*this\s+is\s+a(n)?\s+(system|computer).*|.*end\s+of\s+statement.*)$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Bank statements where each transaction is numbered: a line with the number, the date and the cheque / UPI
+     * reference column, then the remarks over a few lines, one of which ends with the amount and the balance.
+     * Withdrawal and deposit share no marker in the text, so the direction comes from the change in balance.
+     */
+    fun numberedBank(text: String): Pair<ParsedStatement, Set<Int>>? {
+        if (!numberedHeader.containsMatchIn(text)) return null
+        val used = HashSet<Int>()
+        data class N(val date: LocalDate, val refCol: String, val desc: StringBuilder, val acct: String?, var amount: Long? = null, var balance: Long? = null, var open: Boolean = true)
+        var acct: String? = null
+        val out = ArrayList<N>()
+        var expectNo = 1
+        for ((idx, raw) in text.lines().withIndex()) {
+            val t = raw.replace('\u00A0', ' ').trim()
+            if (t.isEmpty()) continue
+            numberedAccount.find(t)?.let { acct = it.groupValues[1] }
+            val st = numberedStart.find(t)
+            // Numbering starts again at 1 for each year in a file that joins several.
+            if (st != null && (st.groupValues[1].toInt() == expectNo || (st.groupValues[1] == "1" && out.isNotEmpty()))) {
+                if (st.groupValues[1] == "1") expectNo = 1
+                used += idx
+                val date = parseDate(st.groupValues[2].replace('.', '/')) ?: continue
+                expectNo++
+                val rest = st.groupValues[3]
+                val n = N(date, rest, StringBuilder(), acct)
+                amountAndBalance.find(rest)?.let { m ->
+                    n.amount = parseMoney(m.groupValues[2])?.first; n.balance = parseMoney(m.groupValues[3])?.first
+                }
+                out += n
+                continue
+            }
+            if (numberedHeaderLine.matches(t)) { used += idx; continue }
+            val n = out.lastOrNull() ?: continue
+            if (!n.open) continue
+            used += idx
+            if (pageNoise.matches(t)) { if (n.amount != null) n.open = false; continue }
+            if (n.amount == null) {
+                val m = amountAndBalance.find(t)
+                if (m != null) {
+                    n.amount = parseMoney(m.groupValues[2])?.first
+                    n.balance = parseMoney(m.groupValues[3])?.first
+                    n.desc.append(' ').append(m.groupValues[1])
+                    continue
+                }
+            }
+            // A long UPI narration runs over 3-4 lines; anything further is page text.
+            if (n.desc.length < 240) n.desc.append(' ').append(t) else n.open = false
+        }
+        val done = out.filter { it.amount != null && it.amount!! != 0L }
+        if (done.size < 2 || done.size < out.size * 0.9) return null
+        val dirs = directionsFromBalance(done.map { abs(it.amount!!) to it.balance })
+        val rows = done.mapIndexed { i, n ->
+            // UPI remarks wrap mid-word ("...Payment for\nJEn/RAZORPAY..."): spaces kept, as the bank's other layouts.
+            val desc = cleanDesc(n.desc.toString())
+            val refCol = n.refCol.trim().takeIf { it.matches(Regex("""\d{6,}""")) }
+            val type = dirs[i] ?: when {
+                n.refCol.contains("debit", ignoreCase = true) -> TxnType.DEBIT
+                else -> guessType(desc, StatementKind.BANK)
+            }
+            StatementRow(n.date, null, desc, abs(n.amount!!), type, n.balance?.let { abs(it) }, referenceIn(desc) ?: refCol, cardTail = n.acct)
+        }
+        // The heading above the first table: further down, UPI remarks name other banks (HDFC, Axis ...).
+        val head = numberedHeader.find(text)?.let { text.substring(0, it.range.first) }?.ifBlank { null } ?: text.take(3000)
+        return ParsedStatement(
+            rows, StatementKind.BANK, bankIn(head) ?: bankIn(text.take(6000)), accountTailIn(head) ?: accountTailIn(text.take(6000)),
+            check = runCatching { StatementCheck.bank(rows, null) }.getOrNull(),
+            numbersSeen = numbersIn(text.take(8000)),
+        ) to used
+    }
+
+    /** ICICI's "View last statement" page: "11-10-2026 UPI-150843051192- 1397 Dr. 27 14333158270". */
+    private val webViewLine = Regex("""^(\d{2}-\d{2}-\d{4})\s+(.*?)\s+(\d[\d,]*(?:\.\d{1,2})?)\s+(Dr|Cr)\.?\s+(-?\d+)\s+(\d{9,16})\s*$""", RegexOption.IGNORE_CASE)
+    private val webViewHeader = Regex("""reward\s+points\s+reference\s+number""", RegexOption.IGNORE_CASE)
+    private val webViewEnd = Regex("""^(page\s+\d|note|important|disclaimer|\*|for\s+any|this\s+is\s+a)""", RegexOption.IGNORE_CASE)
+
+    private fun inr(label: String, text: String): Long? =
+        Regex("""$label\s+INR\s+(-?[\d,]+(?:\.\d{1,2})?)""", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1)?.let { parseMoney(it)?.first }
+
+    /**
+     * The card statement as ICICI's website shows it ("View last statement", printed to PDF): amounts without
+     * paise ("1397 Dr."), reward points, and the bank's reference number at the end of the line, with the UPI
+     * narration running over the lines below. The reference number is kept as the line's transaction ID.
+     */
+    fun cardWebView(text: String): ParsedStatement? {
+        if (!webViewHeader.containsMatchIn(text)) return null
+        val dateFmt = java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy")
+        data class W(val date: LocalDate, val desc: StringBuilder, val amount: Long, val type: TxnType, val ref: String)
+        val out = ArrayList<W>()
+        var open = false
+        for (raw in text.lines()) {
+            val t = raw.replace('\u00A0', ' ').trim()
+            if (t.isEmpty()) continue
+            val m = webViewLine.find(t)
+            if (m != null) {
+                val date = runCatching { LocalDate.parse(m.groupValues[1], dateFmt) }.getOrNull() ?: continue
+                val amount = parseMoney(m.groupValues[3])?.first ?: continue
+                val type = if (m.groupValues[4].equals("cr", ignoreCase = true)) TxnType.CREDIT else TxnType.DEBIT
+                out += W(date, StringBuilder(m.groupValues[2]), kotlin.math.abs(amount), type, m.groupValues[6])
+                open = true
+            } else if (open) {
+                if (webViewEnd.containsMatchIn(t) || lineStart.find(t) != null) { open = false; continue }
+                out.last().desc.append(' ').append(t)
+            }
+        }
+        if (out.size < 2) return null
+        val rows = out.map { w ->
+            // The UPI narration is broken over lines ("..._UPI-150843\n051192-SAMCO"): joined without the breaks.
+            val desc = cleanDesc(w.desc.toString())
+            // The UPI reference (which the SMS quotes too) when there is one, else the bank's reference number.
+            StatementRow(w.date, null, desc, w.amount, w.type, null, referenceIn(desc) ?: w.ref, serial = w.ref)
+        }.filter { it.amountMinor > 0 }
+        val due = inr("Total Amount Due", text)
+        val previous = inr("Previous Balance", text)
+        val dueDate = Regex("""Payment\s+Due\s+Date\s+(\d{2}-\d{2}-\d{4})""", RegexOption.IGNORE_CASE).find(text)
+            ?.let { runCatching { LocalDate.parse(it.groupValues[1], dateFmt) }.getOrNull() }
+        val check = if (due != null && previous != null) StatementCheck.card(rows, previous, due) else null
+        return ParsedStatement(
+            rows, StatementKind.CARD, bankIn(text.take(6000)) ?: "ICICI Bank", accountTailIn(text.take(6000)),
+            billTotalMinor = due, billMinMinor = inr("Minimum Amount Due", text), billDueDate = dueDate, check = check,
+            numbersSeen = numbersIn(text.take(8000)),
+        )
+    }
+
     private fun cleanDesc(s: String): String = s.replace(Regex("""\s+"""), " ").trim().trim('-', '|', ',').trim()
 
     // "4375 XXXX XXXX 4007", "4375XXXXXXXX5010", "4375 47XX XXXX 5002", "XXXX XXXX XXXX 5002", "4375-XXXX-XXXX-5002"
@@ -532,8 +689,17 @@ object StatementParser {
      */
     private fun withoutRepeats(rows: List<StatementRow>, sections: List<Int>, bank: Boolean): List<StatementRow> {
         if (bank) {
-            val seen = HashSet<List<Any?>>()
-            return rows.filter { r -> r.balanceMinor == null || seen.add(listOf(r.cardTail, r.date, r.amountMinor, r.type, r.balanceMinor, r.description)) }
+            // The same day, amount and balance with the same narration (or part of it: a page repeated in a joined
+            // file can be read with less of the narration) is one line printed twice. A debit and its reversal
+            // repeated bring back the same balances with other reference numbers: those stay.
+            val kept = HashMap<List<Any?>, MutableList<String>>()
+            return rows.filter { r ->
+                if (r.balanceMinor == null) return@filter true
+                val k = listOf(r.cardTail, r.date, r.amountMinor, r.type, r.balanceMinor)
+                val d = r.description.lowercase().replace(Regex("""\s+"""), " ").trim()
+                val list = kept.getOrPut(k) { ArrayList() }
+                if (list.any { it == d || (d.length >= 24 && it.contains(d)) || (it.length >= 24 && d.contains(it)) }) false else { list += d; true }
+            }
         }
         // A serial number belongs to one transaction, whichever card's table it is printed under.
         fun key(r: StatementRow) = listOf(r.serial, r.date, r.amountMinor, r.type)
@@ -576,11 +742,14 @@ object StatementParser {
     /** A card statement's previous balance ("Previous Balance ₹12,345.00"), when printed with its label. */
     fun previousBalanceIn(text: String): Long? {
         val flat = text.replace(' ', ' ').take(8000)
+        // ICICI: "Total Amount due  Previous Balance Purchases ..." over "= + + -", then the due, then the other figures.
+        iciciSummary.find(flat)?.let { m -> return parseMoney(m.groupValues[1])?.first }
         val at = prevBalanceLabel.find(flat) ?: return null
         val m = moneyRe.find(flat, at.range.last + 1)?.takeIf { it.range.first - at.range.last < 60 } ?: return null
         return parseMoney(m.value)?.let { (v, marker) -> if (marker == TxnType.CREDIT) -abs(v) else v }
     }
 
+    private val iciciSummary = Regex("""=\s*\+\s*\+\s*-\s*\n\s*\S?\s*[\d,]+\.\d{2}\s*\n\s*\S?\s*([\d,]+\.\d{2})""")
     private val currencyColumn = Regex("""\s+(USD|EUR|GBP|AED|SGD|MYR|THB|JPY|AUD|CAD|CHF|HKD|CNY|LKR|NPR|SAR|QAR|NZD|IDR|VND|KRW|ZAR)$""")
     /** Card statements: the serial / reference number printed before the description. */
     private val serialFirst = Regex("""^\d{9,24}\s+""")

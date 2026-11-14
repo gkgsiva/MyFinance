@@ -30,6 +30,9 @@ object Duplicates {
     private const val DAY = 24 * 60 * MINUTE
     private const val ID_WINDOW = 3 * DAY
 
+    /** Card and bank charges printed once per transaction they belong to. */
+    private val feeLine = Regex("""\b(IGST|CGST|SGST|GST|DCC\s+Fee|Markup|Mark-up|Fuel\s+Surcharge|Interest\s+Amount|Principal\s+Amount|Late\s+Pay|Finance\s+Charge|Service\s+Tax|Cess)\b""", RegexOption.IGNORE_CASE)
+
     /**
      * A transaction ID worth trusting: at least 8 characters with at least 6 digits ("Ref no 1" or a word picked up
      * by mistake is not an ID). Upper-cased, without spaces and a "UPI:" style prefix.
@@ -72,7 +75,9 @@ object Duplicates {
         if (a.owner != b.owner && !(a.manual || b.manual)) return false
         // Two statement lines without IDs: only the same line printed or imported twice. Two different shops
         // charging the same amount on one day are two payments.
-        if (a.statement && b.statement) return Dates.localDate(a.timestamp, zone) == Dates.localDate(b.timestamp, zone) && StatementImport.sameLine(a.text.orEmpty(), b.text)
+        // Fees and taxes repeat for real (a DCC fee and its GST for each foreign spend on a day).
+        if (a.statement && b.statement) return Dates.localDate(a.timestamp, zone) == Dates.localDate(b.timestamp, zone) &&
+            StatementImport.sameLine(a.text.orEmpty(), b.text) && !feeLine.containsMatchIn(a.text.orEmpty())
         // Alerts minutes apart, or a typed entry on the same day as the SMS / statement line.
         return gap <= 10 * MINUTE || ((a.manual || b.manual) && Dates.localDate(a.timestamp, zone) == Dates.localDate(b.timestamp, zone))
     }
