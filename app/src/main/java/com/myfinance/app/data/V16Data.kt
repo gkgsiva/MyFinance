@@ -73,6 +73,7 @@ interface V16Dao {
     @Query("SELECT * FROM review_answers") fun observeAnswers(): Flow<List<ReviewAnswerEntity>>
     @Query("SELECT * FROM review_answers") suspend fun answersOnce(): List<ReviewAnswerEntity>
     @Upsert suspend fun answer(a: ReviewAnswerEntity)
+    @Upsert suspend fun answers(a: List<ReviewAnswerEntity>)
     @Query("DELETE FROM review_answers WHERE `key` = :key") suspend fun forget(key: String)
 }
 

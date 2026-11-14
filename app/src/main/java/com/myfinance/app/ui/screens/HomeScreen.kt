@@ -84,9 +84,12 @@ private fun LedgerDayHeader(day: MonthLedger.Day, period: java.time.YearMonth, c
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.titleSmall)
             val parts = listOfNotNull(
-                day.outMinor.takeIf { it > 0 }?.let { "spent ${formatInr(it)}" },
+                day.outMinor.takeIf { it > 0 }?.let {
+                    "spent ${formatInr(it)}" + if (day.cardOutMinor > 0) " (${if (day.cardOutMinor == it) "all" else formatInr(day.cardOutMinor)} on card)" else ""
+                },
                 day.investedMinor.takeIf { it > 0 }?.let { "invested ${formatInr(it)}" },
                 day.inMinor.takeIf { it > 0 }?.let { "in ${formatInr(it)}" },
+                day.cardBillMinor.takeIf { it > 0 }?.let { "card bill paid ${formatInr(it)}" },
                 if (day.date < cycle.start(period)) "counts for ${period.format(monthName)}" else null,
             )
             if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -114,6 +117,10 @@ fun MoneyRow(
     balanceMinor: Long? = null,
     /** Money put into an investment: shown in blue, not as spending. */
     investment: Boolean = false,
+    /** Shown under the amount instead of a balance, e.g. "on card bill". */
+    note: String? = null,
+    /** Not spending or income (a card bill paid): the amount is shown muted. */
+    neutral: Boolean = false,
     onClick: () -> Unit,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -141,15 +148,16 @@ fun MoneyRow(
                     (if (credit) "+" else "−") + formatInr(amountMinor),
                     style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
                     color = when {
+                        neutral -> muted
                         credit -> IncomeGreen
                         investment -> com.myfinance.app.ui.theme.InvestBlue
                         else -> MaterialTheme.colorScheme.onSurface
                     },
                     textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
                 )
-                balanceMinor?.let {
+                (note ?: balanceMinor?.let { "bal " + signedInr(it) })?.let {
                     com.myfinance.app.ui.FitText(
-                        "bal " + signedInr(it), style = MaterialTheme.typography.labelSmall, color = muted,
+                        it, style = MaterialTheme.typography.labelSmall, color = muted,
                         textAlign = TextAlign.End, modifier = Modifier.width(amountCol),
                     )
                 }
@@ -387,6 +395,7 @@ fun HomeScreen(
                     AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
                     AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
                     AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
+                    AssistChip(onClick = { vm.showMonth(vm.currentMonth.value); open("month-pdf") }, label = { Text("PDF report") })
                 }
             }
 
@@ -431,6 +440,33 @@ fun HomeScreen(
                                 modifier = Modifier.padding(top = 2.dp),
                             )
                         }
+                        if (ledger.cardSpentMinor > 0 || ledger.cardBillPaidMinor > 0) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 6.dp).clickable { open("card-payments") },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Card due so far", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        "Spent on cards ${formatInr(ledger.cardSpentMinor)}" +
+                                            (if (ledger.cardCreditsMinor > 0) ", refunds ${formatInr(ledger.cardCreditsMinor)}" else "") +
+                                            ". Counted as spending now, taken from the bank when you pay the card bill.",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                com.myfinance.app.ui.FitText(
+                                    formatInr(ledger.cardDueMinor), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                                    color = ExpenseRed, textAlign = TextAlign.End, modifier = Modifier.width(balanceCol),
+                                )
+                            }
+                            if (ledger.cardBillPaidMinor > 0) {
+                                Text(
+                                    "Card bills paid from the bank this month: ${formatInr(ledger.cardBillPaidMinor)} (in the balance, not spending) ›",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.clickable { open("card-payments") },
+                                )
+                            }
+                        }
                         if (balances.any { !it.isCardLimit }) {
                             Text(
                                 "In your bank accounts: ${formatInr(Balances.totalBankMinor(balances))} ›",
@@ -454,14 +490,25 @@ fun HomeScreen(
                 item(key = "day-${day.date}") { LedgerDayHeader(day, ledger.period, cycle) }
                 items(day.rows) { row ->
                     val entity = byId[row.txn.id]
-                    val name = entity?.let { nicks[it.uid.substringBefore('#')] } ?: row.txn.merchant
-                        ?: if (row.isCredit) "Money received" else "Payment"
+                    val name = entity?.let { nicks[it.uid.substringBefore('#')] } ?: row.txn.merchant?.takeUnless { row.isCardBill }
+                        ?: when {
+                            row.isCardBill -> "Card bill paid"
+                            row.isCredit -> "Money received"
+                            else -> "Payment"
+                        }
                     MoneyRow(
                         name = name, category = row.txn.category, color = colorOf[row.txn.category] ?: fallback,
                         timestamp = row.txn.timestamp, amountMinor = row.txn.amountMinor, credit = row.isCredit,
-                        detail = listOfNotNull(if (row.isInvestment) "Investment" else null, row.txn.category.takeUnless { row.isInvestment && it == com.myfinance.core.DefaultCategories.INVESTMENTS }, row.txn.account).joinToString(" · "),
+                        detail = if (row.isCardBill) listOfNotNull("Card bill, not spending", row.txn.account).joinToString(" · ")
+                        else listOfNotNull(
+                            if (row.isInvestment) "Investment" else null,
+                            row.txn.category.takeUnless { row.isInvestment && it == com.myfinance.core.DefaultCategories.INVESTMENTS },
+                            row.txn.account,
+                        ).joinToString(" · "),
                         balanceMinor = row.balanceMinor,
                         investment = row.isInvestment,
+                        note = if (row.onCard) (if (row.isCredit) "back on card" else "on card bill") else null,
+                        neutral = row.isCardBill,
                     ) {
                         if (row.txn.id != 0L) open("edit/${com.myfinance.app.ui.SplitView.originalId(row.txn.id)}")
                     }
@@ -477,7 +524,7 @@ fun HomeScreen(
                         )
                     }
                     Text(
-                        "Own-account transfers and card bill payments are left out. Investments (SIP, mutual funds, FD, PPF ...) are not counted as spending, but they still leave your account. Balance is money in minus spending and investments this month.",
+                        "Balance is your bank money this month: money in minus what left the bank. Credit card spends count as spending in the month you make them, but they don't come off the balance until you pay the card bill; the bill payment then moves the balance and isn't counted as spending again. Own-account transfers are left out. Investments (SIP, mutual funds, FD, PPF ...) are not counted as spending, but they still leave your account.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(

@@ -1,7 +1,5 @@
 package com.myfinance.app.ui.screens
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -80,14 +78,9 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (Strin
     val currentMonth by vm.currentMonth.collectAsState()
     val count by vm.reportMonths.collectAsState()
     val categories by vm.categories.collectAsState()
-    val sync by vm.syncState.collectAsState()
     val colorOf = categories.associate { it.name to Color(it.color) }
     val primary = MaterialTheme.colorScheme.primary
     var merchantsByCount by remember { mutableStateOf(false) }
-
-    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        uri?.let(vm::exportPdf)
-    }
 
     // Long ranges (several years of imported statements) label every few months so the axis stays readable.
     val step = (data.months.size + 11) / 12
@@ -123,15 +116,11 @@ fun ReportsScreen(vm: FinanceViewModel, onExplore: () -> Unit = {}, open: (Strin
         item {
             ReportCard("Monthly statement (PDF)", accent = Violet) {
                 Text(
-                    "A statement of ${month.format(monthYear)} for the whole family: totals, categories, people, top merchants and every transaction.",
+                    "A printable report of ${month.format(monthYear)}: totals, charts, splits, insights and every transaction.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FilledTonalButton(
-                    onClick = { pdfLauncher.launch("myfinance-${month}.pdf") },
-                    enabled = !sync.running,
-                ) { Text("Save PDF") }
-                sync.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                FilledTonalButton(onClick = { open("month-pdf") }) { Text("Print, share or save") }
             }
         }
 

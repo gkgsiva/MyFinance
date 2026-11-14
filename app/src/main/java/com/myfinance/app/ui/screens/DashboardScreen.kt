@@ -409,6 +409,7 @@ private fun MoreViews(vm: FinanceViewModel, open: (String) -> Unit) {
             androidx.compose.material3.AssistChip(onClick = { open("spend-types") }, label = { Text("Fixed vs flexible") })
             androidx.compose.material3.AssistChip(onClick = { open("savings") }, label = { Text("Savings rate") })
             androidx.compose.material3.AssistChip(onClick = { open("family-summary") }, label = { Text("Family summary") })
+            androidx.compose.material3.AssistChip(onClick = { open("month-pdf") }, label = { Text("Monthly report (PDF)") })
             val uncat by vm.v19.uncategorised.collectAsState()
             if (uncat.isNotEmpty()) androidx.compose.material3.AssistChip(onClick = { open("uncategorised") }, label = { Text("Uncategorised (${uncat.sumOf { it.count }})") })
         }

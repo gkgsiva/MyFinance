@@ -18,6 +18,8 @@ data class CheckRow(
     val manual: Boolean = false,
     val statement: Boolean = false,
     val reference: String? = null,
+    /** The user changed this entry (category, name, note ...). */
+    val edited: Boolean = false,
 )
 
 enum class TransferKind(val label: String) {
@@ -118,6 +120,9 @@ object SelfTransfers {
         val texts = listOfNotNull(merchant, text)
         return texts.any { cardStatementPayment.containsMatchIn(it) } && texts.none { notPayment.containsMatchIn(it) }
     }
+
+    /** Text that reads like a purchase made on a credit card ("INR 324 spent on Credit Card XX7002"), not paying its bill. */
+    fun readsLikeCardSpend(text: String?): Boolean = text != null && cardSpend.containsMatchIn(text) && !isCardPayment(null, text)
 
     fun isCardPayment(merchant: String?, text: String?): Boolean {
         val texts = listOfNotNull(merchant, text)

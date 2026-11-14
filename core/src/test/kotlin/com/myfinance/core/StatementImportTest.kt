@@ -73,7 +73,7 @@ class StatementImportTest {
         assertEquals("9876", st.accountTail)
         assertEquals(listOf(TxnType.DEBIT, TxnType.DEBIT, TxnType.CREDIT, TxnType.CREDIT), st.rows.map { it.type })
         assertEquals(123_450, st.rows[0].amountMinor)
-        assertEquals("Swiggy Bangalore", Narration.merchant(st.rows[0].description))
+        assertEquals("Swiggy", Narration.merchant(st.rows[0].description))
     }
 
     @Test
@@ -106,7 +106,7 @@ class StatementImportTest {
         val st = assertNotNull(StatementParser.fromTable(SpreadsheetReader.read(bytes)))
         assertEquals("4321", st.accountTail)
         assertEquals(listOf(TxnType.DEBIT, TxnType.CREDIT), st.rows.map { it.type })
-        assertEquals("Dmart Avenue", Narration.merchant(st.rows[0].description))
+        assertEquals("DMart", Narration.merchant(st.rows[0].description))
         assertEquals("Ravi Kumar", Narration.merchant(st.rows[1].description))
     }
 

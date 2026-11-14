@@ -148,6 +148,62 @@ class SalaryDetectTest {
         assertEquals(java.time.YearMonth.of(2026, 11), c.periodOf(t[3].copy(category = "Salary"), zone))
     }
 
+    @Test fun statementSalaryWithAnotherNameFillsItsMonth() {
+        // SMS months say RNTBCI and are in Salary; September and October came only from the statement, named
+        // differently, so they stayed in Transfers and in their own month (October had two salaries, November none).
+        val t = listOf(
+            credit("2026-06-26", 2_10_000_00, "Salary", "RNTBCI", 1), credit("2026-07-24", 2_10_000_00, "Salary", "RNTBCI", 2),
+            credit("2026-08-26", 2_12_000_00, "Salary", "RNTBCI", 3),
+            credit("2026-09-25", 2_12_000_00, "Transfers", "Renault Nissan Technology", 4),
+            credit("2026-10-26", 2_12_500_00, "Transfers", "Salary", 5),
+            // Not salary: a friend paying back, a fixed deposit, money from own account, a credit into another account.
+            credit("2026-09-27", 50_000_00, "Transfers", "Ravi", 6), credit("2026-10-02", 3_00_000_00, "Income", "Fd Closure", 7),
+            credit("2026-07-26", 2_10_000_00, "Transfers", "Own account transfer", 8),
+            TxnLite(2_12_000_00, TxnType.CREDIT, "Transfers", "Neft", "••9988", at(java.time.LocalDate.parse("2026-08-25")), id = 9),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(listOf(4L, 5L), g.toCategorise.sorted())
+        val c = MonthCycle(salaryFromDay = g.fromDay)
+        val fixed = t.map { if (it.id in g.toCategorise) it.copy(category = "Salary") else it }.filter { it.category == "Salary" }
+        val byMonth = fixed.groupBy { c.periodOf(it, zone) }.mapValues { it.value.size }
+        assertEquals((7..11).associate { java.time.YearMonth.of(2026, it) to 1 }, byMonth)
+    }
+
+    @Test fun oldYearsSalaryGoesInSalaryToo() {
+        // Statements from 2023 have the same payer as this year's salary SMS: they count in the next month too.
+        val t = listOf(
+            credit("2023-03-27", 1_50_000_00, "Transfers", "RNTBCI", 1), credit("2023-04-26", 1_50_000_00, "Transfers", "RNTBCI", 2),
+            credit("2023-12-26", 3_40_000_00, "Transfers", "RNTBCI", 3),
+            credit("2026-09-25", 2_12_000_00, "Salary", "RNTBCI", 4), credit("2026-10-26", 2_12_000_00, "Salary", "RNTBCI", 5),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(listOf(1L, 2L, 3L), g.toCategorise.sorted())
+        assertEquals(2, g.months)
+    }
+
+    @Test fun renaultPrintedThreeWaysIsOnePayer() {
+        assertEquals("renault", SalaryDetect.payer("RNTBCI"))
+        assertEquals("renault", SalaryDetect.payer("Renault Nissan Technology"))
+        assertEquals("renault", SalaryDetect.payer("NEFT RENAULT NISSAN TECH AND BUS"))
+        assertEquals(null, SalaryDetect.payer("NEFT Salary"))
+        val t = listOf(
+            credit("2026-08-26", 2_00_000_00, "Salary", "RNTBCI", 1), credit("2026-09-25", 2_00_000_00, "Salary", "Renault", 2),
+            // A bonus from Renault Nissan, far from pay day and well above the salary: still salary.
+            credit("2026-10-10", 4_50_000_00, "Transfers", "Renault Nissan Technology", 3),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(listOf(3L), g.toCategorise)
+    }
+
+    @Test fun aMonthWithItsSalaryGetsNoSecond() {
+        val t = listOf(
+            credit("2026-08-26", 2_00_000_00, "Salary", "RNTBCI", 1), credit("2026-09-25", 2_00_000_00, "Salary", "RNTBCI", 2),
+            credit("2026-09-28", 2_00_000_00, "Transfers", "Neft Somebody", 3),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(emptyList<Long>(), g.toCategorise)
+    }
+
     @Test fun earlySalaryNeedsNothing() {
         val t = listOf(credit("2026-08-01", 150_000_00, "Salary"), credit("2026-09-01", 150_000_00, "Salary"), credit("2026-10-01", 150_000_00, "Salary"))
         assertEquals(null, SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone))

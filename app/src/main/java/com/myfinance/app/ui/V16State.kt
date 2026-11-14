@@ -18,7 +18,7 @@ import com.myfinance.core.CheckRow
 import com.myfinance.core.CustomRule
 import com.myfinance.core.DataHealth
 import com.myfinance.core.DebitRecord
-import com.myfinance.core.DuplicatePair
+import com.myfinance.core.DuplicateGroup
 import com.myfinance.core.ExportRow
 import com.myfinance.core.FamilyPayment
 import com.myfinance.core.FamilyPersonMonth
@@ -114,7 +114,7 @@ class V16State(
 
     private fun TransactionEntity.check(me: String) = CheckRow(
         id, uid, type, amountMinor, accountLabel, timestamp, merchant, rawSms, category, owner ?: me,
-        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference,
+        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference, edited = userEdited,
     )
 
     private val checkRows: StateFlow<List<CheckRow>> =
@@ -188,16 +188,28 @@ class V16State(
         combine(checkRows, answers) { rows, a -> DataHealth.check(rows, LocalDate.now(), a.keys, zone) }
             .flowOn(Dispatchers.Default).stateIn(scope, WhileShown, null)
 
-    /** Moves the newer entry of a duplicate pair to Recently deleted. */
-    fun removeDuplicate(p: DuplicatePair) = work {
-        val keep = if (p.b.manual && !p.a.manual) p.a else if (p.a.manual && !p.b.manual) p.b else p.a
-        val drop = if (keep == p.a) p.b else p.a
-        repo.get(drop.id)?.let { repo.delete(it) }
-        dao.answer(ReviewAnswerEntity(p.key, "removed"))
-        "Moved one to Recently deleted"
+    /** Keeps the best entry of a group and moves the other copies to Recently deleted. */
+    fun removeDuplicate(g: DuplicateGroup) = removeDuplicates(listOf(g))
+
+    /** "Remove all": every group at once, in one go; each removed entry can be restored from Recently deleted. */
+    fun removeDuplicates(groups: List<DuplicateGroup>) = work {
+        val n = repo.removeDuplicateGroups(groups)
+        when (n) {
+            0 -> null
+            1 -> "Moved 1 entry to Recently deleted"
+            else -> "Moved $n entries to Recently deleted"
+        }
     }
 
-    fun notDuplicate(p: DuplicatePair) = answer(p.key, "no")
+    /** "All are real": the group and every pair in it are never shown again. */
+    fun notDuplicate(g: DuplicateGroup) = work {
+        val keys = listOf(g.key) + g.rows.flatMapIndexed { i, a -> g.rows.drop(i + 1).map { b -> com.myfinance.core.Duplicates.pairKey(a, b) } }
+        dao.answers(keys.distinct().map { ReviewAnswerEntity(it, "no") })
+        null
+    }
+
+    /** Entries removed automatically because they had the same transaction ID as another. */
+    val sameIdRemoved: Int get() = repo.sameIdRemoved
 
     // ---- Family UPI ----
 

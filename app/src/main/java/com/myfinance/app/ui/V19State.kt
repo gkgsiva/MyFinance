@@ -224,7 +224,7 @@ class V19State(
                     val ids = g.toCategorise.filterNot { it in triedSalaryIds }
                     if (c.salaryFromDay != null && ids.isNotEmpty()) {
                         triedSalaryIds += ids
-                        runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
+                        runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY, keepEdited = true) }
                             .onFailure { com.myfinance.app.diag.CrashLog.recovered("salary month", it) }
                     }
                     return@collect
@@ -244,7 +244,7 @@ class V19State(
     fun useSalaryDay(g: com.myfinance.core.SalaryGuess, keepState: Boolean = false) = scope.launch {
       runCatching {
         val ids = if (g.alreadySalary) g.toCategorise else g.ids
-        if (ids.isNotEmpty()) runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY) }
+        if (ids.isNotEmpty()) runCatching { repo.categorise(ids, g.payer, com.myfinance.core.DefaultCategories.SALARY, keepEdited = true) }
         val day = minOf(g.fromDay, repo.monthCycle.value.salaryFromDay ?: g.fromDay)
         repo.setMonthCycle(repo.monthCycle.value.copy(salaryFromDay = day), byUser = false)
         if (!keepState) {

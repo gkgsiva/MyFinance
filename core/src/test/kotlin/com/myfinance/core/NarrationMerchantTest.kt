@@ -18,7 +18,7 @@ class NarrationMerchantTest {
         assertEquals("UPI 4540333333@ybl", m("UPI/437760820039/Payment from Ph/4540333333@ybl/DB"))
         assertEquals("Ravi Kumar", m("MOBILE BANKING MMT/IMPS/598876073987/Rent/RAVI KUMAR/CORP00"))
         assertEquals("IMPS transfer", m("MOBILE BANKING MMT/Ref534873540588/8179233333"))
-        assertEquals("Irctc", m("NET BANKING BIL/337099227197/ChgRs10 GSTRs1.80 IRCTC/10000121"))
+        assertEquals("IRCTC", m("NET BANKING BIL/337099227197/ChgRs10 GSTRs1.80 IRCTC/10000121"))
         assertEquals("Credit card bill", m("NET BANKING BIL/337003202226/Credit bill/012887933333333"))
         assertEquals("Credit card bill", m("NET BANKING BIL/337687498392/Feb 2019 credit/012887933333333"))
         assertEquals("Anita R", m("BIL/NEFT/337678256728/school fees/ANITA R/CNRB0003 040"))
@@ -26,14 +26,14 @@ class NarrationMerchantTest {
         assertEquals("Own account transfer", m("BIL/INFT/337042097976/savings/Self"))
         assertEquals("Corner Shop", m("DEBIT CARD VPS/CORNER SHOP /93753030719777/0"))
         assertEquals("Corner Shop", m("DEBIT CARD MPS/CORNER SHOP/937431947190/826075/CHENNAI"))
-        assertEquals("Hdfc Ltd Emi", m("DECS/HDFC LTD EMI DEBITS/3331383860255"))
+        assertEquals("HDFC Ltd", m("DECS/HDFC LTD EMI DEBITS/3331383860255"))
         assertEquals("HDFC Ltd", m("ACH/HDFCLTD/996983244"))
-        assertEquals("Lic Housing Finance Limit", m("CHEQUE 12920 CLG/LIC Housing Finance Limit/HDF 12920"))
+        assertEquals("LIC Housing Finance", m("CHEQUE 12920 CLG/LIC Housing Finance Limit/HDF 12920"))
         assertEquals("Salary", m("SAL/Salary - Apr 2018"))
         assertEquals("Salary", m("ICSP/ACME TECHNOLOGY BUSINESS CENTRE INDIA PVT LTD"))
         assertEquals("GST", m("SGST93753890022575420"))
         assertEquals("ATM withdrawal", m("OTHER ATMS NFS/CASH WDL/11-05-18"))
-        assertEquals("Interest", m("639537833333:Int.Pd:31-12-2018 to 30-03-2019"))
+        assertEquals("Savings interest", m("639537833333:Int.Pd:31-12-2018 to 30-03-2019"))
     }
 
     @Test
@@ -45,8 +45,8 @@ class NarrationMerchantTest {
         assertEquals("Allen Career Institute EMI interest", m("Interest Amount Amortization - <1/3>ALLEN CAREER INSTITUTE"))
         assertEquals("EMI interest", m("Interest Amount Amortization - <4/6>"))
         assertEquals("GST", m("IGST-CI@18%"))
-        assertEquals("Chatgpt Subscription Httpsopenai.c", m("CHATGPT SUBSCRIPTION HTTPSOPENAI.C US*"))
-        assertEquals("Vsp Super Market Chennai", m("VSP SUPER MARKET CHENNAI IN"))
+        assertEquals("OpenAI ChatGPT", m("CHATGPT SUBSCRIPTION HTTPSOPENAI.C US*"))
+        assertEquals("Vsp Super Market", m("VSP SUPER MARKET CHENNAI IN"))
     }
 
     @Test
@@ -85,5 +85,22 @@ class NarrationMerchantTest {
         assertEquals("UPI/439291174861/PhonePe Credit/phonepemerchant/Ye s Bank Ltd", st.rows[2].description)
         assertEquals("NEFT-SIN30994Q0000092-ACME NISSAN TECHN-/ACC/RN 00278 TEST-09238008547-SCBL0000001", st.rows[3].description)
         assertEquals(st.check?.expectedMinor, st.check?.computedMinor)
+    }
+
+    /** Payees in every layout the parser reads (2022+ numbered savings, card UPI lines, ACH/sweep). Made-up names. */
+    @Test
+    fun payeesInAllLayouts() {
+        // Numbered savings: UPI/<ref>/<note>/<vpa>/<bank>/<hash>
+        assertEquals("Swiggy", m("UPI/209307800001/Payment for/swiggy.rzp@axis/Axis Bank/AXIfcc2a4cd6e12497a9a59031c463352ef"))
+        assertEquals("Anand Stores", m("UPI/209307800002/ANAND STORES/paytmqr12345@paytm/Paytm Payments"))
+        // Card UPI line: UPI-<ref>-<payee> IN, with words split by the PDF
+        assertEquals("Swiggy", m("UPI-443348112287-Swiggy L td IN"))
+        assertEquals("Redbus", m("UPI-988505869537-REDBUS IN"))
+        // Card shop line ending in a city
+        assertEquals("Adyar Ananda Bhavan", m("ADYAR ANANDA BHAVAN CHENNAI IN"))
+        assertEquals("Amazon", m("AMAZON INDIA CYBS SI MUMBAI IN"))
+        // Mandates and sweeps
+        assertEquals("Sweep to linked account", m("Sweep Trf To: 123456789012"))
+        assertEquals("Card payment received", m("INFINITY PAYMENT RECEIVED, THANK YOU"))
     }
 }

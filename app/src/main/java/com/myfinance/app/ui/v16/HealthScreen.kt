@@ -52,12 +52,12 @@ fun HealthScreen(vm: FinanceViewModel, onBack: () -> Unit, openTxn: (Long) -> Un
             item { Text("Possible duplicates", style = MaterialTheme.typography.titleSmall) }
             items(h.duplicates, key = { it.key }) { p ->
                 InfoCard {
-                    listOf(p.a, p.b).forEach { x ->
-                        Row15(x.merchant ?: "Entry", listOfNotNull(x.account, x.timestamp.day16(), if (x.manual) "typed in" else if (x.statement) "statement" else "SMS").joinToString(" · "), formatInr(x.amountMinor)) { openTxn(x.id) }
+                    p.rows.forEach { x ->
+                        Row15(x.merchant ?: "Entry", listOfNotNull(x.account, x.timestamp.day16(), if (x.manual) "typed in" else if (x.statement) "statement" else "SMS", x.reference?.let { "ID $it" }).joinToString(" · "), formatInr(x.amountMinor)) { openTxn(x.id) }
                     }
                     Row {
-                        TextButton(onClick = { s.removeDuplicate(p) }) { Text("Remove one") }
-                        TextButton(onClick = { s.notDuplicate(p) }) { Text("Both are real") }
+                        TextButton(onClick = { s.removeDuplicate(p) }) { Text(if (p.rows.size == 2) "Remove one" else "Keep one") }
+                        TextButton(onClick = { s.notDuplicate(p) }) { Text(if (p.rows.size == 2) "Both are real" else "All are real") }
                     }
                 }
             }

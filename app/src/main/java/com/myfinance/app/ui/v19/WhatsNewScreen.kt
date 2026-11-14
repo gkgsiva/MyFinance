@@ -21,6 +21,18 @@ data class Release(val version: String, val title: String, val changes: List<Str
 /** Every release from 1.0, newest first. Add the new release at the top when publishing one. */
 val releaseNotes: List<Release> = listOf(
     Release(
+        "1.15", "Card spends stay on the card until the bill is paid",
+        listOf(
+            "Home: credit card spends count as spending in the month you make them, but no longer take money off the bank balance. They show \"on card bill\" and add up in a new \"Card due so far\" line.",
+            "Home: paying the card bill from the bank is listed (\"Card bill paid\") and moves the bank balance, without counting the spending a second time.",
+            "Salary counts once in every month, including months read only from the bank statement.",
+            "Duplicates are matched by the bank's transaction ID: copies with the same ID are removed on their own (to Recently deleted), two payments with different IDs are never called duplicates, and the Review inbox shows one card per payment with \"Remove all\".",
+            "Every line of the ICICI statements is read: the 2022-onward savings layout, the website \"View last statement\" page, and card refunds paid out to the bank.",
+            "Payee names read right from statement lines (Swiggy, Amazon, IRCTC, shop names without the city, UPI payees in every layout). Lines already imported are named again once.",
+            "Monthly PDF report to print, share or save, with every entry, splits, charts and insights.",
+        ),
+    ),
+    Release(
         "1.14", "Money that comes back, statements per period",
         listOf(
             "A failed payment and its money back, a refund, or an autopay hold that was released cancel out: neither counts as spending or income. Settings > Reversed & refunded lists them; \"Not a reversal\" undoes one.",
