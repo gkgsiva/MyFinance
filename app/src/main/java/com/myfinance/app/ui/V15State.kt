@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -148,6 +149,19 @@ class V15State(
             val text = all.associate { it.id to (listOfNotNull(it.rawSms, it.note).joinToString(" ").ifBlank { null }) }
             TaxPack.build(fy, lite, text, items, g.map { it.toEntry() }, zone)
         }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, null)
+
+    /** The tax pack of financial year [fy] (2025 = FY 2025-26), worked out now, for the year-end report. */
+    suspend fun taxPackFor(fy: Int): TaxPackData = withContext(Dispatchers.Default) {
+        val all = allTransactions.value
+        val byUid = all.associateBy { it.uid }
+        val items = v12.taxTags.first().mapNotNull { tag ->
+            val t = byUid[tag.txnUid] ?: return@mapNotNull null
+            val s = tag.taxSection ?: return@mapNotNull null
+            if (t.excluded) null else TaxItem(s, t.amountMinor, t.timestamp, t.merchant)
+        }
+        val text = all.associate { it.id to (listOfNotNull(it.rawSms, it.note).joinToString(" ").ifBlank { null }) }
+        TaxPack.build(fy, allLite.value, text, items, dao.observeGains().first().map { it.toEntry() }, zone)
+    }
 
     fun saveGain(g: CapitalGainEntity) = work { dao.putGain(g); "Sale saved" }
     fun deleteGain(id: String) = work { dao.deleteGain(id); null }

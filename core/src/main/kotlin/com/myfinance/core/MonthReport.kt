@@ -54,6 +54,8 @@ data class MonthReport(
     val emis: List<Share> = emptyList(),
     val biggest: List<Row>,
     val insights: List<String>,
+    /** Where a bank account's entries stop matching its balances (see [Reconcile]). */
+    val suspects: List<Suspect> = emptyList(),
 ) {
     /** Income minus spending minus investing. */
     val leftMinor: Long get() = incomeMinor - spentMinor - investedMinor
@@ -63,6 +65,12 @@ data class MonthReport(
         get() = if (incomeMinor <= 0) null else (((incomeMinor - spentMinor) * 100) / incomeMinor).toInt()
 
     val hiddenCount: Int get() = rows.count { it.hidden }
+
+    /** Entries with a receipt, bill or other file attached, counted or not, in date order. */
+    val attachmentIndex: List<Row> get() = (rows + notCounted).filter { it.attachments.isNotEmpty() }.sortedWith(compareBy({ it.txn.timestamp }, { it.txn.id }))
+
+    /** The entry's number in the "All entries" table (1-based), or null when it isn't there. */
+    fun entryNumber(id: Long): Int? = rows.indexOfFirst { it.txn.id == id }.takeIf { it >= 0 }?.plus(1)
 
     data class Row(
         val txn: TxnLite,
@@ -75,6 +83,8 @@ data class MonthReport(
         val isCard: Boolean = false,
         /** Money in minus money out so far this month, up to this row. 0 for rows not counted. */
         val runningMinor: Long = 0,
+        /** Names of the files (receipt photos, PDFs) attached to this entry. */
+        val attachments: List<String> = emptyList(),
     ) {
         val isCredit: Boolean get() = txn.type == TxnType.CREDIT
         private val merchantName: String get() = txn.merchant?.takeIf { it.isNotBlank() } ?: if (isCredit) "Money received" else "Payment"
@@ -155,6 +165,7 @@ data class MonthReport(
             budgets: Map<String, Long> = emptyMap(),
             recurring: List<RecurringPayment> = emptyList(),
             balanceAfter: Map<Long, Long> = emptyMap(),
+            attachmentsById: Map<Long, List<String>> = emptyMap(),
         ): MonthReport {
             fun isCard(t: TxnLite): Boolean {
                 val tail = tailOf(t.account)
@@ -169,6 +180,7 @@ data class MonthReport(
                 hidden = t.id != 0L && t.id in hiddenIds,
                 isCard = isCard(t),
                 runningMinor = running,
+                attachments = attachmentsById[t.id].orEmpty(),
             )
 
             val byPeriod = txns.groupBy { cycle.periodOf(it, zone) }
@@ -257,14 +269,20 @@ data class MonthReport(
                 .filter { !it.isCard && it.txn.account != null }
                 .groupBy { it.txn.account!! }
                 .mapNotNull { (acct, l) ->
-                    val sorted = l.sortedWith(compareBy<Row>({ it.txn.timestamp }, { it.txn.id }))
-                    val f = sorted.indexOfFirst { balanceAfter.containsKey(it.txn.id) }
-                    val e = sorted.indexOfLast { balanceAfter.containsKey(it.txn.id) }
+                    // Same-day entries in the order their balances chain, so a statement read newest first still adds up.
+                    val sorted = Reconcile.order(l.map { it.txn }, balanceAfter, zone)
+                    val f = sorted.indexOfFirst { balanceAfter.containsKey(it.id) }
+                    val e = sorted.indexOfLast { balanceAfter.containsKey(it.id) }
                     if (f < 0) return@mapNotNull null
-                    fun signed(r: Row) = if (r.isCredit) r.txn.amountMinor else -r.txn.amountMinor
-                    val opening = balanceAfter.getValue(sorted[f].txn.id) - signed(sorted[f])
-                    BalanceLine(acct, opening, balanceAfter.getValue(sorted[e].txn.id), sorted.subList(f, e + 1).sumOf { signed(it) })
+                    fun signed(t: TxnLite) = if (t.type == TxnType.CREDIT) t.amountMinor else -t.amountMinor
+                    val opening = balanceAfter.getValue(sorted[f].id) - signed(sorted[f])
+                    BalanceLine(acct, opening, balanceAfter.getValue(sorted[e].id), sorted.subList(f, e + 1).sumOf { signed(it) })
                 }
+            val suspects = (rows + notCountedRows)
+                .filter { !it.isCard && it.txn.account != null }
+                .groupBy { it.txn.account!! }
+                .filterKeys { acct -> balances.any { it.account == acct && it.differenceMinor != 0L } }
+                .flatMap { (acct, l) -> Reconcile.suspects(acct, l.map { it.txn }, balanceAfter, zone) }
 
             val incomeCategories = shares(rows.filter { it.isCredit }) { it.txn.category }
             val accountLines = (rows.map { it to true } + notCountedRows.map { it to false })
@@ -326,6 +344,7 @@ data class MonthReport(
                 accountLines = accountLines,
                 personLines = personLines,
                 emis = emis,
+                suspects = suspects,
             )
         }
 

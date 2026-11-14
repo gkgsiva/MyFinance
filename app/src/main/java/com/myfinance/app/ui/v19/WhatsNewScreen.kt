@@ -21,6 +21,18 @@ data class Release(val version: String, val title: String, val changes: List<Str
 /** Every release from 1.0, newest first. Add the new release at the top when publishing one. */
 val releaseNotes: List<Release> = listOf(
     Release(
+        "1.16", "Year-end and family reports, receipts, card due alerts",
+        listOf(
+            "Monthly PDF report in colour with the entries first, then Household accounts (income and expenditure, each account and card, bank reconciliation, family members, EMIs, lines to sign) and your notes in full.",
+            "Year-end report (PDF): twelve months side by side, the year's income and expenditure, investments, family members, EMIs, the items for your tax return, and every receipt kept. Settings > Year-end report.",
+            "Receipts and attachments: attach a PDF bill or invoice to an entry as well as photos. They go into the encrypted backup, and the PDF reports list them with the entry number.",
+            "Family report: after merging the family's exports, everyone's month side by side, each person apart, as a screen and a PDF. Settings > Family report & limits.",
+            "A monthly spending limit for each family member, with a notification at 80% and when it's crossed.",
+            "Card due alerts: 3 days before each card's bill date (what's on it so far) and on the bill date (the amount due and pay-by date). Switch on Balances.",
+            "Import health check: months with no statement, and bank months whose balance doesn't match the entries. Tap one to see the entry that looks missing or counted twice, and open it. The PDF's bank reconciliation says where to look too.",
+        ),
+    ),
+    Release(
         "1.15", "Card spends stay on the card until the bill is paid",
         listOf(
             "Home: credit card spends count as spending in the month you make them, but no longer take money off the bank balance. They show \"on card bill\" and add up in a new \"Card due so far\" line.",
