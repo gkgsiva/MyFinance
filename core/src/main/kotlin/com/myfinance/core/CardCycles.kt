@@ -22,7 +22,12 @@ data class CardCycleView(
     val payBy: LocalDate?,
     /** A payment reached the card after the bill date. */
     val paid: Boolean,
+    /** The next statement date (after today). */
+    val nextBillDate: LocalDate = billDate.plusMonths(1),
 )
+
+/** A card due alert to send once: [key] tells it apart from every other. */
+data class CardAlert(val key: String, val title: String, val text: String)
 
 object CardCycles {
     private fun onDay(year: Int, month: Int, day: Int): LocalDate {
@@ -51,7 +56,43 @@ object CardCycles {
         val billed = net(mine.filter { date(it).isAfter(prev) && !date(it).isAfter(bill) })
         val unbilled = net(mine.filter { date(it).isAfter(bill) })
         val paid = mine.any { it.billPayment && it.type == TxnType.CREDIT && date(it).isAfter(bill) }
-        return CardCycleView(card, bill, billed.coerceAtLeast(0), unbilled.coerceAtLeast(0), card.payDay?.let { payBy(bill, it) }, paid)
+        return CardCycleView(card, bill, billed.coerceAtLeast(0), unbilled.coerceAtLeast(0), card.payDay?.let { payBy(bill, it) }, paid, nextBillDate(day, today))
+    }
+
+    /** The first statement date after [today]. */
+    fun nextBillDate(billDay: Int, today: LocalDate): LocalDate {
+        val thisMonth = onDay(today.year, today.monthValue, billDay)
+        return if (thisMonth.isAfter(today)) thisMonth else today.plusMonths(1).let { onDay(it.year, it.monthValue, billDay) }
+    }
+
+    private val dm = java.time.format.DateTimeFormatter.ofPattern("d MMM")
+
+    /**
+     * Card due alerts for [today]:
+     * - [daysBefore] days before the bill date up to the day before it: what is on the coming bill so far;
+     * - on the bill date and the day after: the bill's amount and its pay-by date, while not paid.
+     * The pay-by reminder ([reminderDue]) is separate and stays as it is.
+     */
+    fun alerts(v: CardCycleView, today: LocalDate, daysBefore: Int = 3): List<CardAlert> {
+        val out = ArrayList<CardAlert>()
+        val whose = v.card.owner?.takeIf { it.isNotBlank() }?.let { " ($it's card)" } ?: ""
+        val next = v.nextBillDate
+        if (v.unbilledMinor > 0 && !today.isBefore(next.minusDays(daysBefore.toLong())) && today.isBefore(next)) {
+            out += CardAlert(
+                "cardpre|${v.card.tail}|$next",
+                "${v.card.label} bill on ${next.format(dm)}: ${formatInr(v.unbilledMinor)} so far",
+                "Spends since the ${v.billDate.format(dm)} bill, less refunds$whose. Anything you spend before ${next.format(dm)} goes on this bill too." +
+                    (v.card.payDay?.let { " Pay by ${payBy(next, it).format(dm)}." } ?: ""),
+            )
+        }
+        if (!v.paid && v.billedMinor > 0 && !today.isBefore(v.billDate) && !today.isAfter(v.billDate.plusDays(1))) {
+            out += CardAlert(
+                "cardmade|${v.card.tail}|${v.billDate}",
+                "${v.card.label} bill: ${formatInr(v.billedMinor)} due" + (v.payBy?.let { " by ${it.format(dm)}" } ?: ""),
+                "The ${v.billDate.format(dm)} bill has ${formatInr(v.billedMinor)} of spends, less refunds$whose. Import the card statement to see the bank's exact total.",
+            )
+        }
+        return out
     }
 
     /** Remind from 3 days before the pay-by date until it, when the bill has something on it and isn't paid. */

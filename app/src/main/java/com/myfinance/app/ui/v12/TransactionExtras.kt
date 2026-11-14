@@ -54,8 +54,8 @@ import java.io.File
 @Composable
 fun TransactionExtras(vm: V12ViewModel, txn: TransactionEntity) {
     PhotosCard(
-        vm, txn.uid, "Receipt / bill photos",
-        "Keep the bill for warranties and records. Photos stay in the app's private storage and go into your encrypted backup.",
+        vm, txn.uid, "Receipts and attachments",
+        "Keep the bill for warranties and records: a photo, or a PDF invoice. They stay in the app's private storage, go into your encrypted backup, and are listed in the PDF report.",
     )
 
     if (txn.type == TxnType.DEBIT) {
@@ -82,6 +82,10 @@ fun PhotosCard(vm: V12ViewModel, key: String, title: String, hint: String) {
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let { vm.addReceiptFromUri(key, it) }
     }
+    // A PDF bill or invoice (or a photo from Files / Drive).
+    val document = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.addReceiptFromUri(key, it) }
+    }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -102,6 +106,10 @@ fun PhotosCard(vm: V12ViewModel, key: String, title: String, hint: String) {
                     AppLock.expectExternalActivity()
                     gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }) { Text("From gallery") }
+                OutlinedButton(onClick = {
+                    AppLock.expectExternalActivity()
+                    document.launch(arrayOf("application/pdf", "image/*"))
+                }) { Text("PDF or file") }
             }
         }
     }
@@ -113,9 +121,10 @@ fun PhotosCard(vm: V12ViewModel, key: String, title: String, hint: String) {
             confirmButton = {
                 TextButton(onClick = {
                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", vm.receiptFile(r))
-                    val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    val pdf = r.fileName.endsWith(".pdf", ignoreCase = true)
+                    val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, if (pdf) "application/pdf" else "image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     AppLock.expectExternalActivity()
-                    runCatching { context.startActivity(Intent.createChooser(view, "Open photo")) }
+                    runCatching { context.startActivity(Intent.createChooser(view, if (pdf) "Open PDF" else "Open photo")) }
                     viewing = null
                 }) { Text("Open") }
             },
@@ -129,7 +138,15 @@ private fun Thumb(file: File, sizeDp: Int = 88, onClick: () -> Unit) {
     val bitmap by produceState<Bitmap?>(null, file.path, sizeDp) {
         value = withContext(Dispatchers.IO) { decodeSampled(file, sizeDp * 3) }
     }
-    Box(Modifier.size(sizeDp.dp).clickable(onClick = onClick)) {
+    Box(Modifier.size(sizeDp.dp).clickable(onClick = onClick), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        // A PDF has no picture of its own here: a labelled tile instead.
+        if (file.name.endsWith(".pdf", ignoreCase = true)) {
+            Card(Modifier.size(sizeDp.dp)) {
+                Box(Modifier.size(sizeDp.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    Text("PDF", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
         bitmap?.let { Image(it.asImageBitmap(), contentDescription = "Receipt", contentScale = ContentScale.Crop, modifier = Modifier.size(sizeDp.dp)) }
     }
 }

@@ -158,6 +158,10 @@ class V12Repository(
 
     fun receiptFile(r: ReceiptEntity) = File(receiptsDir, r.fileName)
 
+    /** Every attachment's file name by transaction uid, for the PDF report's receipt index. */
+    suspend fun receiptNamesByUid(): Map<String, List<String>> =
+        dao.allReceipts().sortedBy { it.addedAt }.groupBy({ it.txnUid }, { it.fileName })
+
     /** A new empty file for the camera to write into. */
     fun newReceiptFile(): File = File(receiptsDir, "r-${System.currentTimeMillis()}.jpg")
 
@@ -166,9 +170,13 @@ class V12Repository(
         else file.delete()
     }
 
-    /** Copies a picked photo into private storage, so it survives the original being deleted. */
+    /**
+     * Copies a picked photo or file (a PDF bill, an invoice) into private storage, so it survives the original
+     * being deleted. Kept with the photos, so it goes into the encrypted backup too.
+     */
     suspend fun addReceiptFromUri(txnUid: String, uri: Uri) = withContext(Dispatchers.IO) {
-        val f = newReceiptFile()
+        val mime = context.contentResolver.getType(uri).orEmpty()
+        val f = if (mime == "application/pdf") File(receiptsDir, "r-${System.currentTimeMillis()}.pdf") else newReceiptFile()
         context.contentResolver.openInputStream(uri)?.use { input -> f.outputStream().use { input.copyTo(it) } }
             ?: error("Could not read the photo")
         dao.insertReceipt(ReceiptEntity(txnUid = txnUid, fileName = f.name, addedAt = System.currentTimeMillis()))

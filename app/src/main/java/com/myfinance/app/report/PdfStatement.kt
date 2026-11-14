@@ -107,7 +107,8 @@ object PdfStatement {
             rows.map { r ->
                 // Whose it is, for family members' entries merged in.
                 val payee = r.payee + (r.txn.owner?.takeIf { report.people.size > 1 && it != preparedFor }?.let { " · $it" } ?: "") +
-                    (if (r.hidden) " (hidden)" else "")
+                    (if (r.hidden) " (hidden)" else "") +
+                    (if (r.attachments.isNotEmpty()) " [receipt]" else "")
                 val cat = (if (r.txn.isInvestment && r.txn.category != DefaultCategories.INVESTMENTS) "Invested: " else "") + r.txn.category +
                     (if (r.labels.isNotEmpty()) " · " + r.labels.joinToString(", ") else "")
                 listOf(
@@ -236,6 +237,19 @@ object PdfStatement {
                 cellColor = { r, c -> if (c == 5) (if (bl[r].differenceMinor == 0L) IN_GREEN else OUT_RED) else null },
             )
             w.small("Opening and closing come from the balance in bank messages and statements. A difference means an entry is missing or counted twice between those dates.")
+            if (report.suspects.isNotEmpty()) {
+                w.text("Where to look", 9.5f, bold = true, color = OUT_RED)
+                report.suspects.forEach { sp ->
+                    val near = listOfNotNull(
+                        sp.entryId?.let { report.entryNumber(it) }?.let { "entry $it" },
+                        sp.twinId?.let { report.entryNumber(it) }?.let { "same as entry $it" },
+                        if (sp.entryId == null) sp.afterId?.let { report.entryNumber(it) }?.let { "after entry $it" } else null,
+                        if (sp.entryId == null) report.entryNumber(sp.beforeId)?.let { "before entry $it" } else null,
+                    )
+                    w.bullet("${sp.account}: ${sp.message}" + (if (near.isNotEmpty()) " (${near.joinToString(", ")})" else "") + ".")
+                }
+                w.small("In the app: Settings > Import health check shows these too, and opens the entry.")
+            }
         }
 
         if (report.personLines.size > 1) {
@@ -254,6 +268,8 @@ object PdfStatement {
             w.small("Total EMIs: ${formatInr(report.emis.sumOf { it.totalMinor })}" +
                 (if (report.incomeMinor > 0) ", ${report.emis.sumOf { it.totalMinor } * 100 / report.incomeMinor}% of income." else "."))
         }
+
+        attachmentIndex(w, report.attachmentIndex) { report.entryNumber(it.txn.id) }
 
         w.signOff()
 
@@ -335,6 +351,296 @@ object PdfStatement {
             )
         }
 
+        w.finish()
+        doc.writeTo(out)
+        doc.close()
+    }
+
+    /** The receipts and files attached to entries, so the printout says where each bill is kept. */
+    private fun attachmentIndex(w: Writer, rows: List<MonthReport.Row>, number: (MonthReport.Row) -> Int?) {
+        if (rows.isEmpty()) return
+        w.heading("Receipts and attachments")
+        w.table(
+            listOf(Col("No.", 0.07f), Col("Date", 0.11f), Col("Payee", 0.36f), Col("Amount", 0.16f, right = true), Col("Files", 0.30f)),
+            rows.map { r ->
+                val pdfs = r.attachments.count { it.endsWith(".pdf", ignoreCase = true) }
+                val photos = r.attachments.size - pdfs
+                listOf(
+                    number(r)?.toString() ?: "–", r.date.format(dayFmt), r.payee,
+                    (if (r.isCredit) "+" else "") + formatInr(r.txn.amountMinor, false),
+                    listOfNotNull(photos.takeIf { it > 0 }?.let { "$it photo${if (it == 1) "" else "s"}" }, pdfs.takeIf { it > 0 }?.let { "$it PDF${if (it == 1) "" else "s"}" }).joinToString(", "),
+                )
+            },
+            size = 7.5f,
+            cellColor = { r, c -> if (c == 3) (if (rows[r].isCredit) IN_GREEN else OUT_RED) else null },
+        )
+        w.small("${rows.size} entries have a receipt or file kept in MyFinance (open the entry to see it). \"No.\" is the entry's number in All entries.")
+    }
+
+    /** Income and expenditure statement lines from shares. */
+    private fun ieStatement(
+        income: List<MonthReport.Share>, incomeMinor: Long,
+        spending: List<MonthReport.Share>, spentMinor: Long,
+        invest: List<MonthReport.Share>, investedMinor: Long,
+        period: String, catColor: (String) -> Int,
+    ): List<SLine> {
+        val st = ArrayList<SLine>()
+        st += SLine("Income", null, SKind.SECTION)
+        income.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, IN_GREEN) }
+        if (income.isEmpty()) st += SLine("Nothing received", 0, SKind.ITEM)
+        st += SLine("Total income", incomeMinor, SKind.TOTAL, IN_GREEN)
+        st += SLine("Expenditure", null, SKind.SECTION)
+        spending.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, catColor(it.key)) }
+        if (spending.isEmpty()) st += SLine("Nothing spent", 0, SKind.ITEM)
+        st += SLine("Total expenditure", spentMinor, SKind.TOTAL, OUT_RED)
+        val surplus = incomeMinor - spentMinor
+        st += SLine(if (surplus >= 0) "Surplus before investing" else "Deficit before investing", surplus, SKind.TOTAL, if (surplus < 0) OUT_RED else BRAND)
+        if (invest.isNotEmpty()) {
+            st += SLine("Saved and invested", null, SKind.SECTION)
+            invest.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, INVEST_BLUE) }
+            st += SLine("Total invested", investedMinor, SKind.TOTAL, INVEST_BLUE)
+        }
+        val left = incomeMinor - spentMinor - investedMinor
+        st += SLine(if (left >= 0) "Net surplus for the $period" else "Net deficit for the $period", left, SKind.GRAND, if (left < 0) OUT_RED else BRAND)
+        return st
+    }
+
+    /**
+     * The year-end household report: the year's summary, twelve months side by side, income and expenditure,
+     * investments, family members, EMIs, tax-relevant items, receipts kept, and months that don't reconcile.
+     */
+    fun writeYear(out: OutputStream, report: com.myfinance.core.YearReport, preparedFor: String, categoryColors: Map<String, Int> = emptyMap()) {
+        val doc = PdfDocument()
+        val w = Writer(doc, "MyFinance · Year-end report · ${report.label}", preparedFor, "Made ${LocalDateTime.now().format(stamp)}")
+        val fallback = HashMap<String, Int>()
+        fun catColor(c: String): Int = categoryColors[c] ?: fallback.getOrPut(c) { PALETTE[fallback.size % PALETTE.size] }
+        val last = report.firstMonth.plusMonths(11)
+
+        w.text("Year-end report · ${report.label}", 22f, bold = true, color = BRAND)
+        w.text("${report.firstMonth.format(monthYear)} to ${last.format(monthYear)} · ${report.entries} entries · prepared for $preparedFor", 9.5f, color = SOFT)
+        w.gap(8f)
+        w.tiles(
+            listOf(
+                Tile("Received", formatInr(report.incomeMinor), TINT_GREEN, IN_GREEN),
+                Tile("Spent", formatInr(report.spentMinor), TINT_RED, OUT_RED),
+                Tile("Invested", formatInr(report.investedMinor), TINT_BLUE, INVEST_BLUE),
+                Tile("Left over", formatInr(report.leftMinor), TINT_TEAL, if (report.leftMinor < 0) OUT_RED else BRAND),
+                Tile("Saved (after spending)", report.savingsRatePercent?.let { "$it%" } ?: "–", TINT_TEAL, BRAND),
+                Tile("On credit cards", formatInr(report.cardSpentMinor), TINT_PURPLE, PURPLE),
+                Tile("Biggest category", report.categories.firstOrNull()?.key ?: "–", TINT_AMBER, INK),
+                Tile("Receipts kept", "${report.attachments.size}", TINT_AMBER, INK),
+            ),
+        )
+        w.small("Invested money (SIP, mutual funds, FD …) is not spending. Own-account transfers and card bill payments are left out of every total.")
+
+        w.heading("Month by month")
+        val cols = listOf(
+            Col("Month", 0.13f), Col("Received", 0.14f, right = true), Col("Spent", 0.14f, right = true), Col("Invested", 0.13f, right = true),
+            Col("Left over", 0.14f, right = true), Col("Cards", 0.12f, right = true), Col("Entries", 0.08f, right = true), Col("Bank", 0.12f),
+        )
+        val ms = report.months
+        w.table(
+            cols,
+            ms.map { m ->
+                listOf(
+                    m.month.format(DateTimeFormatter.ofPattern("MMM yyyy")), formatInr(m.incomeMinor, false), formatInr(m.spentMinor, false),
+                    formatInr(m.investedMinor, false), formatInr(m.leftMinor, false), formatInr(m.cardSpentMinor, false), "${m.entries}",
+                    when (m.reconciled) { true -> "Matches"; false -> "Check"; null -> "–" },
+                )
+            },
+            cellColor = { r, c ->
+                when (c) {
+                    1 -> IN_GREEN; 2 -> OUT_RED; 3 -> INVEST_BLUE
+                    4 -> if (ms[r].leftMinor < 0) OUT_RED else BRAND
+                    5 -> PURPLE
+                    7 -> when (ms[r].reconciled) { true -> IN_GREEN; false -> OUT_RED; null -> SOFT }
+                    else -> null
+                }
+            },
+        )
+        w.totalRow(
+            cols,
+            listOf("Year", formatInr(report.incomeMinor, false), formatInr(report.spentMinor, false), formatInr(report.investedMinor, false),
+                formatInr(report.leftMinor, false), formatInr(report.cardSpentMinor, false), "${report.entries}", ""),
+            colors = listOf(null, IN_GREEN, OUT_RED, INVEST_BLUE, if (report.leftMinor < 0) OUT_RED else BRAND, PURPLE, null, null),
+        )
+        w.small("Bank: \"Matches\" when every bank account's balance agrees with the entries; \"Check\" when one doesn't (see the end of this report).")
+        if (ms.any { it.incomeMinor > 0 || it.spentMinor > 0 }) {
+            w.heading("Received and spent", keep = 170f)
+            w.trend(ms.map { com.myfinance.core.SavingsPoint(it.month, it.incomeMinor, it.spentMinor) })
+        }
+        if (report.insights.isNotEmpty()) {
+            w.heading("What stands out")
+            report.insights.forEach { w.bullet(it) }
+        }
+
+        w.newPage()
+        w.text("Household accounts", 18f, bold = true, color = BRAND)
+        w.text("${report.label} · ${report.firstMonth.format(monthYear)} to ${last.format(monthYear)}", 9.5f, color = SOFT)
+        w.heading("Income and expenditure")
+        w.statement(ieStatement(report.incomeCategories, report.incomeMinor, report.categories, report.spentMinor, report.investments, report.investedMinor, "year", ::catColor))
+        if (report.categories.isNotEmpty()) {
+            w.heading("Spending by category")
+            w.hBars(report.categories.map { Bar(it.key, it.totalMinor, "${it.percent}% · ${it.count}×", catColor(it.key)) })
+        }
+        if (report.personLines.size > 1) {
+            w.heading("Family members")
+            val pl = report.personLines
+            w.table(
+                listOf(Col("Person", 0.32f), Col("Received", 0.16f, right = true), Col("Spent", 0.16f, right = true), Col("Invested", 0.16f, right = true), Col("Entries", 0.2f, right = true)),
+                pl.map { listOf(it.person, formatInr(it.receivedMinor, false), formatInr(it.spentMinor, false), formatInr(it.investedMinor, false), "${it.count}") },
+                cellColor = { _, c -> when (c) { 1 -> IN_GREEN; 2 -> OUT_RED; 3 -> INVEST_BLUE; else -> null } },
+            )
+        }
+        if (report.emis.isNotEmpty()) {
+            w.heading("Loans and EMIs paid")
+            w.shares(report.emis, OUT_RED)
+            val emi = report.emis.sumOf { it.totalMinor }
+            w.small("Total EMIs: ${formatInr(emi)}" + (if (report.incomeMinor > 0) ", ${emi * 100 / report.incomeMinor}% of income." else "."))
+        }
+        if (report.investments.isNotEmpty()) {
+            w.heading("Investments")
+            w.shares(report.investments, INVEST_BLUE)
+        }
+
+        report.tax?.let { t ->
+            w.heading("For your tax return · ${t.label}")
+            val tl = ArrayList<SLine>()
+            tl += SLine("Income", null, SKind.SECTION)
+            tl += SLine("Salary credited (${t.salaryCredits} credits)", t.salaryMinor, SKind.ITEM, IN_GREEN)
+            if (t.savingsInterestMinor > 0) tl += SLine("Savings account interest", t.savingsInterestMinor, SKind.ITEM, IN_GREEN)
+            if (t.depositInterestMinor > 0) tl += SLine("FD / RD interest", t.depositInterestMinor, SKind.ITEM, IN_GREEN)
+            if (t.otherInterestMinor > 0) tl += SLine("Other interest", t.otherInterestMinor, SKind.ITEM, IN_GREEN)
+            tl += SLine("Other money received", t.otherIncomeMinor, SKind.ITEM)
+            if (t.deductions.isNotEmpty()) {
+                tl += SLine("Deductions (as tagged in the app)", null, SKind.SECTION)
+                t.deductions.forEach { d -> tl += SLine(d.section.label, d.countedMinor, SKind.ITEM, INVEST_BLUE) }
+                tl += SLine("Total deductions counted", t.deductionTotalMinor, SKind.TOTAL, INVEST_BLUE)
+            }
+            if (t.tta80Minor > 0) tl += SLine("80TTA on savings interest (up to ₹10,000)", t.tta80Minor, SKind.ITEM, INVEST_BLUE)
+            if (t.gains.isNotEmpty()) {
+                tl += SLine("Capital gains", null, SKind.SECTION)
+                tl += SLine("Equity, short term", t.gainTotals.equityShortMinor, SKind.ITEM)
+                tl += SLine("Equity, long term", t.gainTotals.equityLongMinor, SKind.ITEM)
+                tl += SLine("Other, short term", t.gainTotals.otherShortMinor, SKind.ITEM)
+                tl += SLine("Other, long term", t.gainTotals.otherLongMinor, SKind.ITEM)
+            }
+            w.statement(tl)
+            w.small("From the Tax pack: check these against Form 16, Form 26AS / AIS and your investment proofs before filing. Not tax advice.")
+        }
+
+        attachmentIndex(w, report.attachments) { null }
+
+        if (report.biggest.isNotEmpty()) {
+            w.heading("Biggest spends of the year")
+            w.table(
+                listOf(Col("Date", 0.14f), Col("Payee", 0.46f), Col("Category", 0.22f), Col("Amount", 0.18f, right = true)),
+                report.biggest.map { listOf(it.date.format(DateTimeFormatter.ofPattern("d MMM yy")), it.payee, it.txn.category, formatInr(it.txn.amountMinor)) },
+                dots = report.biggest.map { catColor(it.txn.category) },
+                dotColumn = 2,
+                cellColor = { _, c -> if (c == 3) OUT_RED else null },
+            )
+        }
+
+        if (report.unreconciled.isNotEmpty()) {
+            w.heading("Bank months to check")
+            val u = report.unreconciled
+            w.table(
+                listOf(Col("Month", 0.18f), Col("Account", 0.32f), Col("Bank says", 0.16f, right = true), Col("Entries say", 0.16f, right = true), Col("Difference", 0.18f, right = true)),
+                u.map { (m, b) ->
+                    listOf(m.format(DateTimeFormatter.ofPattern("MMM yyyy")), b.account, formatInr(b.closingMinor, false), formatInr(b.openingMinor + b.entriesNetMinor, false), formatInr(b.differenceMinor, false))
+                },
+                cellColor = { _, c -> if (c == 4) OUT_RED else null },
+            )
+            w.small("Print that month's report for the exact entries to look at, or open Settings > Import health check in the app.")
+        }
+
+        w.signOff()
+        w.finish()
+        doc.writeTo(out)
+        doc.close()
+    }
+
+    /** The family's month: everyone's received, spent and invested side by side, then a page per person. */
+    fun writeFamily(out: OutputStream, report: com.myfinance.core.FamilyReport, preparedFor: String, categoryColors: Map<String, Int> = emptyMap()) {
+        val doc = PdfDocument()
+        val month = report.period.format(monthYear)
+        val w = Writer(doc, "MyFinance · Family report · $month", preparedFor, "Made ${LocalDateTime.now().format(stamp)}")
+        val fallback = HashMap<String, Int>()
+        fun catColor(c: String): Int = categoryColors[c] ?: fallback.getOrPut(c) { PALETTE[fallback.size % PALETTE.size] }
+
+        w.text("Family report · $month", 22f, bold = true, color = BRAND)
+        w.text("${report.rangeLabel} · ${report.people.size} people · made on $preparedFor's phone", 9.5f, color = SOFT)
+        w.gap(8f)
+        w.tiles(
+            listOf(
+                Tile("Household received", formatInr(report.receivedMinor), TINT_GREEN, IN_GREEN),
+                Tile("Household spent", formatInr(report.spentMinor), TINT_RED, OUT_RED),
+                Tile("Household invested", formatInr(report.investedMinor), TINT_BLUE, INVEST_BLUE),
+                Tile("Left over", formatInr(report.receivedMinor - report.spentMinor - report.investedMinor), TINT_TEAL, BRAND),
+            ),
+        )
+        w.small("Each family member's entries come from their phone's export, merged here; cards in My cards & accounts count for their owner. Investments are not spending; own transfers and card bill payments are left out.")
+
+        w.heading("Each person")
+        val pcols = listOf(
+            Col("Person", 0.2f), Col("Received", 0.14f, right = true), Col("Spent", 0.14f, right = true), Col("Invested", 0.13f, right = true),
+            Col("Share", 0.09f, right = true), Col("Limit", 0.14f, right = true), Col("Used", 0.08f, right = true), Col("Entries", 0.08f, right = true),
+        )
+        val ps = report.people
+        w.table(
+            pcols,
+            ps.map { p ->
+                listOf(
+                    p.name, formatInr(p.receivedMinor, false), formatInr(p.spentMinor, false), formatInr(p.investedMinor, false),
+                    "${p.shareOf(report.spentMinor)}%", p.limitMinor?.let { formatInr(it, false) } ?: "–", p.limitPercent?.let { "$it%" } ?: "–", "${p.count}",
+                )
+            },
+            cellColor = { r, c ->
+                when (c) {
+                    1 -> IN_GREEN; 2 -> OUT_RED; 3 -> INVEST_BLUE
+                    6 -> ps[r].limitPercent?.let { if (it >= 100) OUT_RED else if (it >= 80) AMBER else IN_GREEN }
+                    else -> null
+                }
+            },
+        )
+        val budgets = ps.mapNotNull { p -> p.limitMinor?.let { MonthReport.BudgetLine(p.name, it, p.spentMinor) } }
+        if (budgets.isNotEmpty()) {
+            w.heading("Monthly limits")
+            w.budgets(budgets)
+        }
+        val stale = report.lastEntry.filter { (n, d) -> n != preparedFor && d.isBefore(report.period.atDay(1)) }
+        if (stale.isNotEmpty()) {
+            w.small("Not shared yet for this month: " + stale.entries.joinToString(", ") { "${it.key} (newest entry ${it.value.format(dayShort)})" } +
+                ". Ask them to tap Manage > Share via WhatsApp, then open the file here.")
+        }
+
+        if (report.categories.isNotEmpty()) {
+            w.heading("Categories by person")
+            val names = report.names
+            val share = (0.62f / names.size.coerceAtLeast(1))
+            val ccols = listOf(Col("Category", 0.24f)) + names.map { Col(it, share, right = true) } + Col("Total", 0.14f, right = true)
+            val cr = report.categories
+            w.table(
+                ccols,
+                cr.map { c -> listOf(c.category) + names.map { n -> c.byPerson[n]?.let { formatInr(it, false) } ?: "" } + formatInr(c.totalMinor, false) },
+                size = 7.5f,
+                dots = cr.map { catColor(it.category) },
+                dotColumn = 0,
+                cellColor = { _, c -> if (c == names.size + 1) OUT_RED else null },
+            )
+        }
+
+        ps.forEach { p ->
+            w.heading("${p.name}", keep = 140f)
+            w.small("Received ${formatInr(p.receivedMinor)} · Spent ${formatInr(p.spentMinor)} · Invested ${formatInr(p.investedMinor)} · Left ${formatInr(p.leftMinor)}")
+            if (p.categories.isNotEmpty()) w.hBars(p.categories.take(8).map { Bar(it.key, it.totalMinor, "${it.percent}% · ${it.count}×", catColor(it.key)) }, max = 8)
+            if (p.accounts.size > 1) {
+                w.gap(2f)
+                w.shares(p.accounts.take(6))
+            }
+            if (p.biggest.isNotEmpty()) w.small("Biggest: " + p.biggest.joinToString("; ") { "${it.merchant ?: it.category} ${formatInr(it.amountMinor)}" })
+        }
         w.finish()
         doc.writeTo(out)
         doc.close()

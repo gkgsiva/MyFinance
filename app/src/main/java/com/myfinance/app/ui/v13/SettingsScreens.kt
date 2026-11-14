@@ -68,9 +68,12 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Import statements", "", "Bank statements and credit card bills: PDF, Excel or CSV") { open("import-statement") } }
         item { SettingTile("Import history & undo", "", "Every statement import; undo a whole import") { open("import-history") } }
         item { SettingTile("Missing statements", "", "Months with no statement, per card and account") { open("missing-statements") } }
+        item { SettingTile("Import health check", "", "Missing months and bank balances that don't match, with the entry to look at") { open("import-health") } }
         item { SettingTile("Uncategorised", "", "Give payees a category in one go, old statements included") { open("uncategorised") } }
         item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
         item { SettingTile("Monthly report (PDF)", "", "A month to print and file: every entry, splits, charts and insights") { open("month-pdf") } }
+        item { SettingTile("Year-end report (PDF)", "", "Twelve months, tax items, investments and receipts in one printout") { open("year-pdf") } }
+        item { SettingTile("Family report & limits", "", "Everyone's month from the merged exports, each person apart, with a monthly limit each") { open("family-report") } }
         item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
         item { SettingTile("Statements", "", "A card's or account's entries for a bill cycle, month or any dates") { open("statements") } }

@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
@@ -471,8 +472,9 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The printable report of [month]: every entry, splits, charts and insights. */
-    private suspend fun monthReport(month: YearMonth): com.myfinance.core.MonthReport = withContext(Dispatchers.Default) {
+    private suspend fun monthReport(month: YearMonth, files: Map<Long, List<String>>? = null): com.myfinance.core.MonthReport = withContext(Dispatchers.Default) {
         val all = allTransactions.value
+        val attachments = files ?: attachmentsById()
         val me = ownerName.value
         val modes = mergedModes.value
         val meta = txnMeta.value
@@ -490,7 +492,15 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             budgets = categories.value.mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap(),
             recurring = recurring.value,
             balanceAfter = all.mapNotNull { e -> e.balanceMinor?.let { e.id to it } }.toMap(),
+            attachmentsById = attachments,
         )
+    }
+
+    /** Receipt photos and PDFs attached to each entry, by entry id. */
+    private suspend fun attachmentsById(): Map<Long, List<String>> {
+        val byUid = runCatching { repo.v12.receiptNamesByUid() }.getOrDefault(emptyMap())
+        if (byUid.isEmpty()) return emptyMap()
+        return allTransactions.value.mapNotNull { e -> byUid[e.uid.substringBefore('#')]?.let { e.id to it } }.toMap()
     }
 
     /** Each category's colour, for the PDF report's bars and dots. */
@@ -529,6 +539,130 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         onReady(uri)
         "Made the ${monthName(month)} report."
     }
+
+    // ---- 1.16: year-end report, family report, limits per person, import health ----
+
+    /** The year the year-end report is for: a financial year's first year (2025 = FY 2025-26) or a calendar year. */
+    private val _reportYear = MutableStateFlow(com.myfinance.core.TaxHelper.fyStartYear(LocalDate.now()).let { if (LocalDate.now().monthValue in 4..6) it - 1 else it })
+    val reportYear: StateFlow<Int> = _reportYear.asStateFlow()
+    private val _financialYear = MutableStateFlow(true)
+    val reportFinancialYear: StateFlow<Boolean> = _financialYear.asStateFlow()
+    fun setReportYear(year: Int) { _reportYear.value = year }
+    fun setReportFinancialYear(fy: Boolean) {
+        if (fy == _financialYear.value) return
+        _financialYear.value = fy
+        _reportYear.value = if (fy) com.myfinance.core.TaxHelper.fyStartYear(LocalDate.now()) else LocalDate.now().year
+    }
+
+    private suspend fun yearReport(): com.myfinance.core.YearReport {
+        val year = _reportYear.value
+        val fy = _financialYear.value
+        val files = attachmentsById()
+        val tax = if (fy) runCatching { v15.taxPackFor(year) }.getOrNull() else null
+        // Each month as the monthly report sees it, in calendar months so the twelve add up to the year.
+        val months = com.myfinance.core.YearReport.monthsOf(if (fy) YearMonth.of(year, 4) else YearMonth.of(year, 1)).associateWith { monthReport(it, files) }
+        return withContext(Dispatchers.Default) { com.myfinance.core.YearReport.build(year, fy, { months.getValue(it) }, tax) }
+    }
+
+    fun yearPdfFileName(): String {
+        val y = _reportYear.value
+        val label = if (_financialYear.value) "FY$y-${(y + 1) % 100}" else "$y"
+        return "MyFinance-Year-$label-${ownerName.value.replace(Regex("[^A-Za-z0-9]+"), "")}.pdf".replace("-.pdf", ".pdf")
+    }
+
+    /** Makes the year-end report and hands it to [onReady] (print, share, open). */
+    fun shareYearPdf(onReady: (Uri) -> Unit) = runSync {
+        val app = getApplication<Application>()
+        val report = yearReport()
+        val uri = withContext(Dispatchers.IO) {
+            val file = sharedPdfFile(yearPdfFileName())
+            file.outputStream().use { PdfStatement.writeYear(it, report, ownerName.value, categoryColors()) }
+            androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", file)
+        }
+        onReady(uri)
+        "Made the ${report.label} report."
+    }
+
+    fun saveYearPdf(uri: Uri) = runSync {
+        val app = getApplication<Application>()
+        val report = yearReport()
+        withContext(Dispatchers.IO) {
+            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.writeYear(it, report, ownerName.value, categoryColors()) }
+                ?: error("Could not open file for writing")
+        }
+        "Saved the ${report.label} report as PDF."
+    }
+
+    private fun sharedPdfFile(name: String): java.io.File {
+        val dir = java.io.File(getApplication<Application>().cacheDir, "share").apply { mkdirs() }
+        dir.listFiles { f -> f.name.endsWith(".pdf") }?.forEach { it.delete() }
+        return java.io.File(dir, name)
+    }
+
+    val personLimits: StateFlow<Map<String, Long>> = repo.personLimits
+    fun setPersonLimit(person: String, limitMinor: Long?) = repo.setPersonLimit(person, limitMinor).also { viewModelScope.launch { runCatching { repo.checkBudgets() } } }
+
+    /** The selected month for the whole family, each person apart, with their limits. */
+    val familyReport: StateFlow<com.myfinance.core.FamilyReport?> =
+        combine(allLite, _month, monthCycle, ownerName, repo.personLimits) { txns, m, c, me, limits ->
+            com.myfinance.core.FamilyReport.build(txns, m, me, c, ZoneId.systemDefault(), limits) as com.myfinance.core.FamilyReport?
+        }
+            .catch { e -> com.myfinance.app.diag.CrashLog.recovered("family report", e); emit(null) }
+            .flowOn(Dispatchers.Default).stateIn(viewModelScope, WhileShown, null)
+
+    /** Everyone seen in the entries, for setting limits (this phone's owner first). */
+    val familyNames: StateFlow<List<String>> =
+        combine(allLite, ownerName, repo.personLimits) { txns, me, limits ->
+            (listOf(me) + txns.mapNotNull { it.owner?.takeIf { o -> o.isNotBlank() } }.distinct().sorted() + limits.keys).distinct()
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, WhileShown, emptyList())
+
+    fun familyPdfFileName(): String = "MyFinance-Family-${_month.value}.pdf"
+
+    private suspend fun familyReportNow(): com.myfinance.core.FamilyReport = withContext(Dispatchers.Default) {
+        com.myfinance.core.FamilyReport.build(allLite.value, _month.value, ownerName.value, monthCycle.value, ZoneId.systemDefault(), repo.personLimits.value)
+    }
+
+    fun saveFamilyPdf(uri: Uri) = runSync {
+        val app = getApplication<Application>()
+        val report = familyReportNow()
+        withContext(Dispatchers.IO) {
+            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.writeFamily(it, report, ownerName.value, categoryColors()) }
+                ?: error("Could not open file for writing")
+        }
+        "Saved the family report for ${monthName(report.period)}."
+    }
+
+    fun shareFamilyPdf(onReady: (Uri) -> Unit) = runSync {
+        val app = getApplication<Application>()
+        val report = familyReportNow()
+        val uri = withContext(Dispatchers.IO) {
+            val file = sharedPdfFile(familyPdfFileName())
+            file.outputStream().use { PdfStatement.writeFamily(it, report, ownerName.value, categoryColors()) }
+            androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", file)
+        }
+        onReady(uri)
+        "Made the family report for ${monthName(report.period)}."
+    }
+
+    /** Settings > Import health check: months with no statement, and bank months whose balances don't add up. */
+    val importHealth: StateFlow<List<com.myfinance.core.AccountHealth>?> =
+        combine(allTransactions, ownerName, mergedModes, myAccounts) { all, me, modes, accounts ->
+            val statement = all.filter { it.source == com.myfinance.app.data.TxnSource.STATEMENT }.map { it.toLite(me, modes) }
+            com.myfinance.core.ImportHealth.build(
+                statementRows = statement,
+                bankRows = all.map { it.toLite(me, modes) },
+                balanceAfter = all.mapNotNull { e -> e.balanceMinor?.let { e.id to it } }.toMap(),
+                cardTails = accounts.filter { it.isCard }.mapTo(HashSet()) { it.tail.takeLast(4) },
+                today = LocalDate.now(),
+                zone = ZoneId.systemDefault(),
+            ) as List<com.myfinance.core.AccountHealth>?
+        }
+            .catch { e -> com.myfinance.app.diag.CrashLog.recovered("import health", e); emit(emptyList()) }
+            .flowOn(Dispatchers.Default).stateIn(viewModelScope, WhileShown, null)
+
+    private val _cardAlerts = MutableStateFlow(repo.cardDueAlertsOn)
+    val cardDueAlerts: StateFlow<Boolean> = _cardAlerts.asStateFlow()
+    fun setCardDueAlerts(on: Boolean) { repo.cardDueAlertsOn = on; _cardAlerts.value = on }
 
     private fun runSync(block: suspend () -> String) {
         if (_sync.value.running) return

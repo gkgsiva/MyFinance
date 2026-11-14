@@ -135,9 +135,19 @@ fun BalancesScreen(vm: FinanceViewModel, onBack: () -> Unit, open: (String) -> U
                             color = if (v.paid || v.billedMinor == 0L) IncomeGreen else MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        Line("On the next bill so far", formatInr(v.unbilledMinor))
+                        Line("Next bill on ${v.nextBillDate.format(dayFmt)}, so far", formatInr(v.unbilledMinor))
                     }
                 }
+            }
+        }
+        if (cycles.isNotEmpty()) item {
+            val on by vm.cardDueAlerts.collectAsState()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Card due alerts", style = MaterialTheme.typography.bodyLarge)
+                    Muted("3 days before each bill date: what's on it so far. On the bill date: the amount due and pay-by date.")
+                }
+                androidx.compose.material3.Switch(checked = on, onCheckedChange = vm::setCardDueAlerts)
             }
         }
         item {

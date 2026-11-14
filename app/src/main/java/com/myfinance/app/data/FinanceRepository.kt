@@ -1202,17 +1202,41 @@ class FinanceRepository(
         runCatching { com.myfinance.app.widget.TodayWidget.refresh(context) }
     }
 
+    /** 1.16: monthly spending limit per family member, by name (on this phone only). */
+    private val _personLimits = MutableStateFlow(com.myfinance.core.PersonBudgets.decode(prefs.getString(KEY_PERSON_LIMITS, null)))
+    val personLimits: StateFlow<Map<String, Long>> = _personLimits
+
+    fun setPersonLimit(person: String, limitMinor: Long?) {
+        val m = _personLimits.value.toMutableMap()
+        if (limitMinor == null || limitMinor <= 0) m.remove(person) else m[person] = limitMinor
+        prefs.edit().putString(KEY_PERSON_LIMITS, com.myfinance.core.PersonBudgets.encode(m)).apply()
+        _personLimits.value = m
+    }
+
+    /** 1.16: card alerts before the bill date and on it (on by default). */
+    var cardDueAlertsOn: Boolean
+        get() = prefs.getBoolean(KEY_CARD_DUE_ALERTS, true)
+        set(v) = prefs.edit().putBoolean(KEY_CARD_DUE_ALERTS, v).apply()
+
     /** Sends a notification the first time a category passes 80% and 100% of its budget each month. */
     suspend fun checkBudgets() {
         val month = monthCycle.value.current()
         val categoryBudgets = db.categories().allOnce().mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap()
         // Label budgets share the alerts, named "#Vegetables" so they never clash with a category.
         val labelBudgets = v14.labelBudgets().associate { "#${it.label}" to it.monthlyMinor }
-        val budgets = categoryBudgets + labelBudgets
+        // Family members' monthly limits, named "@Priya" (1.16).
+        val personBudgets = personLimits.value.mapKeys { com.myfinance.core.PersonBudgets.alertKey(it.key) }
+        val budgets = categoryBudgets + labelBudgets + personBudgets
         if (budgets.isEmpty()) return
         val rows = monthRows(month).filter { !it.excluded }
         val spent = HashMap<String, Long>()
         rows.filter { it.type == TxnType.DEBIT }.groupBy { it.category }.forEach { (k, v) -> spent[k] = v.sumOf { it.amountMinor } }
+        if (personBudgets.isNotEmpty()) {
+            val me = ownerName.value
+            // Spending only: investments, own transfers and card bill payments don't use up a limit.
+            rows.filter { it.isSpend }.groupBy { it.owner?.takeIf { o -> o.isNotBlank() } ?: me }
+                .forEach { (p, v) -> spent[com.myfinance.core.PersonBudgets.alertKey(p)] = v.sumOf { it.amountMinor } }
+        }
         if (labelBudgets.isNotEmpty()) {
             val labels = v13.allLabels().groupBy({ it.uid }, { it.label })
             for (t in rows) for (l in labels[t.uid].orEmpty().distinct()) {
@@ -1691,13 +1715,19 @@ class FinanceRepository(
 
     /** A few days before the pay-by day: the card's last bill, when no payment has reached it yet. */
     private suspend fun checkCardBills(today: LocalDate, sent: Set<String>): List<String> {
-        val cards = myAccountsNow().filter { it.isCard && it.billDay != null && it.payDay != null }
+        val cards = myAccountsNow().filter { it.isCard && it.billDay != null }
         if (cards.isEmpty()) return emptyList()
         val lines = cardLines(db.transactions().rangeOnce(System.currentTimeMillis() - 70L * 24 * 60 * 60 * 1000, Long.MAX_VALUE), cards)
         val keys = ArrayList<String>()
         for (c in cards) {
             val v = com.myfinance.core.CardCycles.view(c, lines, today) ?: continue
-            if (!com.myfinance.core.CardCycles.reminderDue(v, today)) continue
+            // 1.16: a few days before the bill date (what's on it so far) and on the bill date (the bill's amount).
+            if (cardDueAlertsOn) for (a in com.myfinance.core.CardCycles.alerts(v, today)) {
+                if (a.key in sent) continue
+                Notifier.reminder(context, a.key.hashCode(), a.title, a.text)
+                keys += a.key
+            }
+            if (c.payDay == null || !com.myfinance.core.CardCycles.reminderDue(v, today)) continue
             val key = "cardbill|${c.tail}|${v.payBy}"
             if (key in sent) continue
             Notifier.reminder(
@@ -1788,6 +1818,8 @@ class FinanceRepository(
         private const val KEY_LAST_SYNC = "last_sync"
         private const val KEY_AUTO_SYNC = "auto_sync"
         private const val KEY_BUDGET_SENT = "budget_alerts_sent"
+        private const val KEY_PERSON_LIMITS = "person_limits_1_16"
+        private const val KEY_CARD_DUE_ALERTS = "card_due_alerts_on"
         private const val KEY_REMINDERS_SENT = "reminders_sent"
         private const val KEY_BACKFILLED = "backfilled_v11"
         private const val KEY_CYCLE_START = "month_start_day"

@@ -14,8 +14,17 @@ data class BudgetAlert(
     /** One alert per category, month and level, so nobody is told twice. */
     val key: String get() = "$month|$category|$percent"
 
+    /** A family member's monthly limit (keyed "@Name"), not a category. */
+    val isPerson: Boolean get() = category.startsWith("@")
+
+    /** What to call it in a notification: "Priya's spending" for a person's limit. */
+    val title: String get() = if (isPerson) "${category.drop(1)}'s spending" else category
+
     val message: String
-        get() = if (percent >= 100) {
+        get() = if (isPerson) {
+            if (percent >= 100) "${category.drop(1)} is over the monthly limit: ${formatInr(spentMinor)} spent of ${formatInr(budgetMinor)}."
+            else "${category.drop(1)} has used ${(spentMinor * 100 / budgetMinor)}% of the monthly limit: ${formatInr(spentMinor)} of ${formatInr(budgetMinor)}."
+        } else if (percent >= 100) {
             "$category is over budget: ${formatInr(spentMinor)} spent of ${formatInr(budgetMinor)}."
         } else {
             "$category has used ${(spentMinor * 100 / budgetMinor)}% of its budget: " +

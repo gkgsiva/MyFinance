@@ -40,7 +40,8 @@ object Notifier {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     fun budget(context: Context, alert: BudgetAlert) {
-        val title = if (alert.percent >= 100) "${alert.category}: over budget" else "${alert.category}: ${alert.percent}% of budget used"
+        val what = if (alert.isPerson) "limit" else "budget"
+        val title = if (alert.percent >= 100) "${alert.title}: over $what" else "${alert.title}: ${alert.percent}% of $what used"
         post(context, CHANNEL_BUDGETS, ("budget" + alert.key).hashCode(), title, alert.message)
     }
 
