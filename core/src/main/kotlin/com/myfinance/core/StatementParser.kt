@@ -339,7 +339,7 @@ object StatementParser {
                 val plus = hdfcCredit.containsMatchIn(rawCard)
                 val cardDesc = cleanDesc(rawCard.replace(hdfcCredit, "").replace(rupeeGlyph, "").replace(convertWord, " ")).ifEmpty { desc }
                 val type = marker ?: if (plus || amt < 0) TxnType.CREDIT else guessType(cardDesc, StatementKind.CARD)
-                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw), cardTail = l.card, serial = l.serial, foreign = l.foreign)
+                StatementRow(l.date, l.time, cardDesc, abs(amt), type, null, referenceIn(l.raw) ?: l.serial, cardTail = l.card, serial = l.serial, foreign = l.foreign)
             }
         }.let { all -> withoutRepeats(all, parsed.map { it.section }, isBank) }.filter { it.amountMinor > 0 }
         if (rows.isEmpty()) return null

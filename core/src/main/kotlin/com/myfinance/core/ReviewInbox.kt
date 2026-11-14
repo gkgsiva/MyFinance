@@ -26,6 +26,17 @@ data class UnknownPayee(val name: String, val latestId: Long, val count: Int, va
 
 /** One place for new entries the app isn't sure about, so the user can confirm or fix them with a tap. */
 object ReviewInbox {
+    /** "Same transaction ID 412345678901 · 3 entries", or why the entries look alike when they have no ID. */
+    fun duplicateDetail(d: DuplicateGroup): String {
+        val n = d.rows.size
+        val count = if (n == 2) "Two entries" else "$n entries"
+        return when {
+            d.sameId -> "$count with the same transaction ID ${Duplicates.id(d.keep.reference)}"
+            d.rows.all { it.statement } -> "$count, the same statement line on the same day"
+            else -> "$count, same amount and account, close together"
+        }
+    }
+
     /** Uncategorized debits since [sinceMillis], one per payee. */
     fun unknownPayees(txns: List<TxnLite>, sinceMillis: Long): List<UnknownPayee> =
         txns.filter { it.type == TxnType.DEBIT && it.category == DefaultCategories.OTHER && it.timestamp >= sinceMillis && !it.merchant.isNullOrBlank() }
@@ -39,7 +50,7 @@ object ReviewInbox {
         unknown: List<UnknownPayee>,
         recurring: List<AutoDebitItem>,
         transfers: List<TransferMatch>,
-        duplicates: List<DuplicatePair>,
+        duplicates: List<DuplicateGroup>,
         late: List<TxnLite>,
         family: List<FamilyPersonMonth>,
         dismissed: Set<String>,
@@ -63,7 +74,7 @@ object ReviewInbox {
             out += ReviewItem(t.key, ReviewKind.TRANSFER, t.kind.label, accts.ifEmpty { t.out?.merchant ?: t.into?.merchant ?: "" }, t.amountMinor, t.timestamp, t.out?.id ?: t.into?.id, t)
         }
         duplicates.forEach { d ->
-            out += ReviewItem(d.key, ReviewKind.DUPLICATE, d.b.merchant ?: d.a.merchant ?: "Same amount twice", "Two entries, same amount and account, close together", d.b.amountMinor, d.b.timestamp, d.b.id, d)
+            out += ReviewItem(d.key, ReviewKind.DUPLICATE, d.title, duplicateDetail(d), d.amountMinor, d.timestamp, d.keep.id, d)
         }
         late.forEach { t ->
             out += ReviewItem("late:${t.id}", ReviewKind.LATE, t.merchant ?: t.category, "Added after you closed the month", t.amountMinor, t.timestamp, t.id)

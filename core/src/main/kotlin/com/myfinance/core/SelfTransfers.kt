@@ -18,6 +18,8 @@ data class CheckRow(
     val manual: Boolean = false,
     val statement: Boolean = false,
     val reference: String? = null,
+    /** The user changed this entry (category, name, note ...). */
+    val edited: Boolean = false,
 )
 
 enum class TransferKind(val label: String) {

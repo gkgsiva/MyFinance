@@ -223,6 +223,7 @@ class FinanceRepository(
         runCatching { nameCodePayeesOnce() }
         runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
+        runCatching { removeSameIdDuplicates() }
         if (db.categories().count() > 0) return
         db.categories().insertAll(
             DefaultCategories.all.mapIndexed { i, name ->
@@ -444,8 +445,81 @@ class FinanceRepository(
 
     private fun TransactionEntity.checkRow() = com.myfinance.core.CheckRow(
         id, uid, type, amountMinor, accountTail, timestamp, merchant, rawSms, category, owner.orEmpty(),
-        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference,
+        manual = source == TxnSource.MANUAL, statement = source == TxnSource.STATEMENT, reference = reference, edited = userEdited,
     )
+
+    // ---- 1.15: duplicates by transaction ID ----
+
+    /** How many entries with the same transaction ID as another were removed automatically, in all. */
+    val sameIdRemoved: Int get() = prefs.getInt(KEY_SAME_ID_REMOVED, 0)
+
+    /**
+     * Entries that carry the same transaction ID (UPI reference, RRN, card statement reference number) as another
+     * entry of the same amount and direction within 3 days are one payment stored twice: the extra copies go to
+     * Recently deleted. Runs at start and after an import. Returns how many were removed.
+     */
+    suspend fun removeSameIdDuplicates(): Int = withContext(Dispatchers.IO) {
+        val rows = db.transactions().allOnce().filter { !it.excluded }
+        val dismissed = v16.answersOnce().filter { it.key.startsWith("dup:") && it.answer == "no" }.mapTo(HashSet()) { it.key }
+        val groups = com.myfinance.core.Duplicates.find(rows.map { it.checkRow() }, dismissed).filter { it.sameId }
+        if (groups.isEmpty()) return@withContext 0
+        val n = removeDuplicateGroups(groups, rows)
+        prefs.edit().putInt(KEY_SAME_ID_REMOVED, sameIdRemoved + n).apply()
+        n
+    }
+
+    /**
+     * Keeps one entry of each group and moves the others to Recently deleted, all in one go (one database
+     * transaction, so a big clean-up can't stop half way). The kept entry takes what the user changed on a removed
+     * one (category, note, labels, nickname) when it was not edited itself, and its transaction ID when it had
+     * none. Removed entries are remembered, so a rescan or import won't add them back. Returns how many were removed.
+     */
+    suspend fun removeDuplicateGroups(
+        groups: List<com.myfinance.core.DuplicateGroup>,
+        loaded: List<TransactionEntity>? = null,
+    ): Int = withContext(Dispatchers.IO) {
+        val byId = (loaded ?: db.transactions().allOnce()).associateBy { it.id }
+        val labelsByUid = runCatching { v13.allLabels() }.getOrDefault(emptyList()).groupBy({ it.uid }, { it.label })
+        val newLabels = ArrayList<TxnLabelEntity>()
+        val nicks = ArrayList<NicknameEntity>()
+        val updated = ArrayList<TransactionEntity>()
+        val gone = ArrayList<TransactionEntity>()
+        for (g in groups) {
+            var keep = byId[g.keep.id] ?: continue
+            val drop = g.extras.mapNotNull { byId[it.id] }
+            if (drop.isEmpty()) continue
+            val before = keep
+            drop.firstOrNull { it.userEdited }?.takeIf { !keep.userEdited }?.let { e ->
+                keep = keep.copy(category = e.category, note = keep.note ?: e.note, userEdited = true)
+            }
+            if (keep.reference == null) drop.firstNotNullOfOrNull { it.reference }?.let { keep = keep.copy(reference = it) }
+            if (keep.note == null) drop.firstNotNullOfOrNull { it.note }?.let { keep = keep.copy(note = it) }
+            if (keep != before) updated += keep
+            val have = labelsByUid[keep.uid].orEmpty().toMutableSet()
+            for (d in drop) {
+                labelsByUid[d.uid].orEmpty().filter { have.add(it) }.forEach { newLabels += TxnLabelEntity(keep.uid, it) }
+                runCatching { v17.nicknameOf(d.uid)?.let { nk -> if (nicks.none { it.txnUid == keep.uid } && v17.nicknameOf(keep.uid) == null) nicks += NicknameEntity(keep.uid, nk) } }
+            }
+            gone += drop
+        }
+        if (gone.isEmpty()) return@withContext 0
+        val now = System.currentTimeMillis()
+        // Remembered first (in one go), so a removed entry is never added again; then all changes in one transaction.
+        v13Db.withTransaction {
+            for (t in gone) {
+                v13.putTrash(DeletedTxnEntity.from(t, now))
+                v13.putKey(DeletedKeyEntity(t.uid, t.smsKey, now))
+            }
+        }
+        db.withTransaction {
+            if (updated.isNotEmpty()) db.transactions().updateAll(updated)
+            gone.map { it.uid }.chunked(500).forEach { db.transactions().deleteByUids(it) }
+        }
+        if (newLabels.isNotEmpty()) runCatching { v13.addLabels(newLabels) }
+        if (nicks.isNotEmpty()) runCatching { v17.putNicknames(nicks) }
+        onDataChanged()
+        gone.size
+    }
 
     /**
      * A payment and the money that came back for it (failed and reversed, refunded, an autopay hold released):
@@ -1454,6 +1528,11 @@ class FinanceRepository(
                         updated++
                         continue
                     }
+                    if (c.duplicateOf == com.myfinance.core.DuplicateReason.SAME_STATEMENT && r.reference != null) {
+                        // Imported before without its transaction ID (card statement reference number): add it now,
+                        // so copies of one line can be told from two real payments.
+                        db.transactions().bySmsKey(c.key)?.takeIf { it.reference == null }?.let { db.transactions().update(it.copy(reference = r.reference)) }
+                    }
                     if (c.duplicateOf != null || c.uid in deletedUids) continue
                     val rule = v12.ruleFor(null, r.description, c.merchant, r.type, r.amountMinor)
                     if (rule?.ignore == true) continue
@@ -1493,6 +1572,7 @@ class FinanceRepository(
         runCatching { leaveOutCardPaymentPairs() }
         runCatching { leaveOutReversals() }
         runCatching { fillEmiEndDates() }
+        runCatching { removeSameIdDuplicates() }
         onDataChanged()
         ImportResult(added, updated, skippedClosed, addedUids)
     }
@@ -1721,6 +1801,7 @@ class FinanceRepository(
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"
         private const val KEY_CODE_PAYEES = "code_payees_1_14"
         private const val KEY_RECEIPTS_REMOVED = "biller_receipts_1_14"
+        private const val KEY_SAME_ID_REMOVED = "same_id_removed_1_15"
         const val REV_PAIR = "reversal"
         const val REV_NOT = "not_reversal"
         private const val IMPORT_CHUNK = 200
