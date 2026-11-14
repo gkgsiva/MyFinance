@@ -387,6 +387,7 @@ fun HomeScreen(
                     AssistChip(onClick = { open("balances") }, label = { Text("Balances") })
                     AssistChip(onClick = { open("import-statement") }, label = { Text("Import statement") })
                     AssistChip(onClick = { open("reports") }, label = { Text("Reports") })
+                    AssistChip(onClick = { vm.showMonth(vm.currentMonth.value); open("month-pdf") }, label = { Text("PDF report") })
                 }
             }
 

@@ -370,6 +370,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         repo.balances.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun previousMonth() { _month.value = _month.value.minusMonths(1) }
+    fun showMonth(m: YearMonth) { _month.value = minOf(m, currentMonth.value) }
     fun nextMonth() { if (_month.value < currentMonth.value) _month.value = _month.value.plusMonths(1) }
 
     /** Saves the month setting and jumps to the budget month today is in, so the screens line up. */
@@ -449,18 +450,60 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         "Saved $n transactions to ${if (excel) "Excel" else "CSV"}."
     }
 
-    /** Saves the selected month as a PDF statement for the whole family. */
+    /** The printable report of [month]: every entry, splits, charts and insights. */
+    private suspend fun monthReport(month: YearMonth): com.myfinance.core.MonthReport = withContext(Dispatchers.Default) {
+        val all = allTransactions.value
+        val me = ownerName.value
+        val modes = mergedModes.value
+        val meta = txnMeta.value
+        com.myfinance.core.MonthReport.build(
+            txns = allLite.value,
+            period = month,
+            cycle = monthCycle.value,
+            zone = ZoneId.systemDefault(),
+            notCounted = all.filter { it.excluded }.map { it.toLite(me, modes) },
+            labelsById = meta.labelsById,
+            hiddenIds = meta.hiddenIds,
+            notesById = all.mapNotNull { e -> e.note?.takeIf { it.isNotBlank() }?.let { e.id to it } }.toMap(),
+            cardTails = myAccounts.value.filter { it.isCard }.mapTo(HashSet()) { it.tail.takeLast(4) },
+            budgets = categories.value.mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap(),
+            recurring = recurring.value,
+            balanceAfter = all.mapNotNull { e -> e.balanceMinor?.let { e.id to it } }.toMap(),
+        )
+    }
+
+    private fun monthName(month: YearMonth) = month.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy"))
+
+    /** File name for the month's report, e.g. "MyFinance-2026-11-Siva.pdf". */
+    fun pdfFileName(month: YearMonth = _month.value): String =
+        "MyFinance-$month-${ownerName.value.replace(Regex("[^A-Za-z0-9]+"), "")}.pdf".replace("-.pdf", ".pdf")
+
+    /** Saves the selected month as a printable PDF report. */
     fun exportPdf(uri: Uri) = runSync {
         val app = getApplication<Application>()
         val month = _month.value
-        val me = ownerName.value
-        val modes = mergedModes.value
-        val txns = monthTransactions.value.filterNot { it.excluded }.map { it.toLite(me, modes) }
+        val report = monthReport(month)
         withContext(Dispatchers.IO) {
-            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, month, txns, me) }
+            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, report, ownerName.value) }
                 ?: error("Could not open file for writing")
         }
-        "Saved the ${month.month.name.lowercase().replaceFirstChar { it.uppercase() }} statement as PDF."
+        "Saved the ${monthName(month)} report as PDF."
+    }
+
+    /** Makes the selected month's PDF report and hands it to [onReady] to share (WhatsApp, Drive, print …). */
+    fun sharePdf(onReady: (Uri) -> Unit) = runSync {
+        val app = getApplication<Application>()
+        val month = _month.value
+        val report = monthReport(month)
+        val uri = withContext(Dispatchers.IO) {
+            val dir = java.io.File(app.cacheDir, "share").apply { mkdirs() }
+            dir.listFiles { f -> f.name.endsWith(".pdf") }?.forEach { it.delete() }
+            val file = java.io.File(dir, pdfFileName(month))
+            file.outputStream().use { PdfStatement.write(it, report, ownerName.value) }
+            androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", file)
+        }
+        onReady(uri)
+        "Made the ${monthName(month)} report."
     }
 
     private fun runSync(block: suspend () -> String) {
