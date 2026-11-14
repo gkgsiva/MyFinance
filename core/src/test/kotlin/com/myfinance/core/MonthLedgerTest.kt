@@ -50,4 +50,49 @@ class MonthLedgerTest {
         assertEquals(79_300_00, l.days.first().rows.single().balanceMinor)
         assertEquals(null, l.days.firstOrNull { it.date == LocalDate.of(2026, 11, 5) }) // only a hidden row that day
     }
+
+    private fun on(id: Long, ts: Long, rupees: Long, type: TxnType, account: String, cat: String = "Food") =
+        TxnLite(rupees * 100, type, cat, "M$id", account, ts, id = id)
+
+    @Test
+    fun cardSpendsCountAsSpendingButLeaveTheBankBalanceUntilTheBillIsPaid() {
+        val cards = setOf("5010", "7002")
+        val txns = listOf(
+            on(1, at(2026, 11, 1), 90_000, TxnType.CREDIT, "ICICI ••144", "Income"),
+            on(2, at(2026, 11, 2), 2_000, TxnType.DEBIT, "ICICI ••5010"),      // on the card
+            on(3, at(2026, 11, 3), 500, TxnType.DEBIT, "ICICI ••144"),         // from the bank
+            on(4, at(2026, 11, 4), 300, TxnType.DEBIT, "••7002"),              // RuPay card via UPI
+            on(5, at(2026, 11, 5), 200, TxnType.CREDIT, "ICICI ••5010"),       // refund on the card
+        )
+        val bill = on(6, at(2026, 11, 6), 40_000, TxnType.DEBIT, "ICICI ••144", "Card payment")
+        val cardSide = on(7, at(2026, 11, 6, 11), 40_000, TxnType.CREDIT, "ICICI ••5010", "Card payment")
+        val l = MonthLedger.build(txns, YearMonth.of(2026, 11), MonthCycle.CALENDAR, zone, cardTails = cards, cardBillPayments = listOf(bill, cardSide))
+        assertEquals(2_800_00, l.outMinor) // all spending, cards included
+        assertEquals(2_300_00, l.cardSpentMinor)
+        assertEquals(2_100_00, l.cardDueMinor)
+        assertEquals(40_000_00, l.cardBillPaidMinor)
+        // Bank: 90,000 in, 500 spent, 40,000 card bill paid. Card spends and the card's refund don't move it.
+        assertEquals(49_500_00, l.netMinor)
+        assertEquals(90_200_00 - 2_800_00, l.leftMinor)
+        val byId = l.days.flatMap { it.rows }.associateBy { it.txn.id }
+        assertEquals(89_500_00, byId[4]!!.balanceMinor)
+        assertEquals(MonthLedger.Kind.CARD, byId[2]!!.kind)
+        assertEquals(MonthLedger.Kind.CARD_BILL, byId[6]!!.kind)
+        assertEquals(null, byId[7]) // the card's side of the payment is not listed
+        val day2 = l.days.single { it.date == LocalDate.of(2026, 11, 2) }
+        assertEquals(2_000_00, day2.cardOutMinor)
+        assertEquals(90_000_00, day2.closingMinor)
+        assertEquals(40_000_00, l.days.single { it.date == LocalDate.of(2026, 11, 6) }.cardBillMinor)
+    }
+
+    @Test
+    fun withoutKnownCardsEverythingMovesTheBalanceAsBefore() {
+        val txns = listOf(
+            on(1, at(2026, 11, 1), 1_000, TxnType.CREDIT, "ICICI ••144", "Income"),
+            on(2, at(2026, 11, 2), 300, TxnType.DEBIT, "ICICI ••5010"),
+        )
+        val l = MonthLedger.build(txns, YearMonth.of(2026, 11), MonthCycle.CALENDAR, zone)
+        assertEquals(700_00, l.netMinor)
+        assertEquals(0, l.cardDueMinor)
+    }
 }

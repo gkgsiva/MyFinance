@@ -72,6 +72,26 @@ data class CardPaymentsView(
 data class LoanRow(val item: AutoDebitItem, val ratePct: Double?)
 
 /**
+ * Last 4 digits of the family's credit cards: the cards registered in My cards & accounts, cards with a bill, and
+ * the numbers credit card SMS name (payments received, purchases on the card). Registered bank accounts are never cards.
+ */
+internal fun knownCardTails(
+    all: List<TransactionEntity>,
+    bills: List<com.myfinance.app.data.BillEntity>,
+    mine: List<com.myfinance.core.MyAccount>,
+): Set<String> {
+    val cardWords = Regex("""credit\s*card""", RegexOption.IGNORE_CASE)
+    fun tail4(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.takeIf { it.isNotEmpty() }
+    val cards = mine.filter { it.isCard }.mapTo(HashSet()) { it.tail }
+    bills.map { it.toBill() }.filter { it.kind == com.myfinance.core.BillKind.CREDIT_CARD }.mapNotNullTo(cards) { tail4(it.accountTail) }
+    all.filter { it.type == TxnType.CREDIT && it.rawSms?.let(cardWords::containsMatchIn) == true }.mapNotNullTo(cards) { tail4(it.accountTail) }
+    all.filter { it.type == TxnType.DEBIT && it.source == com.myfinance.app.data.TxnSource.SMS && com.myfinance.core.SelfTransfers.readsLikeCardSpend(it.rawSms) }
+        .mapNotNullTo(cards) { tail4(it.accountTail) }
+    mine.filter { !it.isCard }.forEach { cards -= it.tail }
+    return cards
+}
+
+/**
  * The v1.4 features: auto-label suggestions, label budgets, card bill check, EMI end dates and loan payoff,
  * salary breakdown, refund tracker, year in review, statement reminders, family label view and pinned reports.
  * Built from the flows [FinanceViewModel] already has, so nothing is loaded twice.
@@ -160,12 +180,7 @@ class V14State(
      */
     val cardPayments: StateFlow<CardPaymentsView> =
         combine(allTransactions, repo.bills, repo.myAccounts) { all, bills, mine ->
-            val cardWords = Regex("""credit\s*card""", RegexOption.IGNORE_CASE)
-            fun tail4(s: String?) = s?.filter(Char::isDigit)?.takeLast(4)?.takeIf { it.isNotEmpty() }
-            val cards = mine.filter { it.isCard }.mapTo(HashSet()) { it.tail }
-            bills.map { it.toBill() }.filter { it.kind == com.myfinance.core.BillKind.CREDIT_CARD }.mapNotNullTo(cards) { tail4(it.accountTail) }
-            all.filter { it.type == TxnType.CREDIT && it.rawSms?.let(cardWords::containsMatchIn) == true }.mapNotNullTo(cards) { tail4(it.accountTail) }
-            mine.filter { !it.isCard }.forEach { cards -= it.tail }
+            val cards = knownCardTails(all, bills, mine)
             val lines = all.filter { it.source != com.myfinance.app.data.TxnSource.MANUAL || it.accountTail != null }
                 .map { com.myfinance.core.PayLine(it.id, it.type, it.amountMinor, it.timestamp, it.accountTail, it.merchant, it.rawSms, it.bank, it.balanceMinor) }
             val cardBills = bills.map { it.toBill() }
