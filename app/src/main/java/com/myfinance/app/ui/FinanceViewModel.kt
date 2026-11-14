@@ -485,12 +485,16 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             labelsById = meta.labelsById,
             hiddenIds = meta.hiddenIds,
             notesById = all.mapNotNull { e -> e.note?.takeIf { it.isNotBlank() }?.let { e.id to it } }.toMap(),
+            nicknamesById = nicknames.value.let { names -> all.mapNotNull { e -> names[e.uid.substringBefore('#')]?.let { e.id to it } }.toMap() },
             cardTails = myAccounts.value.filter { it.isCard }.mapTo(HashSet()) { it.tail.takeLast(4) },
             budgets = categories.value.mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap(),
             recurring = recurring.value,
             balanceAfter = all.mapNotNull { e -> e.balanceMinor?.let { e.id to it } }.toMap(),
         )
     }
+
+    /** Each category's colour, for the PDF report's bars and dots. */
+    private fun categoryColors(): Map<String, Int> = categories.value.associate { it.name to it.color.toInt() }
 
     private fun monthName(month: YearMonth) = month.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy"))
 
@@ -504,7 +508,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         val month = _month.value
         val report = monthReport(month)
         withContext(Dispatchers.IO) {
-            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, report, ownerName.value) }
+            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, report, ownerName.value, categoryColors()) }
                 ?: error("Could not open file for writing")
         }
         "Saved the ${monthName(month)} report as PDF."
@@ -519,7 +523,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             val dir = java.io.File(app.cacheDir, "share").apply { mkdirs() }
             dir.listFiles { f -> f.name.endsWith(".pdf") }?.forEach { it.delete() }
             val file = java.io.File(dir, pdfFileName(month))
-            file.outputStream().use { PdfStatement.write(it, report, ownerName.value) }
+            file.outputStream().use { PdfStatement.write(it, report, ownerName.value, categoryColors()) }
             androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", file)
         }
         onReady(uri)

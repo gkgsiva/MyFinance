@@ -131,12 +131,10 @@ fun MonthPdfScreen(vm: FinanceViewModel, onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     listOf(
-                        "Summary: received, spent, invested, left over, savings, card spends, bank balances",
-                        "What stands out: against last month, biggest category, fixed costs, busiest day, budgets",
-                        "Charts: categories, card vs bank vs cash, day by day, last six months, budgets",
-                        "By person, label, account and card; top payees; repeating payments and EMIs; money received; investments; biggest spends",
-                        "Every entry with date, payee, note, category, labels, account and running balance",
-                        "Own transfers and card bill payments listed separately (not counted), and a line to sign",
+                        "Summary: received, spent, invested, left over, savings, card spends",
+                        "Every entry, numbered, with date, payee, your notes, category, labels, account and running balance; own transfers and card bill payments listed separately",
+                        "Household accounts: income and expenditure, each bank account and card, bank reconciliation, family members, loans and EMIs, and lines to sign",
+                        "Insights and charts: what stands out, categories, card vs bank vs cash, day by day, last six months, budgets, top payees, repeating payments",
                     ).forEach { Text("•  $it", style = MaterialTheme.typography.bodySmall) }
                 }
             }
