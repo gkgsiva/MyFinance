@@ -181,6 +181,20 @@ class SalaryDetectTest {
         assertEquals(2, g.months)
     }
 
+    @Test fun renaultPrintedThreeWaysIsOnePayer() {
+        assertEquals("renault", SalaryDetect.payer("RNTBCI"))
+        assertEquals("renault", SalaryDetect.payer("Renault Nissan Technology"))
+        assertEquals("renault", SalaryDetect.payer("NEFT RENAULT NISSAN TECH AND BUS"))
+        assertEquals(null, SalaryDetect.payer("NEFT Salary"))
+        val t = listOf(
+            credit("2026-08-26", 2_00_000_00, "Salary", "RNTBCI", 1), credit("2026-09-25", 2_00_000_00, "Salary", "Renault", 2),
+            // A bonus from Renault Nissan, far from pay day and well above the salary: still salary.
+            credit("2026-10-10", 4_50_000_00, "Transfers", "Renault Nissan Technology", 3),
+        )
+        val g = SalaryDetect.guess(t, java.time.LocalDate.parse("2026-11-10"), zone)!!
+        assertEquals(listOf(3L), g.toCategorise)
+    }
+
     @Test fun aMonthWithItsSalaryGetsNoSecond() {
         val t = listOf(
             credit("2026-08-26", 2_00_000_00, "Salary", "RNTBCI", 1), credit("2026-09-25", 2_00_000_00, "Salary", "RNTBCI", 2),

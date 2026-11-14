@@ -35,7 +35,7 @@ object SalaryDetect {
         val credits = allCredits.filter { Dates.localDate(it.timestamp, zone).isAfter(since) }
         fun ym(t: TxnLite) = YearMonth.from(Dates.localDate(t.timestamp, zone))
         fun months(l: List<TxnLite>) = l.mapTo(HashSet()) { ym(it) }.size
-        fun key(t: TxnLite) = t.merchant?.let { Categorizer.merchantKey(it) }?.ifBlank { null }
+        fun key(t: TxnLite) = payer(t.merchant)
 
         val salary = credits.filter(::isSalary)
         val rows: List<TxnLite>
@@ -69,6 +69,22 @@ object SalaryDetect {
         )
     }
 
+    /** Words that start a narration but say nothing about who paid. */
+    private val genericWords = setOf("neft", "imps", "rtgs", "upi", "salary", "sal", "transfer", "payment", "credit", "by", "from", "the", "mr", "ms")
+
+    /** Short names a payer is printed by, and the name they stand for. */
+    private val aliases = mapOf("rntbci" to "renault", "rnaipl" to "renault", "rntbc" to "renault")
+
+    /**
+     * Who paid, as one word, so the same employer printed differently matches: "Renault", "RENAULT NISSAN TECH"
+     * and "RNTBCI" are all "renault". Null when the name is only generic words.
+     */
+    fun payer(merchant: String?): String? {
+        val words = merchant?.let { Categorizer.merchantKey(it) }?.split(' ')?.filter { it.isNotBlank() } ?: return null
+        val w = words.firstOrNull { it !in genericWords && it.count(Char::isLetter) >= 3 } ?: return null
+        return aliases[w] ?: aliases.entries.firstOrNull { w.startsWith(it.key) }?.value ?: w
+    }
+
     private fun isSalary(t: TxnLite) = t.category.equals(DefaultCategories.SALARY, ignoreCase = true)
 
     /** Lines that are money between the user's own accounts or a card's bill, never a salary. */
@@ -86,7 +102,7 @@ object SalaryDetect {
     fun sameSalary(credits: List<TxnLite>, zone: ZoneId = ZoneId.systemDefault()): List<TxnLite> {
         val salary = credits.filter(::isSalary)
         if (salary.size < 2) return emptyList()
-        fun key(t: TxnLite) = t.merchant?.let { Categorizer.merchantKey(it) }?.ifBlank { null }
+        fun key(t: TxnLite) = payer(t.merchant)
         fun date(t: TxnLite) = Dates.localDate(t.timestamp, zone)
         fun tail(a: String?) = a?.filter(Char::isDigit)?.takeLast(3)?.takeIf { it.length == 3 }
         val payers = salary.mapNotNullTo(HashSet()) { key(it) }
