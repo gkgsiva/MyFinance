@@ -492,6 +492,9 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Each category's colour, for the PDF report's bars and dots. */
+    private fun categoryColors(): Map<String, Int> = categories.value.associate { it.name to it.color.toInt() }
+
     private fun monthName(month: YearMonth) = month.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy"))
 
     /** File name for the month's report, e.g. "MyFinance-2026-11-Siva.pdf". */
@@ -504,7 +507,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
         val month = _month.value
         val report = monthReport(month)
         withContext(Dispatchers.IO) {
-            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, report, ownerName.value) }
+            app.contentResolver.openOutputStream(uri, "wt")?.use { PdfStatement.write(it, report, ownerName.value, categoryColors()) }
                 ?: error("Could not open file for writing")
         }
         "Saved the ${monthName(month)} report as PDF."
@@ -519,7 +522,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             val dir = java.io.File(app.cacheDir, "share").apply { mkdirs() }
             dir.listFiles { f -> f.name.endsWith(".pdf") }?.forEach { it.delete() }
             val file = java.io.File(dir, pdfFileName(month))
-            file.outputStream().use { PdfStatement.write(it, report, ownerName.value) }
+            file.outputStream().use { PdfStatement.write(it, report, ownerName.value, categoryColors()) }
             androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", file)
         }
         onReady(uri)
