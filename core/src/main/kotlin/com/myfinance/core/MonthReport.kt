@@ -44,6 +44,14 @@ data class MonthReport(
     val budgets: List<BudgetLine>,
     val repeating: List<RepeatLine>,
     val balances: List<BalanceLine>,
+    /** Money received by category (Salary, Other income ...), largest first. */
+    val incomeCategories: List<Share> = emptyList(),
+    /** Every bank account and card used this month, with what went in and out. */
+    val accountLines: List<AccountLine> = emptyList(),
+    /** What each family member received, spent and invested. */
+    val personLines: List<PersonLine> = emptyList(),
+    /** Loan EMIs paid this month, by lender. */
+    val emis: List<Share> = emptyList(),
     val biggest: List<Row>,
     val insights: List<String>,
 ) {
@@ -61,13 +69,21 @@ data class MonthReport(
         val date: LocalDate,
         val labels: List<String> = emptyList(),
         val note: String? = null,
+        /** The user's own name for this payment, if they gave one. */
+        val nickname: String? = null,
         val hidden: Boolean = false,
         val isCard: Boolean = false,
         /** Money in minus money out so far this month, up to this row. 0 for rows not counted. */
         val runningMinor: Long = 0,
     ) {
         val isCredit: Boolean get() = txn.type == TxnType.CREDIT
-        val payee: String get() = txn.merchant?.takeIf { it.isNotBlank() } ?: if (isCredit) "Money received" else "Payment"
+        private val merchantName: String get() = txn.merchant?.takeIf { it.isNotBlank() } ?: if (isCredit) "Money received" else "Payment"
+
+        /** The user's name for it first, with the payee in brackets when that differs. */
+        val payee: String
+            get() = nickname?.takeIf { it.isNotBlank() }?.let { n ->
+                if (txn.merchant.isNullOrBlank() || n.equals(txn.merchant, ignoreCase = true)) n else "$n (${txn.merchant})"
+            } ?: merchantName
     }
 
     data class Share(val key: String, val totalMinor: Long, val count: Int, val percent: Int)
@@ -80,8 +96,34 @@ data class MonthReport(
     /** A repeating payment (EMI, subscription, rent ...) paid this month, and when it is next due. */
     data class RepeatLine(val name: String, val category: String, val paidMinor: Long, val nextDate: LocalDate?, val cadence: String)
 
-    /** A bank account's balance from its messages / statement: before the month's first entry and after its last. */
-    data class BalanceLine(val account: String, val openingMinor: Long, val closingMinor: Long)
+    /**
+     * A bank account's balance from its messages / statement: before the month's first entry with a balance and
+     * after its last. [entriesNetMinor] is what the recorded entries between them add up to; when the two
+     * disagree ([differenceMinor] is not 0) an entry is missing or counted twice.
+     */
+    data class BalanceLine(
+        val account: String,
+        val openingMinor: Long,
+        val closingMinor: Long,
+        val entriesNetMinor: Long = closingMinor - openingMinor,
+    ) {
+        val differenceMinor: Long get() = closingMinor - openingMinor - entriesNetMinor
+    }
+
+    /** One account or card for the month. "Moved" is money that is not counted (own transfers, card bill payments). */
+    data class AccountLine(
+        val account: String,
+        val isCard: Boolean,
+        val inMinor: Long,
+        val outMinor: Long,
+        val movedInMinor: Long,
+        val movedOutMinor: Long,
+        val count: Int,
+    ) {
+        val netMinor: Long get() = inMinor + movedInMinor - outMinor - movedOutMinor
+    }
+
+    data class PersonLine(val person: String, val receivedMinor: Long, val spentMinor: Long, val investedMinor: Long, val count: Int)
 
     companion object {
         private val dayMonth = DateTimeFormatter.ofPattern("d MMM")
@@ -108,6 +150,7 @@ data class MonthReport(
             labelsById: Map<Long, List<String>> = emptyMap(),
             hiddenIds: Set<Long> = emptySet(),
             notesById: Map<Long, String> = emptyMap(),
+            nicknamesById: Map<Long, String> = emptyMap(),
             cardTails: Set<String> = emptySet(),
             budgets: Map<String, Long> = emptyMap(),
             recurring: List<RecurringPayment> = emptyList(),
@@ -122,6 +165,7 @@ data class MonthReport(
                 date = Dates.localDate(t.timestamp, zone),
                 labels = labelsById[t.id].orEmpty(),
                 note = notesById[t.id]?.takeIf { it.isNotBlank() },
+                nickname = nicknamesById[t.id]?.takeIf { it.isNotBlank() },
                 hidden = t.id != 0L && t.id in hiddenIds,
                 isCard = isCard(t),
                 runningMinor = running,
@@ -203,19 +247,46 @@ data class MonthReport(
                 }
                 .sortedByDescending { it.paidMinor }
 
-            // Bank balances: the balance after the month's first entry, with that entry undone, and after its last.
-            val balances = rows.filter { !it.isCard && it.txn.account != null && balanceAfter.containsKey(it.txn.id) }
-                .groupBy { it.txn.account!! }
-                .map { (acct, l) ->
-                    val first = l.first()
-                    val last = l.last()
-                    val before = balanceAfter.getValue(first.txn.id) + if (first.isCredit) -first.txn.amountMinor else first.txn.amountMinor
-                    BalanceLine(acct, before, balanceAfter.getValue(last.txn.id))
-                }
-
             val notCountedRows = notCounted.filter { cycle.periodOf(it, zone) == period }
                 .sortedWith(compareBy<TxnLite>({ it.timestamp }, { it.id }))
                 .map { row(it) }
+
+            // Bank balances, reconciled: the balance before the month's first entry that gives one, after the last,
+            // and what every entry in between (counted or not) adds up to.
+            val balances = (rows + notCountedRows)
+                .filter { !it.isCard && it.txn.account != null }
+                .groupBy { it.txn.account!! }
+                .mapNotNull { (acct, l) ->
+                    val sorted = l.sortedWith(compareBy<Row>({ it.txn.timestamp }, { it.txn.id }))
+                    val f = sorted.indexOfFirst { balanceAfter.containsKey(it.txn.id) }
+                    val e = sorted.indexOfLast { balanceAfter.containsKey(it.txn.id) }
+                    if (f < 0) return@mapNotNull null
+                    fun signed(r: Row) = if (r.isCredit) r.txn.amountMinor else -r.txn.amountMinor
+                    val opening = balanceAfter.getValue(sorted[f].txn.id) - signed(sorted[f])
+                    BalanceLine(acct, opening, balanceAfter.getValue(sorted[e].txn.id), sorted.subList(f, e + 1).sumOf { signed(it) })
+                }
+
+            val incomeCategories = shares(rows.filter { it.isCredit }) { it.txn.category }
+            val accountLines = (rows.map { it to true } + notCountedRows.map { it to false })
+                .groupBy { (r, _) -> r.txn.account ?: if (r.txn.mode == PaymentMode.CASH) "Cash" else "Not set" }
+                .map { (acct, l) ->
+                    fun sum(counted: Boolean, credit: Boolean) =
+                        l.filter { (r, c) -> c == counted && r.isCredit == credit }.sumOf { it.first.txn.amountMinor }
+                    AccountLine(acct, l.any { it.first.isCard }, sum(true, true), sum(true, false), sum(false, true), sum(false, false), l.size)
+                }
+                .sortedWith(compareBy<AccountLine>({ it.isCard }, { -(it.outMinor + it.inMinor) }))
+            val personLines = rows.groupBy { it.txn.owner?.takeIf { o -> o.isNotBlank() } ?: "Not set" }
+                .map { (p, l) ->
+                    PersonLine(
+                        p,
+                        l.filter { it.isCredit }.sumOf { it.txn.amountMinor },
+                        l.filter { it.txn.isSpend }.sumOf { it.txn.amountMinor },
+                        l.filter { it.txn.isInvestment }.sumOf { it.txn.amountMinor },
+                        l.size,
+                    )
+                }
+                .sortedByDescending { it.spentMinor + it.receivedMinor }
+            val emis = shares(spends.filter { it.txn.category == DefaultCategories.EMI }) { it.txn.merchant ?: it.txn.category }
 
             val biggest = spends.sortedByDescending { it.txn.amountMinor }.take(5)
 
@@ -251,6 +322,10 @@ data class MonthReport(
                 balances = balances,
                 biggest = biggest,
                 insights = insights,
+                incomeCategories = incomeCategories,
+                accountLines = accountLines,
+                personLines = personLines,
+                emis = emis,
             )
         }
 

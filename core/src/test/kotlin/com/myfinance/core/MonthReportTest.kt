@@ -106,7 +106,11 @@ class MonthReportTest {
         assertEquals("ICICI ••0144", bal.account)
         assertEquals(50_000_00, bal.openingMinor) // 1,50,000 after a 1,00,000 salary
         assertEquals(130_000_00, bal.closingMinor)
+        assertEquals(0, bal.differenceMinor)
         assertEquals("November rent", r.rows.single { it.txn.id == 3L }.note)
+        val named = MonthReport.build(month, nov, zone = zone, nicknamesById = mapOf(3L to "House rent", 2L to "swiggy"))
+        assertEquals("House rent (Landlord)", named.rows.single { it.txn.id == 3L }.payee)
+        assertEquals("swiggy", named.rows.single { it.txn.id == 2L }.payee)
         assertTrue(r.insights.any { it.startsWith("Over budget: ${DefaultCategories.FOOD}") })
         assertTrue(r.insights.any { "fixed costs" in it })
         assertTrue(r.insights.any { it.startsWith("Spent ₹22,500, 125% more than last month") })
@@ -119,6 +123,41 @@ class MonthReportTest {
         assertNull(r.savingsRatePercent)
         assertEquals(listOf("Nothing was recorded this month."), r.insights)
         assertEquals(30, r.daily.size)
+    }
+
+    @Test
+    fun householdAccountsPerAccountPersonIncomeAndEmis() {
+        val emi = t(30, at(2026, 11, 6), 5_000, cat = DefaultCategories.EMI, merchant = "HDFC Home Loan")
+        val cardBill = t(31, at(2026, 11, 20), 2_000, cat = DefaultCategories.TRANSFERS, merchant = "Card bill")
+        val cardCredit = t(32, at(2026, 11, 20, 12), 2_000, TxnType.CREDIT, DefaultCategories.TRANSFERS, "Payment received", "ICICI ••5010", PaymentMode.CARD)
+        val r = MonthReport.build(month + emi, nov, zone = zone, notCounted = listOf(cardBill, cardCredit), cardTails = setOf("5010"))
+        assertEquals(listOf(DefaultCategories.SALARY), r.incomeCategories.map { it.key })
+        assertEquals(listOf("HDFC Home Loan"), r.emis.map { it.key })
+        val bank = r.accountLines.single { it.account == "ICICI ••0144" }
+        assertEquals(100_000_00, bank.inMinor)
+        assertEquals(35_000_00, bank.outMinor) // rent, investment, EMI
+        assertEquals(2_000_00, bank.movedOutMinor)
+        assertEquals(false, bank.isCard)
+        val card = r.accountLines.single { it.account == "ICICI ••5010" }
+        assertTrue(card.isCard)
+        assertEquals(2_000_00, card.outMinor)
+        assertEquals(2_000_00, card.movedInMinor)
+        assertEquals(0, card.netMinor)
+        assertTrue(r.accountLines.last().isCard) // banks first, then cards
+        val siva = r.personLines.single { it.person == "Siva" }
+        assertEquals(100_000_00, siva.receivedMinor)
+        assertEquals(27_000_00, siva.spentMinor)
+        assertEquals(10_000_00, siva.investedMinor)
+        assertEquals(500_00, r.personLines.single { it.person == "Wife" }.spentMinor)
+    }
+
+    @Test
+    fun bankReconciliationFlagsAMissingEntry() {
+        // Balance 1,50,000 after salary, 1,25,000 after rent: 5,000 more went out than the entries show.
+        val r = MonthReport.build(month, nov, zone = zone, balanceAfter = mapOf(1L to 150_000_00, 3L to 125_000_00))
+        val b = r.balances.single()
+        assertEquals(80_000_00, b.entriesNetMinor)
+        assertEquals(-5_000_00, b.differenceMinor)
     }
 
     @Test

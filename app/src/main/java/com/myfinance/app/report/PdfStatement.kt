@@ -43,6 +43,8 @@ object PdfStatement {
     private val INVEST_BLUE = Color.rgb(0x15, 0x65, 0xC0)
     private val AMBER = Color.rgb(0xE0, 0x8E, 0x0B)
     private val PURPLE = Color.rgb(0x6A, 0x1B, 0x9A)
+    /** The user's own notes: dark brown, so they stand out from printed text without being lost in grey. */
+    private val NOTE = Color.rgb(0x6D, 0x4C, 0x1F)
     private val TINT_GREEN = Color.rgb(0xE8, 0xF5, 0xE9)
     private val TINT_RED = Color.rgb(0xFD, 0xEC, 0xEA)
     private val TINT_BLUE = Color.rgb(0xE3, 0xF2, 0xFD)
@@ -92,20 +94,11 @@ object PdfStatement {
         )
         w.small("Invested money (SIP, mutual funds, FD …) is not spending. Own-account transfers and card bill payments are listed after the entries and change no total.")
 
-        if (report.balances.isNotEmpty()) {
-            w.heading("Bank balances")
-            w.table(
-                listOf(Col("Account", 0.5f), Col("Start of month", 0.25f, right = true), Col("End of month", 0.25f, right = true)),
-                report.balances.map { listOf(it.account, formatInr(it.openingMinor), formatInr(it.closingMinor)) },
-            )
-            w.small("From the balance shown in bank messages and statements.")
-        }
-
         // ---- Every entry ----
         w.heading("All entries")
         if (report.rows.isEmpty()) w.small("No entries this month.")
         val cols = listOf(
-            Col("Date", 0.08f), Col("Payee / note", 0.25f), Col("Category · labels", 0.19f), Col("Account", 0.12f),
+            Col("No.", 0.05f), Col("Date", 0.075f), Col("Payee / your note", 0.235f), Col("Category · labels", 0.17f), Col("Account", 0.11f),
             Col("Out", 0.12f, right = true), Col("In", 0.12f, right = true), Col("Balance", 0.12f, right = true),
         )
         val rows = report.rows
@@ -118,7 +111,7 @@ object PdfStatement {
                 val cat = (if (r.txn.isInvestment && r.txn.category != DefaultCategories.INVESTMENTS) "Invested: " else "") + r.txn.category +
                     (if (r.labels.isNotEmpty()) " · " + r.labels.joinToString(", ") else "")
                 listOf(
-                    r.date.format(dayFmt), payee, cat, r.txn.account ?: r.txn.mode.label,
+                    "${rows.indexOf(r) + 1}", r.date.format(dayFmt), payee, cat, r.txn.account ?: r.txn.mode.label,
                     if (r.isCredit) "" else formatInr(r.txn.amountMinor, withSymbol = false),
                     if (r.isCredit) formatInr(r.txn.amountMinor, withSymbol = false) else "",
                     formatInr(r.runningMinor, withSymbol = false),
@@ -127,20 +120,25 @@ object PdfStatement {
             size = 7.5f,
             notes = rows.map { it.note },
             dots = rows.map { catColor(it.txn.category) },
+            dotColumn = 3,
+            noteColumn = 2,
             cellColor = { r, c ->
                 val row = rows[r]
                 when (c) {
-                    4 -> if (row.txn.isInvestment) INVEST_BLUE else OUT_RED
-                    5 -> IN_GREEN
-                    6 -> if (row.runningMinor < 0) OUT_RED else null
+                    0 -> SOFT
+                    5 -> if (row.txn.isInvestment) INVEST_BLUE else OUT_RED
+                    6 -> IN_GREEN
+                    7 -> if (row.runningMinor < 0) OUT_RED else null
                     else -> null
                 }
             },
         )
         if (rows.isNotEmpty()) {
-            w.totalRow(cols, listOf("", "Total", "", "", formatInr(report.spentMinor + report.investedMinor, false), formatInr(report.incomeMinor, false), formatInr(report.leftMinor, false)),
-                colors = listOf(null, null, null, null, OUT_RED, IN_GREEN, if (report.leftMinor < 0) OUT_RED else BRAND))
-            w.small("Amounts in ₹. Out is red (blue when invested), in is green. Balance is money in minus money out so far this month.")
+            w.totalRow(cols, listOf("", "", "Total", "", "", formatInr(report.spentMinor + report.investedMinor, false), formatInr(report.incomeMinor, false), formatInr(report.leftMinor, false)),
+                colors = listOf(null, null, null, null, null, OUT_RED, IN_GREEN, if (report.leftMinor < 0) OUT_RED else BRAND))
+            val noted = rows.count { it.note != null }
+            w.small("Amounts in ₹. Out is red (blue when invested), in is green. Balance is money in minus money out so far this month." +
+                (if (noted > 0) " Your notes are under the payee ($noted entries)." else ""))
         }
 
         if (report.notCounted.isNotEmpty()) {
@@ -153,8 +151,111 @@ object PdfStatement {
                         (if (r.isCredit) "+" else "−") + formatInr(r.txn.amountMinor, false))
                 },
                 size = 7.5f,
+                notes = report.notCounted.map { it.note },
             )
         }
+
+        // ---- Household accounts ----
+        w.newPage()
+        w.text("Household accounts", 18f, bold = true, color = BRAND)
+        w.text("${report.period.format(monthYear)} · ${report.rangeLabel}", 9.5f, color = SOFT)
+
+        w.heading("Income and expenditure")
+        val st = ArrayList<SLine>()
+        st += SLine("Income", null, SKind.SECTION)
+        report.incomeCategories.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, IN_GREEN) }
+        if (report.incomeCategories.isEmpty()) st += SLine("Nothing received", 0, SKind.ITEM)
+        st += SLine("Total income", report.incomeMinor, SKind.TOTAL, IN_GREEN)
+        st += SLine("Expenditure", null, SKind.SECTION)
+        report.categories.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, catColor(it.key)) }
+        if (report.categories.isEmpty()) st += SLine("Nothing spent", 0, SKind.ITEM)
+        st += SLine("Total expenditure", report.spentMinor, SKind.TOTAL, OUT_RED)
+        val surplus = report.incomeMinor - report.spentMinor
+        st += SLine(if (surplus >= 0) "Surplus before investing" else "Deficit before investing", surplus, SKind.TOTAL, if (surplus < 0) OUT_RED else BRAND)
+        if (report.investments.isNotEmpty()) {
+            st += SLine("Saved and invested", null, SKind.SECTION)
+            report.investments.forEach { st += SLine(it.key, it.totalMinor, SKind.ITEM, INVEST_BLUE) }
+            st += SLine("Total invested", report.investedMinor, SKind.TOTAL, INVEST_BLUE)
+        }
+        st += SLine(if (report.leftMinor >= 0) "Net surplus for the month" else "Net deficit for the month", report.leftMinor, SKind.GRAND,
+            if (report.leftMinor < 0) OUT_RED else BRAND)
+        w.statement(st)
+        report.savingsRatePercent?.let { w.small("Savings rate: $it% of income not spent. Own-account transfers and card bill payments are left out: they move money, they don't spend it.") }
+
+        if (report.accountLines.isNotEmpty()) {
+            w.heading("Bank accounts and cards")
+            val accCols = listOf(
+                Col("Account / card", 0.28f), Col("In", 0.13f, right = true), Col("Out", 0.13f, right = true),
+                Col("Moved in", 0.12f, right = true), Col("Moved out", 0.12f, right = true), Col("Net", 0.14f, right = true), Col("Entries", 0.08f, right = true),
+            )
+            val lines = report.accountLines
+            w.table(
+                accCols,
+                lines.map { a ->
+                    listOf(
+                        (if (a.isCard) "Card " else "") + a.account,
+                        formatInr(a.inMinor, false), formatInr(a.outMinor, false),
+                        formatInr(a.movedInMinor, false), formatInr(a.movedOutMinor, false), formatInr(a.netMinor, false), "${a.count}",
+                    )
+                },
+                dots = lines.map { if (it.isCard) PURPLE else BRAND },
+                dotColumn = 0,
+                cellColor = { r, c ->
+                    when (c) {
+                        1 -> IN_GREEN
+                        2 -> OUT_RED
+                        5 -> if (lines[r].netMinor < 0) OUT_RED else IN_GREEN
+                        else -> null
+                    }
+                },
+            )
+            val cards = lines.filter { it.isCard }
+            if (cards.isNotEmpty()) {
+                val due = cards.sumOf { it.outMinor - it.inMinor }
+                w.small("Card spends this month, less refunds: ${formatInr(due)}. That goes on the card bills. Moved in on a card is a bill payment received; moved out of a bank is the bill paid or a transfer to your own account.")
+            } else {
+                w.small("Moved in / out: transfers between your own accounts and card bill payments, which are not counted as income or spending.")
+            }
+        }
+
+        if (report.balances.isNotEmpty()) {
+            w.heading("Bank reconciliation")
+            val bl = report.balances
+            w.table(
+                listOf(
+                    Col("Account", 0.24f), Col("Opening", 0.14f, right = true), Col("Entries net", 0.14f, right = true),
+                    Col("Expected", 0.14f, right = true), Col("Bank says", 0.14f, right = true), Col("Difference", 0.2f, right = true),
+                ),
+                bl.map { b ->
+                    listOf(
+                        b.account, formatInr(b.openingMinor, false), formatInr(b.entriesNetMinor, false),
+                        formatInr(b.openingMinor + b.entriesNetMinor, false), formatInr(b.closingMinor, false),
+                        if (b.differenceMinor == 0L) "Matches" else formatInr(b.differenceMinor, false),
+                    )
+                },
+                cellColor = { r, c -> if (c == 5) (if (bl[r].differenceMinor == 0L) IN_GREEN else OUT_RED) else null },
+            )
+            w.small("Opening and closing come from the balance in bank messages and statements. A difference means an entry is missing or counted twice between those dates.")
+        }
+
+        if (report.personLines.size > 1) {
+            w.heading("Family members")
+            val pl = report.personLines
+            w.table(
+                listOf(Col("Person", 0.32f), Col("Received", 0.16f, right = true), Col("Spent", 0.16f, right = true), Col("Invested", 0.16f, right = true), Col("Entries", 0.2f, right = true)),
+                pl.map { listOf(it.person, formatInr(it.receivedMinor, false), formatInr(it.spentMinor, false), formatInr(it.investedMinor, false), "${it.count}") },
+                cellColor = { _, c -> when (c) { 1 -> IN_GREEN; 2 -> OUT_RED; 3 -> INVEST_BLUE; else -> null } },
+            )
+        }
+
+        if (report.emis.isNotEmpty()) {
+            w.heading("Loans and EMIs paid")
+            w.shares(report.emis, OUT_RED)
+            w.small("Total EMIs: ${formatInr(report.emis.sumOf { it.totalMinor })}" +
+                (if (report.incomeMinor > 0) ", ${report.emis.sumOf { it.totalMinor } * 100 / report.incomeMinor}% of income." else "."))
+        }
+
+        w.signOff()
 
         // ---- Insights and charts, after the entries ----
         w.newPage()
@@ -234,7 +335,6 @@ object PdfStatement {
             )
         }
 
-        w.signOff()
         w.finish()
         doc.writeTo(out)
         doc.close()
@@ -243,6 +343,8 @@ object PdfStatement {
     private data class Col(val title: String, val weight: Float, val right: Boolean = false)
     private data class Bar(val label: String, val amountMinor: Long, val note: String, val color: Int = BRAND)
     private data class Part(val label: String, val amountMinor: Long, val percent: Int, val color: Int)
+    private enum class SKind { SECTION, ITEM, TOTAL, GRAND }
+    private data class SLine(val label: String, val amountMinor: Long?, val kind: SKind, val color: Int? = null)
     private data class Tile(val label: String, val value: String, val background: Int, val ink: Int)
 
     private class Writer(
@@ -347,7 +449,7 @@ object PdfStatement {
         }
 
         /** [keep] is how much room what follows needs, so a heading is never left alone at the foot of a page. */
-        fun heading(s: String, keep: Float = 60f) {
+        fun heading(s: String, keep: Float = 90f) {
             repeatHeader = null
             ensure(keep)
             y += 14
@@ -534,6 +636,52 @@ object PdfStatement {
             y += 2
         }
 
+        /** An income and expenditure statement: sections, indented items, totals and a grand total. */
+        fun statement(lines: List<SLine>) {
+            val amountX = PAGE_W - M
+            lines.forEach { l ->
+                when (l.kind) {
+                    SKind.SECTION -> {
+                        ensure(40f)
+                        y += 6
+                        style(9.5f, true, BRAND)
+                        y += 9.5f
+                        canvas.drawText(l.label.uppercase(), M, y, paint)
+                        y += 5
+                    }
+                    SKind.ITEM -> {
+                        ensure(13f)
+                        y += 9f
+                        l.color?.let { fill.color = it; canvas.drawCircle(M + 12, y - 3.2f, 2.6f, fill) }
+                        style(9f, false, INK)
+                        canvas.drawText(ellipsize(l.label, CONTENT_W - 140), M + 20, y, paint)
+                        val a = formatInr(l.amountMinor ?: 0)
+                        canvas.drawText(a, amountX - 90 - paint.measureText(a), y, paint)
+                        y += 4
+                    }
+                    SKind.TOTAL, SKind.GRAND -> {
+                        val grand = l.kind == SKind.GRAND
+                        ensure(if (grand) 26f else 18f)
+                        y += 2
+                        stroke.strokeWidth = if (grand) 1.2f else 0.6f
+                        line(canvas, y, amountX - 200, amountX, if (grand) BRAND else RULE)
+                        stroke.strokeWidth = 0.6f
+                        if (grand) {
+                            fill.color = TINT_TEAL
+                            canvas.drawRect(M, y + 1, amountX, y + 18, fill)
+                        }
+                        y += if (grand) 13f else 10.5f
+                        style(if (grand) 10.5f else 9.5f, true, l.color ?: INK)
+                        canvas.drawText(l.label, M + (if (grand) 6 else 0), y, paint)
+                        val a = formatInr(l.amountMinor ?: 0)
+                        canvas.drawText(a, amountX - (if (grand) 6 else 0) - paint.measureText(a), y, paint)
+                        y += if (grand) 9f else 5f
+                    }
+                }
+            }
+            y += 4
+        }
+
         fun shares(list: List<MonthReport.Share>, amountColor: Int? = null) = table(
             listOf(Col("", 0.55f), Col("Payments", 0.12f, right = true), Col("Share", 0.11f, right = true), Col("Amount", 0.22f, right = true)),
             list.map { listOf(it.key, "${it.count}", "${it.percent}%", formatInr(it.totalMinor)) },
@@ -551,6 +699,7 @@ object PdfStatement {
             notes: List<String?> = emptyList(),
             dots: List<Int?> = emptyList(),
             dotColumn: Int = 2,
+            noteColumn: Int = 1,
             cellColor: (row: Int, col: Int) -> Int? = { _, _ -> null },
         ) {
             val total = cols.sumOf { it.weight.toDouble() }.toFloat()
@@ -570,9 +719,13 @@ object PdfStatement {
             ensure(rowH * 3)
             header()
             repeatHeader = header
+            // Notes run under the payee and the next two columns, wrapped over as many lines as they need.
+            val noteW = (noteColumn until minOf(noteColumn + 3, cols.size)).sumOf { widths[it].toDouble() }.toFloat() - 4
             rows.forEachIndexed { r, cells ->
                 val note = notes.getOrNull(r)
-                val h = rowH + (if (note != null) size + 1 else 0f)
+                style(size - 0.5f, false, INK)
+                val noteLines = note?.let { wrap("Note: $it", noteW) }.orEmpty()
+                val h = rowH + noteLines.size * (size + 1)
                 ensure(h)
                 if (r % 2 == 1) {
                     fill.color = ZEBRA
@@ -590,10 +743,10 @@ object PdfStatement {
                         cell(s, xs[i], widths[i], cols[i].right)
                     }
                 }
-                if (note != null) {
+                noteLines.forEach { l ->
                     y += size + 1
-                    style(size - 1, false, SOFT)
-                    cell("“$note”", xs[1], widths[1] + widths[2], false)
+                    style(size - 0.5f, false, NOTE)
+                    canvas.drawText(l, xs[noteColumn] + 2, y, paint)
                 }
                 y += 5
             }
@@ -625,16 +778,16 @@ object PdfStatement {
 
         /** Space to sign and date the printout. */
         fun signOff() {
-            ensure(70f)
-            y += 30
-            style(9f, true, BRAND)
-            val half = CONTENT_W / 2
-            canvas.drawText("Checked by", M, y, paint)
-            canvas.drawText("Date", M + half + 10, y, paint)
-            y += 22
-            line(canvas, y, M, M + half - 10, INK)
-            line(canvas, y, M + half + 10, PAGE_W - M, INK)
-            y += 10
+            ensure(80f)
+            y += 34
+            val third = (CONTENT_W - 20) / 3
+            listOf("Prepared by", "Checked by", "Date").forEachIndexed { i, label ->
+                val x = M + i * (third + 10)
+                style(9f, true, BRAND)
+                canvas.drawText(label, x, y, paint)
+                line(canvas, y + 24, x, x + third, INK)
+            }
+            y += 34
         }
 
         private fun ellipsize(s: String, maxWidth: Float): String {

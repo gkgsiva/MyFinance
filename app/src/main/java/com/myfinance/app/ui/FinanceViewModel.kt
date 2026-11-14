@@ -485,6 +485,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
             labelsById = meta.labelsById,
             hiddenIds = meta.hiddenIds,
             notesById = all.mapNotNull { e -> e.note?.takeIf { it.isNotBlank() }?.let { e.id to it } }.toMap(),
+            nicknamesById = nicknames.value.let { names -> all.mapNotNull { e -> names[e.uid.substringBefore('#')]?.let { e.id to it } }.toMap() },
             cardTails = myAccounts.value.filter { it.isCard }.mapTo(HashSet()) { it.tail.takeLast(4) },
             budgets = categories.value.mapNotNull { c -> c.monthlyBudgetMinor?.let { c.name to it } }.toMap(),
             recurring = recurring.value,
