@@ -29,21 +29,19 @@ object SalaryDetect {
 
     fun guess(txns: List<TxnLite>, today: LocalDate, zone: ZoneId = ZoneId.systemDefault()): SalaryGuess? {
         val since = today.minusMonths(13)
-        val credits = txns.filter { it.type == TxnType.CREDIT && Dates.localDate(it.timestamp, zone).isAfter(since) }
-        fun months(l: List<TxnLite>) = l.mapTo(HashSet()) { YearMonth.from(Dates.localDate(it.timestamp, zone)) }.size
+        val allCredits = txns.filter { it.type == TxnType.CREDIT }
+        // Finding the salary and its day looks at the last year; putting its credits in Salary looks at every
+        // year, so old statements (imported years back) count their salary in the right month too.
+        val credits = allCredits.filter { Dates.localDate(it.timestamp, zone).isAfter(since) }
+        fun ym(t: TxnLite) = YearMonth.from(Dates.localDate(t.timestamp, zone))
+        fun months(l: List<TxnLite>) = l.mapTo(HashSet()) { ym(it) }.size
         fun key(t: TxnLite) = t.merchant?.let { Categorizer.merchantKey(it) }?.ifBlank { null }
-        fun isSalary(t: TxnLite) = t.category.equals(DefaultCategories.SALARY, ignoreCase = true)
 
         val salary = credits.filter(::isSalary)
         val rows: List<TxnLite>
         val already: Boolean
         if (months(salary) >= 2) {
-            // The same payer's other credits of about the same amount are the salary too (a statement line
-            // or SMS that didn't say "salary"): they need the Salary category to count for the next month.
-            val payers = salary.mapNotNullTo(HashSet()) { key(it) }
-            val usual = salary.map { it.amountMinor }.sorted()[salary.size / 2]
-            val same = credits.filter { !isSalary(it) && key(it) in payers && it.amountMinor * 10 >= usual * 6 && it.amountMinor * 10 <= usual * 16 }
-            rows = salary + same
+            rows = salary + sameSalary(allCredits, zone)
             already = true
         } else {
             // No Salary category yet: the same payer crediting a steady, large amount in at least 3 months.
@@ -55,7 +53,8 @@ object SalaryDetect {
             already = false
         }
         // The month's main payment: the biggest credit of each month.
-        val main = rows.groupBy { YearMonth.from(Dates.localDate(it.timestamp, zone)) }.values.map { l -> l.maxBy { it.amountMinor } }
+        val main = rows.filter { Dates.localDate(it.timestamp, zone).isAfter(since) }
+            .groupBy { YearMonth.from(Dates.localDate(it.timestamp, zone)) }.values.map { l -> l.maxBy { it.amountMinor } }
         val days = main.map { Dates.localDate(it.timestamp, zone).dayOfMonth }
         val late = days.filter { it >= LATE }
         // Mostly late in the month (paid early when the month end is a holiday is fine).
@@ -64,9 +63,64 @@ object SalaryDetect {
         val fromDay = (late.min() - 3).coerceIn(18, 25)
         return SalaryGuess(
             fromDay, rows.mapNotNull { it.merchant }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key,
-            rows.map { it.id }, months(rows), already, late.sorted()[late.size / 2],
+            rows.map { it.id }, months(rows.filter { Dates.localDate(it.timestamp, zone).isAfter(since) }), already, late.sorted()[late.size / 2],
             toCategorise = rows.filterNot(::isSalary).map { it.id },
             latest = rows.maxByOrNull { it.timestamp },
         )
+    }
+
+    private fun isSalary(t: TxnLite) = t.category.equals(DefaultCategories.SALARY, ignoreCase = true)
+
+    /** Lines that are money between the user's own accounts or a card's bill, never a salary. */
+    private val notSalary = Regex("""own account|credit card|card bill|card payment|refund|reversal|cashback|interest|dividend""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Credits, in any year, that are the salary but not in the Salary category: they must be, or they stay in the
+     * month they arrived while the other months' salary moves to the next month (one month gets two, the next none).
+     *
+     * - The salary payer's other credits of about the same amount (up to three times it: a bonus or arrears month).
+     * - A month whose salary isn't in Salary at all, because the bank statement names the payer differently from
+     *   the SMS ("NEFT-CITIN…-RENAULT NISSAN TECH" against "RNTBCI", or "SAL/Salary - Oct"): its credit into the
+     *   salary account, of about the salary of the months around it, near the usual salary day.
+     */
+    fun sameSalary(credits: List<TxnLite>, zone: ZoneId = ZoneId.systemDefault()): List<TxnLite> {
+        val salary = credits.filter(::isSalary)
+        if (salary.size < 2) return emptyList()
+        fun key(t: TxnLite) = t.merchant?.let { Categorizer.merchantKey(it) }?.ifBlank { null }
+        fun date(t: TxnLite) = Dates.localDate(t.timestamp, zone)
+        fun tail(a: String?) = a?.filter(Char::isDigit)?.takeLast(3)?.takeIf { it.length == 3 }
+        val payers = salary.mapNotNullTo(HashSet()) { key(it) }
+        val accounts = salary.mapNotNullTo(HashSet()) { tail(it.account) }
+        val usual = salary.map { it.amountMinor }.sorted()[salary.size / 2]
+        val days = salary.filter { it.amountMinor * 2 >= usual }.map { date(it).dayOfMonth }.sorted()
+        val usualDay = days[days.size / 2]
+        val others = credits.filter { !isSalary(it) && it.merchant?.let { m -> notSalary.containsMatchIn(m) } != true }
+        val out = LinkedHashSet<TxnLite>()
+        others.filter { key(it) in payers && it.amountMinor * 10 >= usual * 6 && it.amountMinor <= usual * 3 }.forEach { out += it }
+
+        // The salary the month should have: the nearest salary's amount, within a quarter either way.
+        val sorted = salary.sortedBy { it.timestamp }
+        fun nearest(t: TxnLite) = sorted.minBy { kotlin.math.abs(it.timestamp - t.timestamp) }
+        // Which pay a credit is: one around the usual day; late in the month counts as the next month's pay.
+        fun payMonth(t: TxnLite): YearMonth {
+            val d = date(t)
+            return if (usualDay >= 15 && d.dayOfMonth < usualDay - 15) YearMonth.from(d).minusMonths(1) else YearMonth.from(d)
+        }
+        fun nearDay(t: TxnLite): Boolean {
+            val d = date(t)
+            val target = payMonth(t).atDay(minOf(usualDay, payMonth(t).lengthOfMonth()))
+            return kotlin.math.abs(d.toEpochDay() - target.toEpochDay()) <= 7
+        }
+        val paid = (salary + out).filter { it.amountMinor * 2 >= usual }.mapTo(HashSet()) { payMonth(it) }
+        val first = sorted.first().timestamp - 40L * 24 * 60 * 60 * 1000
+        others.asSequence()
+            .filter { it !in out && it.timestamp >= first && it.amountMinor >= MIN_AMOUNT }
+            .filter { accounts.isEmpty() || tail(it.account) == null || tail(it.account) in accounts }
+            .filter { c -> val n = nearest(c).amountMinor; c.amountMinor * 4 >= n * 3 && c.amountMinor * 3 <= n * 4 }
+            .filter(::nearDay)
+            .filter { payMonth(it) !in paid }
+            .groupBy(::payMonth)
+            .forEach { (_, l) -> val n = nearest(l.first()).amountMinor; l.minBy { kotlin.math.abs(it.amountMinor - n) }.let { out += it } }
+        return out.toList()
     }
 }
