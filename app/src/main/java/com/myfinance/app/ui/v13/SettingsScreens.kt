@@ -70,6 +70,7 @@ fun SettingsScreen(vm: FinanceViewModel, v12: V12ViewModel, onBack: () -> Unit, 
         item { SettingTile("Missing statements", "", "Months with no statement, per card and account") { open("missing-statements") } }
         item { SettingTile("Uncategorised", "", "Give payees a category in one go, old statements included") { open("uncategorised") } }
         item { SettingTile("Balances & card use", "", "Bank balances, card limits and how much is used") { open("balances") } }
+        item { SettingTile("Monthly report (PDF)", "", "A month to print and file: every entry, splits, charts and insights") { open("month-pdf") } }
         item { SettingTile("Family summary & weekly digest", "", "Share the month on WhatsApp; a Monday notification of last week") { open("family-summary") } }
         item { SettingTile("Accounts & cards", "", "Every account and card, together or one at a time") { open("accounts") } }
         item { SettingTile("Statements", "", "A card's or account's entries for a bill cycle, month or any dates") { open("statements") } }

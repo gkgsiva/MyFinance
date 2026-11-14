@@ -36,7 +36,7 @@ builds a spending profile. Everything stays on the phone: there is no server or 
 - **Home screen widget**: this month's spending, income and budget left.
 - **Reports tab**: month-by-month trend, savings rate, category trends, spending by person, top
   merchants, payment mode split (UPI / card / cash / net banking), financial-year (April-March)
-  totals, unusual spends, and a shareable monthly PDF statement.
+  totals, unusual spends, and a printable monthly PDF report (summary, charts, splits, insights and every entry; print, share or save).
 
 ### New in 1.2 (Plan tab)
 

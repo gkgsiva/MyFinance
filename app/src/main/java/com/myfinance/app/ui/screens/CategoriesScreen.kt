@@ -114,6 +114,7 @@ fun CategoriesScreen(vm: FinanceViewModel, open: (String) -> Unit = {}) {
         item { com.myfinance.app.ui.v14.LabelBudgetsCard(vm) }
         item {
             com.myfinance.app.ui.WrapRow(Modifier, 8.dp) {
+                FilledTonalButton(onClick = { open("month-pdf") }) { Text("Monthly report (PDF)") }
                 FilledTonalButton(onClick = { open("label-suggestions") }) { Text("Label suggestions") }
                 FilledTonalButton(onClick = { open("statement-reminders") }) { Text("Statement reminders") }
             }
