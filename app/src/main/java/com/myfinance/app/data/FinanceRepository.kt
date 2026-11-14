@@ -389,7 +389,7 @@ class FinanceRepository(
     }
 
     /**
-     * Once (1.11.3): statement lines get the merchant name read from their narration again, now that names are
+     * Once per parser update (last: 1.15, brands and UPI payees in all ICICI layouts): statement lines get the merchant name read from their narration again, now that names are
      * picked out of UPI, IMPS, NEFT, debit card and bill payment remarks (and never left empty). Lines the user
      * edited keep theirs; a line still in "Other" is categorised again by its new name.
      */
@@ -1795,7 +1795,7 @@ class FinanceRepository(
         private const val KEY_SMS_DOUBLE_CLEANUP = "sms_double_cleanup_1_11_3"
         private const val KEY_SMS_DOUBLE_CLEANUP_2 = "sms_double_cleanup_1_14"
         private const val KEY_SMS_DOUBLE_REMOVED = "sms_double_removed_1_11_3"
-        private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_11_3"
+        private const val KEY_MERCHANT_REFRESH = "stmt_merchant_refresh_1_15"
         private const val KEY_SALARY_RESTORE = "salary_restore_1_12_1"
         private const val KEY_INVEST_FIND = "investments_find_1_14"
         private const val KEY_EMI_END_FILLED = "emi_end_filled_1_13"

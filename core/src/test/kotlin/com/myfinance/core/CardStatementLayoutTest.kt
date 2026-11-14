@@ -70,7 +70,7 @@ class CardStatementLayoutTest {
 
     @Test
     fun merchantNamesFromCardLines() {
-        assertEquals("Online Store Mumbai", Narration.merchant("ONLINE STORE CYBS SI MUMBAI IN"))
+        assertEquals("Online Store", Narration.merchant("ONLINE STORE CYBS SI MUMBAI IN"))
         // ICICI breaks the UPI name with a space after 8 letters: "FRUIT ST ALL" is "FRUIT STALL".
         assertEquals("Fruit Stall", Narration.merchant("UPI-123456789012-FRUIT ST ALL IN"))
         assertEquals("Card payment received", Narration.merchant("CARD PAYMENT RECEIVED, THANK YOU"))

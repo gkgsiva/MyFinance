@@ -833,8 +833,74 @@ object Narration {
         val d = description.removePrefix("Statement: ").substringBefore("\n\nSMS: ").replace(Regex("""\s+"""), " ").trim()
         if (d.isEmpty()) return null
         // A UPI code for a payee ("yblec123879a52a") gives way to the brand the narration names.
-        return PayeeNames.better(named(d) ?: fallback(d), d)
+        val name = PayeeNames.better(named(d) ?: fallback(d), d) ?: return null
+        // One name for one business, however the bank spells it ("SWIGGY8@ybl", "Swiggy Ltd", "upiswiggy").
+        brandOf(name)?.let { return it }
+        if (weak(name)) brandOf(d.replace(codeToken, " "))?.let { return it }
+        return name
     }
+
+    /** Bank codes in a narration (transaction hashes), which can spell anything. */
+    private val codeToken = Regex("""\b[A-Za-z]{2,4}[0-9a-fA-F]{16,}\b|\b[0-9a-f]{16,}\b""")
+
+    private fun weak(name: String): Boolean = upiFiller.matches(name.uppercase()) || name.length <= 4 ||
+        name.startsWith("Upi ", ignoreCase = true) || name.startsWith("Paytm", ignoreCase = true) || name == "CMS collection"
+
+    /** Businesses by the many ways banks print them. Checked in order: the more specific first. */
+    private val brands: List<Pair<Regex, String>> = listOf(
+        """\bSWIGGY|UPISWIGGY""" to "Swiggy",
+        """\bZOMATO""" to "Zomato",
+        """\bZEPTO""" to "Zepto",
+        """\bBLINKIT|\bGROFERS""" to "Blinkit",
+        """\bBBDAIL|\bBB\s?DAILY|\bBBNOW|\bBIG\s?BASKET|SUPERMARKET\s+GROCERY\s+SUPP""" to "BigBasket",
+        """AMAZONCHANNELS|PRIME\s?VIDEO""" to "Amazon Prime Video",
+        """\bAMAZON""" to "Amazon",
+        """\bFLIPKART""" to "Flipkart",
+        """\bMYNTRA""" to "Myntra",
+        """\bIRCTC""" to "IRCTC",
+        """\bHUNGER\s?BO\s?X""" to "Hungerbox",
+        """\bSMARTQ""" to "SmartQ",
+        """SHAREKHAN""" to "Sharekhan",
+        """\bLIC\s?HOUSING|LICHOUSING""" to "LIC Housing Finance",
+        """\bHDFC\s?LTD|\bHDFCLTD""" to "HDFC Ltd",
+        """\bBOB\s+LOAN""" to "Bank of Baroda loan",
+        """\bBAJAJ\s?FIN|\bBAJAJ_AUTO|\bBAJAJ\s+AUTO\s+FIN""" to "Bajaj Finance",
+        """ICICI\s+BANK\s+CREDIT\s+CA""" to "Credit card bill",
+        """\bCRED(CC|CLUB)?@|\bPAYMENT\s+ON\s+CRED\b|^CRED$""" to "CRED",
+        """\bRENTOMOJO""" to "RentoMojo",
+        """\bDUNZO""" to "Dunzo",
+        """PLAYSTORE|\bGOOGLE\s?PLAY""" to "Google Play",
+        """GOOGLECLOUD|\bGOOGLE\s?CLOUD""" to "Google Cloud",
+        """\bOPENAI|\bCHATGPT""" to "OpenAI ChatGPT",
+        """\bURBAN\s?CO(MPANY)?\b|\bURBANCOM|\bURBANCLAP""" to "Urban Company",
+        """\bBOTTLE\s?L(AB)?\b""" to "Bottle Lab",
+        """\bVENDOLIT""" to "Vendolite",
+        """\bPVR\b|PVRCINEMAS""" to "PVR",
+        """\bTENDERCUTS""" to "TenderCuts",
+        """\bLICIOUS""" to "Licious",
+        """\bTIMESPRIME|\bTIMES\s+PRIME""" to "Times Prime",
+        """\bVIACOM\s?18""" to "Viacom18",
+        """\bCROMA\b""" to "Croma",
+        """\bREL(IANCE)?\s+RETAIL""" to "Reliance Retail",
+        """\bSARAVANA\s+ST""" to "Saravana Stores",
+        """\bZUDIO""" to "Zudio",
+        """\bNANDO\s?S\b""" to "Nando's",
+        """\bUBER\b""" to "Uber",
+        """\bOLA\s?CABS|\bOLACABS""" to "Ola",
+        """\bRAPIDO""" to "Rapido",
+        """\bMAKEMYTRIP""" to "MakeMyTrip",
+        """\bDMART|AVENUE\s+SUPERMARTS""" to "DMart",
+        """\bNETFLIX""" to "Netflix",
+        """\bSPOTIFY""" to "Spotify",
+        """\bHOTSTAR""" to "Disney+ Hotstar",
+        """\bYOUTUBE""" to "YouTube",
+        """\bMAX\s+HYPERMARKET""" to "Max Hypermarket",
+        """\bLIFE\s?STYLE\s+INTERNATION""" to "Lifestyle",
+        """PHONEPEMERCHANT|\bPHONEPE\s+REVERSA""" to "PhonePe",
+    ).map { Regex(it.first, RegexOption.IGNORE_CASE) to it.second }
+
+    /** The business [text] names, when it is one of the known ones. */
+    fun brandOf(text: String): String? = brands.firstOrNull { it.first.containsMatchIn(text) }?.second
 
     /** ICICI's mode column ("NET BANKING", "DEBIT CARD") and cheque numbers printed before the narration. */
     private val modePrefix = Regex(
@@ -842,7 +908,12 @@ object Narration {
         RegexOption.IGNORE_CASE,
     )
     /** Remarks a UPI app fills in by itself, which say nothing about the payee. */
-    private val upiFiller = Regex("""^(PAYMENT\s+(FROM|TO)\b.*|PAY\s+TO\b.*|SENT\s+(FROM|USING|VIA)\b.*|UPI(\s+.*)?|NA|NO\s+REMARKS?|TEST|PAY|PAID|COLLECT.*|REQUEST.*|PHONEPE.*|GOOGLE\s*PAY.*|PAYTM.*|[A-Z]{1,2})$""")
+    private val upiFiller = Regex(
+        """^(PAYMENT(\s+(FROM|TO|FOR|ON|FO|FR|F|T)\b.*)?|PAY\s+TO\b.*|SENT\s+(FROM|USING|VIA)\b.*|UPI(\s+.*)?|NA|NO\s+REMARKS?|TEST|PAY|PAID|COLLECT.*|REQUEST.*|""" +
+            """PHONEPE.*|GOOGLE\s*PAY.*|PAYTM.*|YOU\s+ARE\s+PAYING.*|ON\s+TAPPING\s+PAY.*|PAY\s*VIA.*|MANDATE\s*EXE.*|DELE\b.*|.*\bREVERSA?L?|[A-Z]{1,2})$""",
+    )
+    /** Payment gateways: the business is the one named with them ("easebuzz.bbdaily", "adda622525.rzp"). */
+    private val gateway = Regex("""^(EASEBUZZ|RAZORPAY|RAZORPA|PAYU|CCAVENUES?|BILLDESK|CASHFREE|PAYTM|PHONEPE)$""")
     /** Card statements end the merchant with its country: "OPENAI.C US*", "PENANG MY*", "LEVALLOIS FR*". */
     private val countryEnd = Regex("""\s+[A-Z]{2}\*$|\s+(IN|IND|INDIA)$""")
 
@@ -862,10 +933,20 @@ object Narration {
     /** Formats whose fields are known: the payee sits at a fixed place. */
     private fun named(d0: String): String? {
         val d1 = d0.replace(modePrefix, "").trim()
-        // A stray word before the narration proper ("/2UL4qoA0 BIL/NEFT/…"): start at the known prefix.
-        val d = Regex("""\s(BIL|UPI|MMT|NEFT|VPS|MPS|IPS|CLG)[/-]""").find(d1)?.takeIf { !d1.substring(0, it.range.first).contains(' ') }
-            ?.let { d1.substring(it.range.first + 1) } ?: d1
+        // Words before the narration proper, often the end of the line above ("Bank Ltd/ ACH/…", "/2UL4qoA0 BIL/NEFT/…"):
+        // start at the known prefix. ICICI's mode column ("MOBILE BANKING") can land inside a field: left out.
+        val d = (Regex("""(?:^|[\s/])(BIL|UPI|MMT|NEFT|ACH|NACH|DECS|VPS|MPS|IPS|PCD|CMS|CLG|NFS)/""").find(d1)
+            ?.let { d1.substring(it.groups[1]!!.range.first) } ?: d1)
+            .replace(Regex("""\b(MOBILE|NET|INTERNET)\s+BANKING\b\s*""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^ACH/TP\s+ACH\s+""", RegexOption.IGNORE_CASE), "ACH/").trim()
         val up = d.uppercase()
+        // The savings account's sweep to and from a linked overdraft / FD, and its interest.
+        if (Regex("""REV\s+SWEEP\s+FROM|SWEEP\s+FROM""").containsMatchIn(up)) return "Sweep from linked account"
+        if (Regex("""^SWEEP\s+(?:TRF\s+)?TO""").containsMatchIn(up)) return "Sweep to linked account"
+        if (Regex("""^\d{9,}:\s*INT\.?\s*PD""").containsMatchIn(up)) return "Savings interest"
+        if (Regex("""^\d{9,}:\s*INT\.?\s*COLL""").containsMatchIn(up)) return "Overdraft interest"
+        if (Regex("""^FUEL\s+SURCHARGE""").containsMatchIn(up)) return "Fuel surcharge"
+        if (Regex("""^PERSONAL\s+LOAN\b.*\bEMI""").containsMatchIn(up)) return "Personal loan EMI"
         val parts = up.split('/').map { it.trim() }
         fun ok(s: String?) = s?.trim('.', ',', '*', '-', ' ')?.takeIf { it.count(Char::isLetter) >= 3 && it.count(Char::isDigit) <= it.count(Char::isLetter) }
         when {
@@ -888,25 +969,19 @@ object Narration {
             parts[0] == "DECS" || parts[0] == "ACH" || parts[0] == "NACH" -> ok(parts.getOrNull(1)?.replace(Regex("""\bDEBITS?\b"""), ""))?.let { return title(it.replace(Regex("""\s+"""), " ").trim()) }
             // Debit card: "VPS/S J RETAIL /20180404132111/0", "MPS/SARAVANA ST/201903291324/826075/CHENNAI".
             parts[0] in setOf("VPS", "IPS", "MPS", "PCD", "POS", "VIN") && parts.size >= 2 -> ok(parts[1])?.let { return title(it) }
-            // "UPI/908120903862/Payment from Ph/SWIGGY8@ybl/Yes B": the remark, else the UPI id; never the bank after it.
-            parts[0] == "UPI" && parts.size >= 3 && parts[1].any(Char::isDigit) -> {
+            // ICICI prints UPI lines three ways: "UPI/<ref>/<remark>/<upi id>/<bank>" (to 2024),
+            // "UPI/<upi id>/<remark>/<bank>/<ref>" (2024) and "UPI/<name>/<upi id>/<remark>/<bank>/<ref>" (2025 on).
+            // The name or the remark when it says something, else the UPI id; never the bank or a code.
+            parts[0] == "UPI" && parts.size >= 3 -> {
                 // Paytm: "UPI/904137972327/Oid7315154168@O/add-money@paytm/P aytm Payments/": an order id, then the payee.
-                if (Regex("""^OID""").containsMatchIn(parts[2]) && parts.size >= 4) {
+                if (parts[1].any(Char::isDigit) && Regex("""^OID""").containsMatchIn(parts[2]) && parts.size >= 4) {
                     val payee = parts[3]
                     known(payee)?.let { return it }
-                    ok(payee.substringBefore('@').replace(Regex("""[._\-\d]+"""), " ").trim())?.let { return title(it) }
+                    ok(payee.substringBefore('@').replace(Regex("""^PAYTM-"""), "").replace(Regex("""[._\-\d]+"""), " ").trim())?.let { return title(it) }
                     return "Paytm"
                 }
-                parts.drop(2).firstNotNullOfOrNull { known(it) }?.let { return it }
-                val vpaAt = parts.indexOfFirst { it.contains('@') }.takeIf { it >= 2 }
-                // A wrapped narration can join the remark and the UPI id in one field: "PAYMENT FROM PH SWIGGY@YBL".
-                val vpaField = vpaAt?.let { parts[it].split(' ') }
-                val vpa = vpaField?.last { it.contains('@') }
-                val remark = (parts.subList(2, vpaAt ?: minOf(parts.size, 3)) + vpaField.orEmpty().takeWhile { !it.contains('@') }).joinToString(" ").trim()
-                val vpaName = vpa?.substringBefore('@')?.replace(Regex("""^UPI(?=[A-Z])"""), "")?.replace(Regex("""[._\-\d]+"""), " ")?.trim()
-                ok(remark)?.takeIf { !upiFiller.matches(it) && !Regex("""\bBANK\b""").containsMatchIn(it) }?.let { return title(it) }
-                ok(vpaName)?.let { return title(it) }
-                vpa?.let { return "UPI ${it.lowercase()}" }
+                parts.drop(1).firstNotNullOfOrNull { known(it) }?.let { return it }
+                upiPayee(d.split('/').map { it.trim() })?.let { return it }
             }
             // "MMT/IMPS/825516410251/Muthulaxmi/SHAFEENA A/CORP00": the person paid, after the remark.
             parts[0] == "MMT" -> {
@@ -948,6 +1023,46 @@ object Narration {
         return generic(d)
     }
 
+    /** A field that is a UPI id: "swiggy8@ybl", or one cut short by the bank ("tendercuts.payu", "phonepemerchant"). */
+    private fun isVpa(f: String): Boolean = f.contains('@') || Regex("""^[a-z0-9][a-z0-9._\-]{4,}$""").matches(f) && f.any(Char::isLetter)
+
+    private fun isBankField(f: String): Boolean = Regex(
+        """\bBANK\b|\bBANK\s?L|\bLTD\b|PAYMENTS?\b|PAYME$|^NSDL|^YES\s?BANK|^STATE\s+BANK|BANK$|^[A-Z]{4}0[A-Z0-9]{6}$""",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(f)
+
+    private fun isCodeField(f: String): Boolean = codeToken.matches(f.replace(" ", "")) || PayeeNames.isCode(f.replace(" ", "")) ||
+        Regex("""^[\d\s]{6,}$""").matches(f) || Regex("""^[A-Z]{3}[0-9A-Fa-f]{10,}""").containsMatchIn(f.replace(" ", ""))
+
+    /** The person or business a UPI line paid, from its fields in any of ICICI's orders. */
+    private fun upiPayee(fields: List<String>): String? {
+        fun ok(s: String?) = s?.trim('.', ',', '*', '-', ' ')?.takeIf { it.count(Char::isLetter) >= 3 && it.count(Char::isDigit) <= it.count(Char::isLetter) }
+        val rest = fields.drop(1).filter { it.isNotBlank() }
+        val vpa = rest.firstOrNull { isVpa(it) }
+        for (f in rest) {
+            if (f == vpa || isVpa(f) || isBankField(f) || isCodeField(f)) continue
+            // "From Muthulaksh", "Swiggy Order Id", "Hungerbox Order": the name in it.
+            val cleaned = f.replace(Regex("""^(FROM|TO)\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+ORDER(\s+ID)?$""", RegexOption.IGNORE_CASE), "").trim()
+            val up = cleaned.uppercase()
+            if (upiFiller.matches(up) || f.uppercase().let { upiFiller.matches(it) && !it.startsWith("FROM ") } || gateway.matches(up)) continue
+            ok(cleaned)?.let { return title(it) }
+        }
+        val id = vpa ?: return null
+        // "easebuzz.bbdail", "adda622525.rzp", "tendercuts.payu", "paytm-irctcapp": the business, not the gateway.
+        val handle = id.substringBefore('@').lowercase()
+            .replace(Regex("""^(easebuzz|razorpay|payu|cashfree|paytm|upi)[._\-]?"""), "")
+            .replace(Regex("""[._\-](payu|rzp|razorpay|cf|easebuzz)$"""), "")
+            .replace(Regex("""[._\-\d]+"""), " ").trim()
+        ok(handle)?.let { return title(it) }
+        return "UPI ${id.lowercase()}"
+    }
+
+    private val townEnd = Regex(
+        """\s+(MUMBAI|BANGALORE|BENGALURU|CHENNAI|CHEENAI|KANCHIPURAM|GURGAON|GURUGRAM|NEW\s+DELHI|DELHI|NOIDA|HYDERABAD|PUNE|KOLKATA|""" +
+            """CHROMPET|CHROMEPET|TAMBARAM|COIMBATORE|MADURAI|TRICHY|SALEM|AHMEDABAD|JAIPUR|KOCHI|THANE|NAVI\s+MUMBAI|WWW\.\S+|HTTPS?\S*)$""",
+    )
+
     private fun generic(d: String): String? {
         val up = d.uppercase()
         if (Regex("""\b(ATW|ATM|NWD|CASH\s*WDL|CASH\s*WITHDRAWAL|ATD)\b""").containsMatchIn(up)) return "ATM withdrawal"
@@ -977,7 +1092,10 @@ object Narration {
             .replace(Regex("""\s+(IN|IND|INDIA)$"""), "")
             .replace(Regex("""\s+\d{4,5}$"""), "")
             .replace(Regex("""\s+"""), " ").trim()
-        return plain.replace(countryEnd, "").trim().takeIf { it.count(Char::isLetter) >= 3 }?.let { title(it.take(40).trim()) }
+        val noCountry = plain.replace(countryEnd, "").trim()
+        // "AMAZON INDIA MUMBAI", "GOOD TO GO FOODWORKS PR KANCHIPURAM": the town the card machine is in is not the name.
+        val noTown = noCountry.replace(townEnd, "").trim().takeIf { it.count(Char::isLetter) >= 3 } ?: noCountry
+        return noTown.takeIf { it.count(Char::isLetter) >= 3 }?.let { title(it.take(40).trim()) }
     }
 
     /** Nothing better: the narration without reference numbers, cut short. */
