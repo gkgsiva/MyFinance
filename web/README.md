@@ -22,9 +22,9 @@ iPhone the data comes from bank and card statements, and from bank messages you 
   - Family & Android: the same CSV as the Android app's Share / Export, and merge.
   - Payees: every payee in one list, to give each a proper name (for example a UPI ID as "Milk – Ravi"). The name is used on all their earlier entries and on new ones from statements, pasted SMS, cloud syncs and family files. Also from an entry: change "Paid to" and tick "Call every payment…".
   - Backup and restore, Recently deleted, import history with undo, duplicates, and reversed & refunded.
-- **Privacy:** entries are kept only in the browser's storage on the device (IndexedDB). There is no server. Only the app's code is on GitHub Pages; statements and their contents never are.
+- **Privacy:** entries are kept only in the browser's storage on the device (IndexedDB). The Heroku app only hands out the app's code; statements and their contents never go there.
 
-App address: **https://gkgsiva.github.io/myfinance/**
+App address: your Heroku app's address, for example **https://myfinance-1234.herokuapp.com/** (see "Host it on Heroku" below).
 
 ## Put it on the iPhone
 
@@ -36,11 +36,35 @@ Data added in Safari before step 2 stays in Safari, not in the Home Screen app. 
 
 Data is kept on this phone only, so use **More › Backup and restore** now and then (save to Files or iCloud Drive).
 
-## One-time GitHub setup
+## Host it on Heroku
 
-1. **Pages:** go to Settings › Pages › Build and deployment › Source and choose **GitHub Actions**.
-   - The **Web app** workflow then publishes `web/` on each push to `main`.
-   - Run it once by hand from the Actions tab after merging.
+The repository's top folder has what Heroku needs: `package.json` (builds `web/` with `npm run heroku-postbuild`), a
+`Procfile` (runs `web/server.mjs`, a small static server with no packages) and `.slugignore` (leaves the Android code
+out). The app is served at the root of the address (`/`).
+
+1. In the Heroku dashboard, choose **New › Create new app** and pick a name, for example `myfinance-siva`.
+2. **Settings › Buildpacks › Add buildpack › nodejs**. The repository also holds the Android (Gradle) project, so set
+   the buildpack rather than letting Heroku guess.
+3. **Deploy › Deployment method › GitHub**: connect `gkgsiva/MyFinance`, then **Enable Automatic Deploys** from
+   `main` and press **Deploy Branch** once.
+4. Your address is shown under **Settings › Domains** (for example `https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com`).
+   Open it on the iPhone as above.
+
+With the Heroku CLI instead:
+
+```sh
+heroku create myfinance-siva --buildpack heroku/nodejs
+git push heroku main
+```
+
+Any small dyno will do: the server only sends files. Plain `http://` is sent on to `https://`, which the app's offline
+mode needs.
+
+If you use the cloud statements below, put **this address** in the bucket's CORS rule (`AllowedOrigins` / `origin`),
+written as `https://` plus the host name, with no path and no slash at the end.
+
+To publish on GitHub Pages as well (at `https://gkgsiva.github.io/myfinance/`), set the Actions variable
+`PAGES_DEPLOY` to `true` and choose Settings › Pages › Source › **GitHub Actions**. Then add that origin to CORS too.
 
 ## Statements in the cloud (optional): AWS S3 or Google Cloud Storage
 
@@ -64,12 +88,12 @@ The repository is public, so its Actions logs are public too. The workflow print
 
 Keep the bucket private: Block Public Access stays on.
 
-Add this CORS rule (Bucket › Permissions › CORS), so the app may read it from the phone:
+Add this CORS rule (Bucket › Permissions › CORS), so the app may read it from the phone. Replace `YOUR-APP.herokuapp.com` with your app's address:
 
 ```json
 [
   {
-    "AllowedOrigins": ["https://gkgsiva.github.io"],
+    "AllowedOrigins": ["https://YOUR-APP.herokuapp.com"],
     "AllowedMethods": ["GET"],
     "AllowedHeaders": ["authorization", "x-amz-date", "x-amz-content-sha256", "x-amz-security-token"],
     "MaxAgeSeconds": 3000
@@ -146,14 +170,14 @@ You can run them in Cloud Shell.
 
 ### B1. Bucket
 
-Create the bucket with uniform access and public access prevention. Then allow this site to read it from the phone (CORS):
+Create the bucket with uniform access and public access prevention. Then allow the app's address (replace `YOUR-APP.herokuapp.com`) to read it from the phone (CORS):
 
 ```sh
 gcloud storage buckets create gs://BUCKET --project=PROJECT --location=asia-south1 \
   --uniform-bucket-level-access --public-access-prevention
 
 cat > cors.json <<'JSON'
-[{ "origin": ["https://gkgsiva.github.io"], "method": ["GET"],
+[{ "origin": ["https://YOUR-APP.herokuapp.com"], "method": ["GET"],
    "responseHeader": ["Authorization", "x-amz-date", "x-amz-content-sha256", "Content-Type"],
    "maxAgeSeconds": 3000 }]
 JSON
@@ -224,7 +248,7 @@ The app syncs when opened (at most every 6 hours), and from **Upload › Sync no
 ```sh
 cd web
 npm ci
-npm run dev        # http://localhost:5173/myfinance/
+npm run dev        # http://localhost:5173/myfinance/  (BASE=/ npm run dev for the root, as on Heroku)
 npm test           # unit tests
 npm run build      # into dist/
 ```

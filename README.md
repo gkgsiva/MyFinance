@@ -240,7 +240,7 @@ The app reads SMS, which Google Play only allows for default SMS apps, so it is 
 ## iPhone
 
 iOS doesn't let apps read SMS, so iPhones use the web app in [`web/`](web/README.md):
-- Open **https://gkgsiva.github.io/myfinance/** in Safari.
+- Open the app's Heroku address in Safari (set up in [web/README.md](web/README.md#host-it-on-heroku)).
 - Choose Share › **Add to Home Screen**.
 - Upload statements, or have GitHub Actions read them from your private bucket on AWS S3 or Google Cloud Storage.
 

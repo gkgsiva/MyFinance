@@ -1,13 +1,14 @@
 name: Web app
 
-# Builds the iPhone web app (web/) and publishes it on GitHub Pages. Only the app's code is published: statements
-# and their contents are never part of the site.
+# Tests and builds the iPhone web app (web/). The app is hosted on Heroku (see web/README.md), which builds it
+# itself. Publishing on GitHub Pages as well is optional: set the Actions variable PAGES_DEPLOY to "true".
+# Only the app's code is ever published: statements and their contents are never part of the site.
 on:
   push:
     branches: [main]
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'package.json', 'Procfile', '.github/workflows/web.yml']
   pull_request:
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'package.json', 'Procfile', '.github/workflows/web.yml']
   workflow_dispatch:
 
 permissions:
@@ -34,12 +35,12 @@ jobs:
       - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.PAGES_DEPLOY == 'true'
         with:
           path: web/dist
 
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.PAGES_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:

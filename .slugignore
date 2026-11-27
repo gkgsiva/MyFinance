@@ -1,0 +1,10 @@
+# Heroku only needs web/ (the Android app is built by GitHub Actions).
+/app
+/core
+/docs
+/gradle
+/gradlew
+/gradlew.bat
+/build.gradle.kts
+/settings.gradle.kts
+/gradle.properties
