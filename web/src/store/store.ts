@@ -4,8 +4,9 @@
 import { useEffect, useState } from 'preact/hooks';
 import { LocalDate, YearMonth } from '../core/dates';
 import { randomUuid } from '../core/hash';
-import { Cat, CheckRow, DEFAULT_CATEGORIES, Duplicates, Reversals, SelfTransfers, categorize, detectMode, merchantKey, ReversalKind } from '../core/rules';
-import { ImportCandidate, ExistingTxn, keptTail, sameLine, updatesExisting } from '../core/statementImport';
+import { Cat, CheckRow, DEFAULT_CATEGORIES, Duplicates, Reversals, SelfTransfers, categorize, detectMode, fxFind, merchantKey, ReversalKind } from '../core/rules';
+import { ImportCandidate, ExistingTxn, keptTail, lineForSms, sameAccount, sameLine, updatesExisting } from '../core/statementImport';
+import { ParsedSms, duplicateOf, fxNote, isBillerReceipt, parseSms, smsKey } from '../core/smsParser';
 import { MonthCycle } from '../core/ledger';
 import { SharedTxn, decode, encode, newOnly, owners } from '../core/familyCsv';
 import { TxnType, digitsOnly } from '../core/text';
@@ -42,6 +43,11 @@ export interface Account { tail: string; name: string; kind: 'BANK' | 'CARD'; ba
 export interface CardBillRec { tail: string; bank: string | null; due: string; arrived: string; totalMinor: number; minMinor: number | null; markedPaid: boolean }
 
 export interface ImportBatch { id: number; at: number; files: string[]; added: number; updated: number; uids: string[]; from: string | null; to: string | null }
+
+/** A pasted message and the time it is dated (pasted text carries no date of its own). */
+export interface SmsItem { body: string; timestamp: number; sender?: string | null }
+export type SmsStatus = 'NEW' | 'MATCHES_STATEMENT' | 'ALREADY_HERE' | 'REPEATS_SMS' | 'DELETED_BEFORE' | 'NOT_A_TRANSACTION';
+export interface SmsPlan { body: string; timestamp: number; key: string; status: SmsStatus; parsed: ParsedSms | null; txn: Txn | null; lineId: number | null }
 
 export interface TrashItem { txn: Txn; at: number }
 
@@ -439,6 +445,117 @@ class Store {
     return { added, updated, leftOut, removed };
   }
 
+  // ---- Pasted SMS (Android's ingestSms) ----
+
+  /**
+   * What each pasted message would do, without saving: read with the Android SMS reader, then checked against
+   * what is stored and against the messages pasted before it, as Android checks a new SMS.
+   */
+  planSms(items: SmsItem[]): SmsPlan[] {
+    const rules = this.ruleMap();
+    const DAYS3 = 3 * DAY;
+    const plans: SmsPlan[] = [];
+    const keys = new Set(this.txns.map((t) => t.smsKey).filter((k): k is string => k != null));
+    // A message the Android app read has its sender in the key ("ICICIT|<hash>"); a pasted one has none.
+    const hashes = new Set([...keys].map((k) => k.slice(k.indexOf('|') + 1)));
+    const deletedHashes = new Set([...this.deletedKeys].map((k) => k.slice(k.indexOf('|') + 1)));
+    const taken = new Set<number>();
+    const pending: Txn[] = [];
+    for (const item of items) {
+      const body = item.body.trim();
+      const sender = item.sender ?? '';
+      const key = smsKey(sender, body);
+      const hash = key.slice(key.indexOf('|') + 1);
+      const base = { body, timestamp: item.timestamp, key };
+      if (isBillerReceipt(sender, body)) { plans.push({ ...base, status: 'NOT_A_TRANSACTION', parsed: null, txn: null, lineId: null }); continue; }
+      const parsed = parseSms(sender, body, item.timestamp);
+      if (!parsed) { plans.push({ ...base, status: 'NOT_A_TRANSACTION', parsed: null, txn: null, lineId: null }); continue; }
+      if (deletedHashes.has(hash)) { plans.push({ ...base, status: 'DELETED_BEFORE', parsed, txn: null, lineId: null }); continue; }
+      if (hashes.has(hash) || pending.some((t) => t.smsKey != null && t.smsKey.endsWith('|' + hash))) { plans.push({ ...base, status: 'ALREADY_HERE', parsed, txn: null, lineId: null }); continue; }
+      const own = (parsed.counterTail != null && this.isOwnAccount(parsed.counterTail)) ||
+        SelfTransfers.isCardBillPayment(parsed.type, parsed.merchant, body);
+      const txn = this.newTxn({
+        excluded: own, amountMinor: parsed.amountMinor, type: parsed.type, merchant: parsed.merchant,
+        category: own ? Cat.TRANSFERS : categorize(parsed.merchant, parsed.type, body, rules),
+        accountTail: parsed.accountTail, bank: parsed.bank, timestamp: parsed.timestamp, source: 'SMS', smsKey: key,
+        rawText: body, reference: parsed.reference, balanceMinor: parsed.balanceMinor,
+        note: parsed.foreign && parsed.fxRate != null ? fxNote(parsed.foreign, parsed.fxRate) : null,
+        owner: this.ownerOf(parsed.accountTail, parsed.bank), mode: detectMode(body, false, null),
+      });
+      this.nextId--; // only a plan: the id is given again when it is saved
+      // Already imported from a statement: the SMS joins that line.
+      const foreign = fxFind(body) != null;
+      const lines = this.txns.filter((t) => t.source === 'STATEMENT' && !taken.has(t.id) && (t.smsKey == null || t.smsKey.startsWith('STMT|')) &&
+        (t.amountMinor === txn.amountMinor || foreign) && t.type === txn.type && Math.abs(t.timestamp - txn.timestamp) <= DAYS3);
+      const i = lines.length ? lineForSms(this.existing(txn), lines.map((l) => this.existing(l))) : null;
+      if (i != null) {
+        taken.add(lines[i].id);
+        plans.push({ ...base, status: 'MATCHES_STATEMENT', parsed, txn, lineId: lines[i].id });
+        continue;
+      }
+      // The bank's alert and the UPI / wallet app's message for one payment: one entry.
+      const near = [...this.txns, ...pending].filter((t) => t.source === 'SMS' && t.smsKey !== key && t.amountMinor === txn.amountMinor &&
+        t.type === txn.type && Math.abs(t.timestamp - txn.timestamp) <= DAYS3);
+      if (near.length && duplicateOf(txn, near) != null) { plans.push({ ...base, status: 'REPEATS_SMS', parsed, txn: null, lineId: null }); continue; }
+      pending.push(txn);
+      plans.push({ ...base, status: 'NEW', parsed, txn, lineId: null });
+    }
+    return plans;
+  }
+
+  /** Saves what [planSms] found: new entries, and SMS details on the statement lines they match. */
+  async addSms(plans: SmsPlan[]): Promise<{ added: number; linked: number; leftOut: number }> {
+    const put: Txn[] = [];
+    const addedUids: string[] = [];
+    let added = 0, linked = 0;
+    let from: LocalDate | null = null, to: LocalDate | null = null;
+    for (const p of plans) {
+      const s = p.txn;
+      if (!s) continue;
+      if (p.status === 'MATCHES_STATEMENT' && p.lineId != null) {
+        const line = this.byId.get(p.lineId);
+        if (!line) continue;
+        put.push({
+          ...line, smsKey: s.smsKey, rawText: statementText(line.rawText ?? '', s.rawText),
+          category: mergedCategory(line.category, s.category, line.userEdited),
+          reference: line.reference ?? s.reference, accountTail: keptTail(line.accountTail, s.accountTail, s.rawText), bank: line.bank ?? s.bank,
+        });
+        linked++;
+      } else if (p.status === 'NEW') {
+        const t = { ...s, id: this.nextId++ };
+        put.push(t);
+        addedUids.push(t.uid);
+        added++;
+        const d = LocalDate.fromMillis(t.timestamp);
+        if (!from || d.isBefore(from)) from = d;
+        if (!to || d.isAfter(to)) to = d;
+      }
+    }
+    if (!put.length) return { added, linked, leftOut: 0 };
+    if (added) {
+      this.batches = [{
+        id: Date.now(), at: Date.now(), files: [`Pasted SMS (${added})`], added, updated: linked, uids: addedUids,
+        from: from ? (from as LocalDate).toString() : null, to: to ? (to as LocalDate).toString() : null,
+      }, ...this.batches].slice(0, 100);
+    }
+    await this.commit(put, [], this.kvOf('batches'));
+    const leftOut = (await this.leaveOutCardPaymentPairs()) + (await this.leaveOutReversals());
+    return { added, linked, leftOut };
+  }
+
+  /** A transfer's other account is one of the family's: registered, or one an SMS has named before. */
+  private isOwnAccount(tail: string): boolean {
+    if (this.accounts.some((a) => sameAccount(a.tail, tail) && a.tail != null && tail.length >= 3)) return true;
+    return this.txns.some((t) => t.source === 'SMS' && t.accountTail != null && t.accountTail.endsWith(tail));
+  }
+
+  private existing(t: Txn): ExistingTxn {
+    return {
+      amountMinor: t.amountMinor, type: t.type, timestamp: t.timestamp, accountTail: t.accountTail, reference: t.reference,
+      key: t.smsKey, id: t.id, fromStatement: t.source === 'STATEMENT', text: t.rawText,
+    };
+  }
+
   /** Takes out every entry an import added, so the same files can be imported again cleanly. */
   async undoImport(batchId: number) {
     const b = this.batches.find((x) => x.id === batchId);
@@ -613,6 +730,16 @@ function statementTime(date: LocalDate, smsTs: number): number {
   const sms = new Date(smsTs);
   if (LocalDate.fromMillis(smsTs).equals(date)) return smsTs;
   return date.atTime(sms.getHours(), sms.getMinutes(), sms.getSeconds());
+}
+
+const GENERIC = new Set<string>([Cat.TRANSFERS, Cat.OTHER, Cat.INCOME, 'Other', 'Uncategorized', 'Uncategorised']);
+/** Port of SalaryRepair.mergedCategory: the category a statement line keeps when its SMS joins it. */
+function mergedCategory(line: string, sms: string, lineEdited: boolean): string {
+  if (lineEdited) return line;
+  if (line.toLowerCase() === Cat.SALARY.toLowerCase()) return line;
+  if (sms.toLowerCase() === Cat.SALARY.toLowerCase()) return sms;
+  if (GENERIC.has(line) && !GENERIC.has(sms)) return sms;
+  return line;
 }
 
 function statementText(narration: string, existing: string | null): string {

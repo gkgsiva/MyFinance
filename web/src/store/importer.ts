@@ -4,7 +4,10 @@
 import { ParsedStatement } from '../core/statementParser';
 import { ReadResult, readStatementFile } from '../core/readFile';
 import { ExistingTxn, ImportCandidate, candidates, markDuplicates, markOwnTransfers } from '../core/statementImport';
-import { PdfJs } from '../core/pdfText';
+import { PasswordNeeded, PdfJs, pdfText } from '../core/pdfText';
+import { SplitSms, splitSms, splitSmsTable } from '../core/smsSplit';
+import { splitRecords } from '../core/familyCsv';
+import { detect } from '../core/spreadsheet';
 import { digitsOnly } from '../core/text';
 import { CardBillRec, store } from './store';
 
@@ -122,4 +125,36 @@ export function readyFile(name: string, statement: ParsedStatement): StatementFi
     id: name, name, bytes: new Uint8Array(0), status: 'READY', wrongPassword: false, message: null, statement, bank: a.bank, accountTail: a.tail,
     pagesRead: 0, pages: 0, candidates: [], include: true,
   };
+}
+
+/** The messages in a .txt, .csv or PDF file of saved SMS. A locked PDF asks for its password. */
+export async function readSmsFile(bytes: Uint8Array, password: string | null):
+  Promise<{ ok: true; messages: SplitSms[] } | { ok: false; needsPassword: boolean; wrong: boolean; message: string | null }> {
+  try {
+    let text: string;
+    if (detect(bytes) === 'PDF') {
+      const tries = password != null ? [password] : [null, ...passwords];
+      let last: unknown = null;
+      text = '';
+      for (const p of tries) {
+        try { text = await pdfText(await loadPdfJs(), bytes, p); last = null; if (p && !passwords.includes(p)) passwords.push(p); break; } catch (e) { last = e; if (!(e instanceof PasswordNeeded)) break; }
+      }
+      if (last instanceof PasswordNeeded) return { ok: false, needsPassword: true, wrong: password != null, message: null };
+      if (last) throw last;
+    } else {
+      text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+      if (/<html|<body|<div/i.test(text.slice(0, 2000))) {
+        const doc = new DOMParser().parseFromString(text, 'text/html');
+        doc.querySelectorAll('br,p,div,tr,li').forEach((el) => el.append('\n'));
+        text = doc.body.textContent ?? '';
+      }
+    }
+    const firstLine = text.slice(0, text.indexOf('\n') + 1 || text.length);
+    const table = firstLine.includes(',') ? splitSmsTable(splitRecords(text)) : null;
+    const messages = table ?? splitSms(text);
+    if (!messages.length) return { ok: false, needsPassword: false, wrong: false, message: 'No messages found in this file.' };
+    return { ok: true, messages };
+  } catch {
+    return { ok: false, needsPassword: false, wrong: false, message: "This file couldn't be read." };
+  }
 }

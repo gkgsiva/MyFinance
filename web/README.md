@@ -1,11 +1,16 @@
 # MyFinance for iPhone (web app)
 
 The same finance profile as the Android app, as an installable web app. iOS doesn't let apps read SMS, so on
-iPhone the data comes from bank and card statements instead.
+iPhone the data comes from bank and card statements, and from bank messages you paste in.
 
 - **Statements:** PDF (including password-locked), Excel or CSV. There are two ways in:
   - Upload them in the app. They are read in the browser, on the phone.
   - Keep them in your **private bucket on AWS S3 or Google Cloud Storage** (your choice). A GitHub Actions job reads them and saves what they say as JSON in the same bucket, and the app brings that in with a read-only key.
+- **Bank messages (SMS):** Upload › Paste bank messages. Copy messages in the Messages app and paste one or many, or open a
+  text, PDF or CSV file holding many messages (for example a saved or exported conversation). They are read with the
+  Android app's SMS reader. You see each one before importing, with its date: from a date line in the file, from the
+  message itself, or today, which you can change. A message for a payment already imported from a statement joins that
+  line, and the bank's message and the UPI app's message for one payment are kept once, as on Android.
 - **The same reading as Android:** the statement reader, rules, duplicate checks and month logic are ported from the Android code (`core/`). The test below checks that real statements give the same lines and the same entry IDs as on Android, so files merge both ways without doubles.
 - **Screens:**
   - Home: this month as a ledger with a running bank balance and "card due so far".

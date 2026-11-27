@@ -89,6 +89,10 @@ export function ImportScreen() {
 
   return (
     <>
+      <button class="card" style="border:0;width:100%;text-align:left;display:block" onClick={() => go('import/sms')}>
+        <div class="row between"><b>Paste bank messages (SMS)</b><span class="muted">›</span></div>
+        <p class="small muted" style="margin:4px 0 0">Copy messages from the Messages app, or open a text or PDF file of them.</p>
+      </button>
       <CloudCard />
       <div class="drop">
         <p style="margin:0 0 6px"><b>Upload bank or card statements</b></p>

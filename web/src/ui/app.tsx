@@ -7,6 +7,7 @@ import { ImportScreen } from './importScreen';
 import { Insights } from './insights';
 import { Cards } from './cards';
 import { CloudSettings } from './cloud';
+import { SmsScreen } from './sms';
 import { Accounts, Backup, Categories, DuplicatesScreen, Family, Imports, More, Profile, Report, ReversalsScreen, Trash } from './more';
 
 const TABS = [
@@ -24,6 +25,7 @@ const SUB: Record<string, [string, () => preact.JSX.Element]> = {
   'more/categories': ['Categories', Categories],
   'more/family': ['Family & Android', Family],
   'more/cloud': ['Statements from cloud', CloudSettings],
+  'import/sms': ['Bank messages (SMS)', SmsScreen],
   'more/report': ['Monthly report', Report],
   'more/backup': ['Backup', Backup],
   'more/trash': ['Recently deleted', Trash],
@@ -36,7 +38,7 @@ export function App() {
   useStore();
   const route = useRoute();
   const sub = SUB[route];
-  const tab = sub ? (route.startsWith('more') ? 'more' : 'home') : TABS.some((t) => t.id === route) ? route : 'home';
+  const tab = sub ? (TABS.find((t) => route.startsWith(t.id + '/'))?.id ?? 'home') : TABS.some((t) => t.id === route) ? route : 'home';
   const title = sub ? sub[0] : { home: 'MyFinance', entries: 'Entries', import: 'Upload statements', insights: 'Insights', more: 'More' }[tab];
   const Screen = sub ? sub[1] : { home: Home, entries: Entries, import: ImportScreen, insights: Insights, more: More }[tab as 'home'];
   return (

@@ -315,3 +315,45 @@ export function storedRepeats(lines: StoredLine[]): number[] {
   }
   return out;
 }
+
+/**
+ * The statement line an SMS is about (port of StatementImport.lineForSms): the same reference first, then the
+ * same amount and direction on the same account (or a debit card's SMS and a card line, or the same payee code
+ * a day apart), nearest day first. A foreign spend's SMS, whose rupees are an estimate, matches a close amount.
+ */
+export function lineForSms(sms: ExistingTxn, lines: ExistingTxn[], windowDays = 2, needAccount = false): number | null {
+  const st = tail4(sms.accountTail);
+  const ref = sms.reference != null && sms.reference.length >= 6 ? sms.reference : null;
+  const same = lines.map((_, i) => i).filter((i) => lines[i].amountMinor === sms.amountMinor && lines[i].type === sms.type);
+  if (ref != null) {
+    const hit = same.find((i) => {
+      const r = lines[i].reference;
+      return r != null && (r === ref || (r.length >= 10 && ref.endsWith(r)) || (ref.length >= 10 && r.endsWith(ref)));
+    });
+    if (hit != null) return hit;
+  }
+  const day = dayOf(sms.timestamp);
+  const gap = (i: number) => Math.abs(dayOf(lines[i].timestamp) - day);
+  const accountRank = (i: number) => {
+    const lt = tail4(lines[i].accountTail);
+    return st != null && lt != null && sameAccount(lt, st) ? 0 : 1;
+  };
+  const debitCard = debitCardSms(sms.text);
+  const near = same.filter((i) => {
+    const lt = tail4(lines[i].accountTail);
+    const account = needAccount ? st != null && lt != null && sameAccount(st, lt) : sameAccount(st, lt);
+    return (account || (debitCard && debitCardLine(removePrefix(lines[i].text ?? '', 'Statement: '))) ||
+      (gap(i) <= 1 && samePayeeCode(lines[i].text, sms.text))) && gap(i) <= windowDays;
+  });
+  if (near.length) return near.reduce((a, i) => (gap(i) < gap(a) || (gap(i) === gap(a) && accountRank(i) < accountRank(a)) ? i : a));
+  if (sms.text == null || fxFind(sms.text) == null || st == null) return null;
+  const close = lines.map((_, i) => i).filter((i) => {
+    const l = lines[i];
+    const lt = tail4(l.accountTail);
+    return l.type === sms.type && lt != null && sameAccount(st, lt) && gap(i) <= windowDays &&
+      Math.abs(l.amountMinor - sms.amountMinor) * 100 <= l.amountMinor * FX_TOLERANCE_PCT;
+  });
+  if (!close.length) return null;
+  const diff = (i: number) => Math.abs(lines[i].amountMinor - sms.amountMinor);
+  return close.reduce((a, i) => (gap(i) < gap(a) || (gap(i) === gap(a) && diff(i) < diff(a)) ? i : a));
+}
