@@ -12,6 +12,7 @@
 //   APP_URL             the app's address, e.g. https://myfinance-siva.herokuapp.com (default: from the request)
 //   SESSION_DAYS        how long a sign-in lasts (default 30)
 //   OIDC_SCOPES         default "openid email profile"
+//   OIDC_PROMPT         e.g. "select_account" (Google: lets each family member pick their own account)
 //
 // What it protects: the app's files on this server. It can't reach data already stored on a phone.
 
@@ -47,6 +48,7 @@ export function authConfig(env = process.env) {
     appUrl: env.APP_URL ? env.APP_URL.trim().replace(/\/+$/, '') : null,
     sessionSeconds: Math.round(Number(env.SESSION_DAYS ?? 30) * 86400) || 30 * 86400,
     scopes: env.OIDC_SCOPES?.trim() || 'openid email profile',
+    prompt: env.OIDC_PROMPT?.trim() || null,
   };
 }
 
@@ -105,6 +107,9 @@ async function getJson(url, init) {
   return json;
 }
 
+/** Forget the provider's settings and keys (after changing provider; used by tests). */
+export function resetProviderCache() { meta = null; jwks = null; }
+
 async function discover(cfg) {
   if (meta && Date.now() - metaAt < 3600_000) return meta;
   const m = await getJson(`${cfg.issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`);
@@ -133,6 +138,12 @@ const ALGS = {
   ES256: ['sha256', { dsaEncoding: 'ieee-p1363' }], ES384: ['sha384', { dsaEncoding: 'ieee-p1363' }],
 };
 
+// Google may write its issuer without "https://" (its documentation allows both forms).
+export function issuerMatches(iss, expected) {
+  if (iss === expected) return true;
+  return expected === 'https://accounts.google.com' && iss === 'accounts.google.com';
+}
+
 export async function verifyIdToken(cfg, m, token, nonce) {
   const [h, p, s] = token.split('.');
   if (!h || !p || !s) throw new Error('ID token is malformed');
@@ -144,7 +155,7 @@ export async function verifyIdToken(cfg, m, token, nonce) {
   if (!ok) throw new Error('ID token signature is not valid');
   const c = JSON.parse(Buffer.from(p, 'base64url').toString());
   const now = Date.now() / 1000;
-  if (c.iss !== m.issuer) throw new Error('ID token is from another issuer');
+  if (!issuerMatches(c.iss, m.issuer)) throw new Error('ID token is from another issuer');
   const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
   if (!aud.includes(cfg.clientId)) throw new Error('ID token is for another app');
   if (aud.length > 1 && c.azp && c.azp !== cfg.clientId) throw new Error('ID token is for another app');
@@ -190,6 +201,7 @@ async function login(cfg, req, res, url) {
     code_challenge: b64url(sha256(verifier)),
     code_challenge_method: 'S256',
   });
+  if (cfg.prompt) q.set('prompt', cfg.prompt);
   const flow = sign(cfg, { state, nonce, verifier, ret, exp: Math.floor(Date.now() / 1000) + 600 });
   res.writeHead(302, { Location: `${m.authorization_endpoint}?${q}`, 'Set-Cookie': setCookie(FLOW_COOKIE, flow, 600), 'Cache-Control': 'no-store' });
   res.end();

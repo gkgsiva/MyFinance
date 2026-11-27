@@ -2,13 +2,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import crypto from 'node:crypto';
 import http from 'node:http';
-import { authConfig, guard } from '../auth.mjs';
+import { authConfig, guard, issuerMatches, resetProviderCache } from '../auth.mjs';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', use: 'sig', alg: 'RS256' };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 
 let idp, app, IDP, APP, cfg;
+let noEndSession = false; // Google publishes no end_session_endpoint
 const codes = new Map(); // code -> { nonce, challenge, email, verified }
 const provider = { email: 'siva@example.com', verified: true, iss: null, aud: null, badSig: false };
 
@@ -27,7 +28,7 @@ beforeAll(async () => {
     const u = new URL(req.url, 'http://x');
     const json = (o, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (u.pathname === '/.well-known/openid-configuration') {
-      return json({ issuer: IDP, authorization_endpoint: `${IDP}/authorize`, token_endpoint: `${IDP}/token`, jwks_uri: `${IDP}/jwks`, end_session_endpoint: `${IDP}/logout` });
+      return json({ issuer: IDP, authorization_endpoint: `${IDP}/authorize`, token_endpoint: `${IDP}/token`, jwks_uri: `${IDP}/jwks`, ...(noEndSession ? {} : { end_session_endpoint: `${IDP}/logout` }) });
     }
     if (u.pathname === '/jwks') return json({ keys: [jwk] });
     if (u.pathname === '/authorize') {
@@ -141,6 +142,28 @@ describe('sign-in', () => {
     const login = await get(`${APP}/auth/login`);
     const back = await get(new URL(login.headers.get('location')));
     expect((await get(back.headers.get('location'))).status).toBe(400);
+  });
+
+  it("accepts Google's issuer with or without https://, and nothing else", () => {
+    expect(issuerMatches('accounts.google.com', 'https://accounts.google.com')).toBe(true);
+    expect(issuerMatches('https://accounts.google.com', 'https://accounts.google.com')).toBe(true);
+    expect(issuerMatches('accounts.google.com.evil', 'https://accounts.google.com')).toBe(false);
+    expect(issuerMatches('example.okta.com', 'https://example.okta.com')).toBe(false);
+  });
+
+  it('passes OIDC_PROMPT on, and signs out locally when the provider has no sign-out page (Google)', async () => {
+    cfg.prompt = 'select_account';
+    const login = await get(`${APP}/auth/login`);
+    expect(new URL(login.headers.get('location')).searchParams.get('prompt')).toBe('select_account');
+    cfg.prompt = null;
+    expect(new URL((await get(`${APP}/auth/login`)).headers.get('location')).searchParams.has('prompt')).toBe(false);
+    noEndSession = true;
+    resetProviderCache();
+    const out = await get(`${APP}/auth/logout`);
+    noEndSession = false;
+    resetProviderCache();
+    expect(out.headers.get('location')).toBe('/auth/signed-out');
+    expect(out.headers.getSetCookie()[0]).toMatch(/Max-Age=0/);
   });
 
   it('never returns to another site', async () => {

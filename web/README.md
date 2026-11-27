@@ -57,7 +57,7 @@ heroku create myfinance-siva --buildpack heroku/nodejs
 git push heroku main
 ```
 
-Any small dyno will do: the server only sends files. Turn on [sign-in](#sign-in-recommended-okta-auth0-keycloak-or-any-openid-connect-provider) so only your family can open it. Plain `http://` is sent on to `https://`, which the app's offline
+Any small dyno will do: the server only sends files. Turn on [sign-in](#sign-in-recommended-google-okta-auth0-keycloak-or-any-openid-connect-provider) so only your family can open it. Plain `http://` is sent on to `https://`, which the app's offline
 mode needs.
 
 If you use the cloud statements below, put **this address** in the bucket's CORS rule (`AllowedOrigins` / `origin`),
@@ -66,7 +66,7 @@ written as `https://` plus the host name, with no path and no slash at the end.
 To publish on GitHub Pages as well (at `https://gkgsiva.github.io/myfinance/`), set the Actions variable
 `PAGES_DEPLOY` to `true` and choose Settings › Pages › Source › **GitHub Actions**. Then add that origin to CORS too.
 
-## Sign-in (recommended): Okta, Auth0, Keycloak or any OpenID Connect provider
+## Sign-in (recommended): Google, Okta, Auth0, Keycloak or any OpenID Connect provider
 
 Without sign-in, anyone who learns the Heroku address can open the app. Sign-in makes the Heroku server ask for a
 login first, and only lets in the email addresses you list (your family). It's built into `web/server.mjs`
@@ -86,11 +86,34 @@ Any OpenID Connect provider works, because the settings are the same everywhere.
 | **Okta** | Integrator Free Plan (developer.okta.com) | Recommended. The free plan's user limit is far more than a family needs. |
 | **Auth0** (by Okta) | Free plan, 25,000 monthly users | Simplest screens; can also offer "Continue with Google". |
 | **Keycloak** | Free, open source, but you host it | Needs its own server running all the time (and a database), so it costs more than this app. Only worth it if you already run one. |
-| Google, Microsoft Entra ID | Free | Also work. Anyone with an account can reach the login page, and ALLOWED_EMAILS keeps them out. |
+| **Google** | Free | Easiest for the family: everyone signs in with the Google account they already have, so no new passwords. Anyone with a Google account can reach the login page; ALLOWED_EMAILS keeps them out. |
+| Microsoft Entra ID | Free | Also works, the same way as Google. |
 
 ### 1. Create the app at the provider
 
 Use your Heroku address (for example `https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com`) in place of `APP` below.
+
+**Google**
+
+1. Open [console.cloud.google.com](https://console.cloud.google.com) and create a project (for example
+   `myfinance-signin`), or use the one that holds your statement bucket.
+2. **APIs & Services › OAuth consent screen** (also called **Google Auth Platform**):
+   - User type **External**. App name MyFinance, your email as support and developer contact.
+   - Scopes: only `openid`, `email` and `profile`. These don't need Google's app review.
+   - Audience: you can leave it in **Testing** and add each family member's Gmail under **Test users** (up to
+     100). Then Google itself only lets those accounts in, on top of `ALLOWED_EMAILS`. Or press **Publish app**, and
+     `ALLOWED_EMAILS` alone decides.
+3. **APIs & Services › Credentials › Create credentials › OAuth client ID**:
+   - Application type **Web application**, name MyFinance.
+   - Authorized JavaScript origins: `APP`
+   - Authorized redirect URIs: `APP/auth/callback`
+4. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and the **Client secret**.
+5. The issuer is `https://accounts.google.com`.
+6. Also set `OIDC_PROMPT` to `select_account`, so that on a phone with several Google accounts, each person picks
+   their own.
+
+Google has no sign-out page for apps, so **Sign out** ends the MyFinance sign-in only. "Sign in again" then goes
+straight back in while that phone is still signed in to Google (with `select_account` it asks which account first).
 
 **Okta**
 
@@ -140,8 +163,10 @@ In **Settings › Config Vars** (or with the CLI below), add:
 | `SESSION_SECRET` | a long random string; make one with `openssl rand -hex 32` |
 | `APP_URL` | your Heroku address, for example `https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com` |
 | `SESSION_DAYS` | optional: how long a sign-in lasts, default `30` |
+| `OIDC_PROMPT` | optional: `select_account` for Google (asks which account); `login` asks for the password every time |
 
 ```sh
+# Okta shown; for Google use OIDC_ISSUER=https://accounts.google.com and add OIDC_PROMPT=select_account
 heroku config:set OIDC_ISSUER=https://dev-123456.okta.com/oauth2/default OIDC_CLIENT_ID=... OIDC_CLIENT_SECRET=... \
   ALLOWED_EMAILS=siva@example.com,asha@example.com SESSION_SECRET=$(openssl rand -hex 32) \
   APP_URL=https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com
