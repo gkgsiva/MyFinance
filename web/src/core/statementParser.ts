@@ -806,7 +806,7 @@ const accountHeading = /\b(?:savings?|current|salary|overdraft|nre|nro)\s+(?:a\/
 const narrationCodes = /\b(?:neft|imps|rtgs|upi|trf|inft|mmt|transfer|transferred|credited|debited|bil)\b/i;
 const accountNumber = /(?<![\w/])(?:[Xx*•]{2,}[\s-]?(?:[Xx*•]+[\s-]?)*\d{3,8}|\d{9,18})(?![\w/])/;
 
-/** The last 4 digits of the account a heading line names ("Savings Account XXXXXXXX4144"). */
+/** The last 4 digits of the account a heading line names ("Savings Account XXXXXXXX1234"). */
 export function accountTailOfHeading(line: string): string | null {
   if (!accountHeading.test(line) || narrationCodes.test(line)) return null;
   const w = accountWord.exec(line);

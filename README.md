@@ -237,10 +237,20 @@ The app reads SMS, which Google Play only allows for default SMS apps, so it is 
    over the old one and keep your data.
 3. Open MyFinance, tap **Allow and import** and grant SMS permission.
 
+## iPhone
+
+iOS doesn't let apps read SMS, so iPhones use the web app in [`web/`](web/README.md):
+- Open **https://gkgsiva.github.io/myfinance/** in Safari.
+- Choose Share › **Add to Home Screen**.
+- Upload statements, or have GitHub Actions read them from your private S3 bucket.
+
+It reads statements exactly as this app does, and its family export file merges with this app both ways.
+
 ## Project layout
 
 - `core/`: pure Kotlin. SMS parser, categoriser, summaries, CSV export and duplicate detection,
   with unit tests. Runs without the Android SDK: `./gradlew -p core test`.
 - `app/`: the Android app (Jetpack Compose, Room).
+- `web/`: the iPhone web app (TypeScript, Preact, Vite PWA); `web/src/core` is a port of `core/`.
 
 Build the APK locally with Android Studio or `./gradlew :app:assembleDebug`.
