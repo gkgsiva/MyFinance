@@ -22,7 +22,7 @@ iPhone the data comes from bank and card statements, and from bank messages you 
   - Family & Android: the same CSV as the Android app's Share / Export, and merge.
   - Payees: every payee in one list, to give each a proper name (for example a UPI ID as "Milk – Ravi"). The name is used on all their earlier entries and on new ones from statements, pasted SMS, cloud syncs and family files. Also from an entry: change "Paid to" and tick "Call every payment…".
   - Backup and restore, Recently deleted, import history with undo, duplicates, and reversed & refunded.
-- **Privacy:** entries are kept only in the browser's storage on the device (IndexedDB). The Heroku app only hands out the app's code; statements and their contents never go there.
+- **Privacy:** entries are kept only in the browser's storage on the device (IndexedDB). The Heroku app only hands out the app's code; statements and their contents never go there. With sign-in on (see below), only your family's accounts can open it.
 
 App address: your Heroku app's address, for example **https://myfinance-1234.herokuapp.com/** (see "Host it on Heroku" below).
 
@@ -57,7 +57,7 @@ heroku create myfinance-siva --buildpack heroku/nodejs
 git push heroku main
 ```
 
-Any small dyno will do: the server only sends files. Plain `http://` is sent on to `https://`, which the app's offline
+Any small dyno will do: the server only sends files. Turn on [sign-in](#sign-in-recommended-google-okta-auth0-keycloak-or-any-openid-connect-provider) so only your family can open it. Plain `http://` is sent on to `https://`, which the app's offline
 mode needs.
 
 If you use the cloud statements below, put **this address** in the bucket's CORS rule (`AllowedOrigins` / `origin`),
@@ -65,6 +65,125 @@ written as `https://` plus the host name, with no path and no slash at the end.
 
 To publish on GitHub Pages as well (at `https://gkgsiva.github.io/myfinance/`), set the Actions variable
 `PAGES_DEPLOY` to `true` and choose Settings › Pages › Source › **GitHub Actions**. Then add that origin to CORS too.
+
+## Sign-in (recommended): Google, Okta, Auth0, Keycloak or any OpenID Connect provider
+
+Without sign-in, anyone who learns the Heroku address can open the app. Sign-in makes the Heroku server ask for a
+login first, and only lets in the email addresses you list (your family). It's built into `web/server.mjs`
+(`web/auth.mjs`, no packages): the standard OpenID Connect login (authorization code with PKCE), then a signed,
+HTTP-only cookie that lasts 30 days.
+
+**What it does and doesn't protect.** It guards the app's address: nobody can load the app from Heroku without
+signing in with an allowed account. It can't protect entries already on a phone: they live in that browser's
+storage, and the installed app still opens offline from its own copy. So keep a screen lock on the phones. When the
+phone is online, the app checks with the server each time it opens and sends you to sign in once the 30 days are up.
+The cloud bucket key you enter in the app is separate and still needed.
+
+Any OpenID Connect provider works, because the settings are the same everywhere. Free choices:
+
+| Provider | Free plan | Notes |
+| --- | --- | --- |
+| **Okta** | Integrator Free Plan (developer.okta.com) | Recommended. The free plan's user limit is far more than a family needs. |
+| **Auth0** (by Okta) | Free plan, 25,000 monthly users | Simplest screens; can also offer "Continue with Google". |
+| **Keycloak** | Free, open source, but you host it | Needs its own server running all the time (and a database), so it costs more than this app. Only worth it if you already run one. |
+| **Google** | Free | Easiest for the family: everyone signs in with the Google account they already have, so no new passwords. Anyone with a Google account can reach the login page; ALLOWED_EMAILS keeps them out. |
+| Microsoft Entra ID | Free | Also works, the same way as Google. |
+
+### 1. Create the app at the provider
+
+Use your Heroku address (for example `https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com`) in place of `APP` below.
+
+**Google**
+
+1. Open [console.cloud.google.com](https://console.cloud.google.com) and create a project (for example
+   `myfinance-signin`), or use the one that holds your statement bucket.
+2. **APIs & Services › OAuth consent screen** (also called **Google Auth Platform**):
+   - User type **External**. App name MyFinance, your email as support and developer contact.
+   - Scopes: only `openid`, `email` and `profile`. These don't need Google's app review.
+   - Audience: you can leave it in **Testing** and add each family member's Gmail under **Test users** (up to
+     100). Then Google itself only lets those accounts in, on top of `ALLOWED_EMAILS`. Or press **Publish app**, and
+     `ALLOWED_EMAILS` alone decides.
+3. **APIs & Services › Credentials › Create credentials › OAuth client ID**:
+   - Application type **Web application**, name MyFinance.
+   - Authorized JavaScript origins: `APP`
+   - Authorized redirect URIs: `APP/auth/callback`
+4. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and the **Client secret**.
+5. The issuer is `https://accounts.google.com`.
+6. Also set `OIDC_PROMPT` to `select_account`, so that on a phone with several Google accounts, each person picks
+   their own.
+
+Google has no sign-out page for apps, so **Sign out** ends the MyFinance sign-in only. "Sign in again" then goes
+straight back in while that phone is still signed in to Google (with `select_account` it asks which account first).
+
+**Okta**
+
+1. Sign up for the free Integrator plan at developer.okta.com, and open the Admin Console.
+2. **Applications › Applications › Create App Integration**: **OIDC - OpenID Connect**, then **Web Application**.
+3. Name it MyFinance. Grant type: **Authorization Code** only.
+   - Sign-in redirect URI: `APP/auth/callback`
+   - Sign-out redirect URI: `APP/auth/signed-out`
+   - Assignments: **Limit access to selected groups** (make a "Family" group under Directory › Groups), or allow
+     everyone in your organisation if only family has accounts there.
+4. Save. Copy the **Client ID** and **Client secret**.
+5. Add your family under **Directory › People** (they get an email to set a password) and put them in the group.
+6. The issuer is `https://YOUR-OKTA-DOMAIN/oauth2/default` (Security › API › Authorization Servers shows it as
+   "Issuer URI").
+
+**Auth0**
+
+1. Sign up at auth0.com (free plan) and create a tenant, for example `myfinance-siva`, in the region nearest you.
+2. **Applications › Applications › Create Application**: **Regular Web Applications**.
+3. On its **Settings** tab:
+   - Allowed Callback URLs: `APP/auth/callback`
+   - Allowed Logout URLs: `APP/auth/signed-out`
+   - Copy the **Domain**, **Client ID** and **Client Secret**.
+4. Under **Authentication › Database › Username-Password-Authentication**, switch **Disable Sign Ups** on, so
+   strangers can't make accounts. Add family members under **User Management › Users**. (Or turn on Google under
+   Authentication › Social and let them use their own Google accounts.)
+5. The issuer is `https://YOUR-TENANT.REGION.auth0.com/` (the Domain with `https://` and a `/` at the end).
+
+**Keycloak** (if you already run it)
+
+1. In a realm (for example `family`), **Clients › Create client**: OpenID Connect, client ID `myfinance`.
+2. Turn on **Client authentication** and **Standard flow** only.
+3. Valid redirect URIs `APP/auth/callback`; Valid post logout redirect URIs `APP/auth/signed-out`; Web origins `APP`.
+4. Copy the secret from the **Credentials** tab. Make sure users have an email and that it's marked verified.
+5. The issuer is `https://YOUR-KEYCLOAK/realms/family`.
+
+### 2. Turn it on in Heroku
+
+In **Settings › Config Vars** (or with the CLI below), add:
+
+| Var | Value |
+| --- | --- |
+| `OIDC_ISSUER` | the issuer from step 1 |
+| `OIDC_CLIENT_ID` | the client ID |
+| `OIDC_CLIENT_SECRET` | the client secret |
+| `ALLOWED_EMAILS` | who may sign in, comma separated, for example `siva@example.com,asha@example.com` |
+| `SESSION_SECRET` | a long random string; make one with `openssl rand -hex 32` |
+| `APP_URL` | your Heroku address, for example `https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com` |
+| `SESSION_DAYS` | optional: how long a sign-in lasts, default `30` |
+| `OIDC_PROMPT` | optional: `select_account` for Google (asks which account); `login` asks for the password every time |
+
+```sh
+# Okta shown; for Google use OIDC_ISSUER=https://accounts.google.com and add OIDC_PROMPT=select_account
+heroku config:set OIDC_ISSUER=https://dev-123456.okta.com/oauth2/default OIDC_CLIENT_ID=... OIDC_CLIENT_SECRET=... \
+  ALLOWED_EMAILS=siva@example.com,asha@example.com SESSION_SECRET=$(openssl rand -hex 32) \
+  APP_URL=https://myfinance-siva-1a2b3c4d5e6f.herokuapp.com
+```
+
+Heroku restarts the app, and sign-in is on. If `OIDC_ISSUER` is set but any other required var is missing, the app
+refuses to start (check **More › View logs**) rather than run unprotected. Remove `OIDC_ISSUER` to turn sign-in off.
+
+To let someone else in, add their email to `ALLOWED_EMAILS` (and create their account at the provider). To shut
+everyone out at once, for example after losing a phone, change `SESSION_SECRET`: every sign-in ends.
+
+### 3. On the iPhone
+
+Open the address in Safari, sign in, then **Share › Add to Home Screen**. The Home Screen app keeps its own sign-in,
+separate from Safari, so it may ask you to sign in once more the first time it opens. The app's name, icon and
+manifest are reachable without sign-in so that iOS can install it; they hold nothing private. **More** shows who is
+signed in, with **Sign out**. Signing out doesn't delete entries on the phone (use Clear all data for that).
 
 ## Statements in the cloud (optional): AWS S3 or Google Cloud Storage
 

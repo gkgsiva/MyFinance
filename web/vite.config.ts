@@ -31,6 +31,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+        // Sign-in pages come from the server (web/auth.mjs), never from the offline copy of the app.
+        navigateFallbackDenylist: [/\/auth\//],
       },
     }),
   ],
