@@ -1,0 +1,10 @@
+{
+  "name": "myfinance-web-host",
+  "private": true,
+  "description": "Builds and serves the iPhone web app in web/ (used by Heroku). The Android app is built with Gradle.",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "heroku-postbuild": "cd web && npm ci --include=dev && BASE=/ npm run build && rm -rf node_modules",
+    "start": "node web/server.mjs"
+  }
+}
