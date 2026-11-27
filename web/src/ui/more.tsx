@@ -9,9 +9,11 @@ import { Empty, Money, TxnRow, go, pickFiles, shareFile, toast } from './common'
 import { openEditor } from './editor';
 import { toLite } from './home';
 import { monthlyReport } from './report';
+import { signOutUrl, signedIn } from './signin';
 
 export function More() {
   const s = useStore();
+  const who = signedIn();
   const dups = s.duplicateGroups().length;
   const backupDays = s.settings.lastBackup ? Math.floor((Date.now() - s.settings.lastBackup) / 86_400_000) : null;
   const item = (route: string, title: string, sub?: string) => (
@@ -50,6 +52,7 @@ export function More() {
       <div class="card small muted">
         MyFinance for iPhone and the web. Statements are read in this browser and stored only on this device (nothing is uploaded; there is no server).
         Add it to your Home Screen from Safari's Share menu so it opens like an app.
+        {who && <p>Signed in as {who.email}. <a href={signOutUrl()}>Sign out</a> (entries stay on this device; sign-in guards the app's address, not data already here).</p>}
         <p><button class="btn ghost" style="padding-left:0;color:var(--danger)" onClick={async () => {
           if (confirm('Delete every entry and setting on this device? Save a backup first if you may need them.')) { await store.clearEverything(); toast('All data cleared'); go('home'); }
         }}>Clear all data on this device</button></p>
