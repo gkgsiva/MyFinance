@@ -33,6 +33,7 @@ function Editor({ txn, onClose }: { txn: Txn | null; onClose: () => void }) {
   const [hidden, setHidden] = useState(txn?.hidden ?? false);
   const [mode, setMode] = useState<string>(txn?.mode ?? (isNew ? 'CASH' : ''));
   const [err, setErr] = useState('');
+  const [everyone, setEveryone] = useState(false);
 
   const cats = store.categories.sort((a, b) => a.localeCompare(b));
   const auto = merchant.trim() ? categorize(merchant.trim(), type, null, store.ruleMap()) : '';
@@ -54,11 +55,12 @@ function Editor({ txn, onClose }: { txn: Txn | null; onClose: () => void }) {
       await store.addManual({ amountMinor: minor, type, merchant: merchant.trim() || null, category: cat, timestamp: ts, note: note.trim() || null, accountTail: acct, mode: mode || null, labels: lab });
       toast('Entry added');
     } else {
+      const renamed = everyone && txn!.merchant && merchant.trim() && merchant.trim() !== txn!.merchant ? await store.renamePayee(txn!.merchant, merchant.trim()) : 0;
       const learnt = await store.update({
         ...txn!, amountMinor: minor, type, merchant: merchant.trim() || null, category: cat, timestamp: ts, note: note.trim() || null,
         accountTail: acct, bank: acct === txn!.accountTail ? txn!.bank : bank, labels: lab, excluded, hidden, mode: mode || null,
       });
-      toast(learnt > 0 ? `Saved. ${learnt} other ${learnt === 1 ? 'entry' : 'entries'} from this payee moved to ${cat}.` : 'Saved');
+      if (renamed > 1) toast(`Saved. ${renamed} entries from this payee now say "${merchant.trim()}".`); else toast(learnt > 0 ? `Saved. ${learnt} other ${learnt === 1 ? 'entry' : 'entries'} from this payee moved to ${cat}.` : 'Saved');
     }
     onClose();
   };
@@ -84,6 +86,9 @@ function Editor({ txn, onClose }: { txn: Txn | null; onClose: () => void }) {
       <label class="field"><span>{type === 'DEBIT' ? 'Paid to' : 'Received from'}</span>
         <input value={merchant} onInput={(e) => setMerchant(e.currentTarget.value)} placeholder="e.g. Swiggy, Rent, Salary" />
       </label>
+      {!isNew && txn?.merchant && merchant.trim() && merchant.trim() !== txn.merchant && (
+        <label class="row small" style="margin:-4px 0 10px"><input type="checkbox" checked={everyone} style="width:20px;height:20px" onChange={(e) => setEveryone(e.currentTarget.checked)} /> Call every payment from "{txn.merchant}" this, earlier and from now on</label>
+      )}
       <label class="field"><span>Category{!category && guess ? ` (suggested: ${guess})` : ''}</span>
         <select value={category} onChange={(e) => setCategory(e.currentTarget.value)}>
           <option value="">{guess ? `${guess} (suggested)` : 'Choose…'}</option>

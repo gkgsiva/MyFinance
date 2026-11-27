@@ -72,12 +72,14 @@ export interface Settings {
   categories: string[];
   budgets: Record<string, number>;
   rules: Record<string, string>;
+  /** The user's names for payees, as on Android (payee_names): merchant key → name. */
+  payees: Record<string, string>;
   lastBackup: number;
   lastExport: number;
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  ownerName: '', monthStartDay: 1, salaryFromDay: null, categories: [...DEFAULT_CATEGORIES], budgets: {}, rules: {}, lastBackup: 0, lastExport: 0,
+  ownerName: '', monthStartDay: 1, salaryFromDay: null, categories: [...DEFAULT_CATEGORIES], budgets: {}, rules: {}, payees: {}, lastBackup: 0, lastExport: 0,
 };
 
 const TRASH_DAYS = 60;
@@ -296,10 +298,14 @@ class Store {
     if (learn && before && before.category !== t.category && t.merchant) {
       const key = merchantKey(t.merchant);
       if (key) {
-        this.settings = { ...this.settings, rules: { ...this.settings.rules, [key]: t.category } };
+        // A named payee's rule also covers the names it arrives under, so new entries from them follow it.
+        const keys = this.payeeKeys(t.merchant);
+        const rules = { ...this.settings.rules };
+        for (const k of keys) rules[k] = t.category;
+        this.settings = { ...this.settings, rules };
         kv = this.kvOf('settings');
         for (const o of this.txns) {
-          if (o.id !== t.id && !o.userEdited && !o.excluded && o.merchant && merchantKey(o.merchant) === key && o.type === t.type) put.push({ ...o, category: t.category });
+          if (o.id !== t.id && !o.userEdited && !o.excluded && o.merchant && keys.has(merchantKey(o.merchant)) && o.type === t.type) put.push({ ...o, category: t.category });
         }
       }
     }
@@ -368,7 +374,7 @@ class Store {
   async categoriseAll(ids: number[], category: string) {
     const put = ids.map((i) => this.byId.get(i)).filter((t): t is Txn => !!t).map((t) => ({ ...t, category, userEdited: true }));
     const rules = { ...this.settings.rules };
-    for (const t of put) if (t.merchant) { const k = merchantKey(t.merchant); if (k) rules[k] = category; }
+    for (const t of put) if (t.merchant) for (const k of this.payeeKeys(t.merchant)) rules[k] = category;
     this.settings = { ...this.settings, rules };
     await this.commit(put, [], this.kvOf('settings'));
   }
@@ -394,7 +400,7 @@ class Store {
       if (updatesExisting(c)) {
         const t = get(c.matchedId!);
         if (!t) return;
-        const official = c.merchant ?? t.merchant;
+        const official = this.named(c.merchant ?? t.merchant);
         const tl = keptTail(c.accountTail, t.accountTail, t.rawText);
         const bank = c.bank ?? t.bank;
         put.set(t.id, {
@@ -415,7 +421,7 @@ class Store {
       if (c.duplicateOf != null || this.deletedUids.has(c.uid) || this.deletedKeys.has(c.key)) return;
       const bill = c.ownTransfer || SelfTransfers.isCardBillPayment(r.type, c.merchant, r.description, c.cardStatement);
       const t = this.newTxn({
-        uid: c.uid, excluded: bill, amountMinor: r.amountMinor, type: r.type, merchant: c.merchant,
+        uid: c.uid, excluded: bill, amountMinor: r.amountMinor, type: r.type, merchant: this.named(c.merchant),
         category: bill ? Cat.TRANSFERS : categorize(c.merchant, r.type, r.description, rules),
         accountTail: c.accountTail, bank: c.bank, timestamp: c.timestamp, source: 'STATEMENT', smsKey: c.key,
         rawText: r.description, reference: r.reference, balanceMinor: r.balanceMinor, owner: this.ownerOf(c.accountTail, c.bank),
@@ -443,6 +449,52 @@ class Store {
     const leftOut = (await this.leaveOutCardPaymentPairs()) + (await this.leaveOutReversals());
     const removed = await this.removeSameIdDuplicates();
     return { added, updated, leftOut, removed };
+  }
+
+  // ---- Payee names (Android's payee_names) ----
+
+  /** The user's name for this payee, or the merchant as it is. */
+  named(merchant: string | null): string | null {
+    if (merchant == null) return null;
+    return this.settings.payees[merchantKey(merchant)] ?? merchant;
+  }
+
+  /** The keys a payee is known by: its own, and every raw name the user mapped to it. */
+  payeeKeys(name: string): Set<string> {
+    const keys = new Set<string>();
+    const k = merchantKey(name);
+    if (k) keys.add(k);
+    for (const [raw, n] of Object.entries(this.settings.payees)) if (n === name || merchantKey(n) === k) keys.add(raw);
+    return keys;
+  }
+
+  /**
+   * Gives a payee a name and uses it on every entry from them, past and future (port of renamePayee): the payee's
+   * key and any raw names already mapped to its current name all map to the new one. Returns how many changed.
+   */
+  async renamePayee(old: string, newName: string): Promise<number> {
+    const name = newName.trim();
+    if (!name || !old) return 0;
+    const keys = this.payeeKeys(old);
+    const payees = { ...this.settings.payees };
+    for (const k of keys) payees[k] = name;
+    // The name's own key maps to itself, so a later "Swiggy Bangalore" style rename keeps following it.
+    if (merchantKey(name) !== merchantKey(old)) delete payees[merchantKey(name)];
+    // Category rules learnt for the old names follow the payee.
+    const rules = { ...this.settings.rules };
+    const rule = [...keys].map((k) => rules[k]).find((r) => r != null) ?? rules[merchantKey(name)];
+    if (rule) { for (const k of keys) rules[k] = rule; rules[merchantKey(name)] = rule; }
+    this.settings = { ...this.settings, payees, rules };
+    const put = this.txns.filter((t) => t.merchant != null && t.merchant !== name && keys.has(merchantKey(t.merchant))).map((t) => ({ ...t, merchant: name }));
+    await this.commit(put, [], this.kvOf('settings'));
+    return put.length;
+  }
+
+  /** Stops using [name] for new entries. Entries already named keep it, as on Android. */
+  async forgetPayee(name: string) {
+    const payees = Object.fromEntries(Object.entries(this.settings.payees).filter(([, n]) => n !== name));
+    this.settings = { ...this.settings, payees };
+    await this.commit([], [], this.kvOf('settings'));
   }
 
   // ---- Pasted SMS (Android's ingestSms) ----
@@ -475,7 +527,7 @@ class Store {
       const own = (parsed.counterTail != null && this.isOwnAccount(parsed.counterTail)) ||
         SelfTransfers.isCardBillPayment(parsed.type, parsed.merchant, body);
       const txn = this.newTxn({
-        excluded: own, amountMinor: parsed.amountMinor, type: parsed.type, merchant: parsed.merchant,
+        excluded: own, amountMinor: parsed.amountMinor, type: parsed.type, merchant: this.named(parsed.merchant),
         category: own ? Cat.TRANSFERS : categorize(parsed.merchant, parsed.type, body, rules),
         accountTail: parsed.accountTail, bank: parsed.bank, timestamp: parsed.timestamp, source: 'SMS', smsKey: key,
         rawText: body, reference: parsed.reference, balanceMinor: parsed.balanceMinor,
@@ -680,7 +732,7 @@ class Store {
     for (const s of fresh) {
       const owner = s.owner != null && s.owner === me ? null : s.owner;
       put.push(this.newTxn({
-        uid: s.uid, amountMinor: s.amountMinor, type: s.type, merchant: s.merchant, category: s.category, accountTail: s.accountTail,
+        uid: s.uid, amountMinor: s.amountMinor, type: s.type, merchant: this.named(s.merchant), category: s.category, accountTail: s.accountTail,
         bank: s.bank, timestamp: s.timestamp, note: s.note, source: (['SMS', 'MANUAL', 'STATEMENT'].includes(s.source) ? s.source : 'MANUAL') as Source,
         smsKey: s.smsKey, reference: s.reference, excluded: s.excluded, owner, mode: s.mode, labels: s.labels, userEdited: true,
       }));

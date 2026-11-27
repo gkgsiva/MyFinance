@@ -8,6 +8,7 @@ import { Insights } from './insights';
 import { Cards } from './cards';
 import { CloudSettings } from './cloud';
 import { SmsScreen } from './sms';
+import { Payees } from './payees';
 import { Accounts, Backup, Categories, DuplicatesScreen, Family, Imports, More, Profile, Report, ReversalsScreen, Trash } from './more';
 
 const TABS = [
@@ -23,6 +24,7 @@ const SUB: Record<string, [string, () => preact.JSX.Element]> = {
   'more/profile': ['Name and salary month', Profile],
   'more/accounts': ['Accounts and cards', Accounts],
   'more/categories': ['Categories', Categories],
+  'more/payees': ['Payees', Payees],
   'more/family': ['Family & Android', Family],
   'more/cloud': ['Statements from cloud', CloudSettings],
   'import/sms': ['Bank messages (SMS)', SmsScreen],

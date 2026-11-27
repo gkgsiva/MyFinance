@@ -29,6 +29,7 @@ export function More() {
         {item('more/profile', 'Name and salary month', s.me ? `${s.me} · month starts on day ${s.settings.monthStartDay}${s.settings.salaryFromDay ? `, salary from ${s.settings.salaryFromDay}th counts next month` : ''}` : 'Set your name for family sharing')}
         {item('more/accounts', 'My accounts and cards', `${s.accounts.length} saved`)}
         {item('more/categories', 'Categories, budgets and rules', `${s.categories.length} categories · ${Object.keys(s.settings.rules).length} rules`)}
+        {item('more/payees', 'Payees', `Give payees proper names${Object.keys(s.settings.payees).length ? ` · ${new Set(Object.values(s.settings.payees)).size} named` : ''}`)}
         {item('cards', 'Card bills')}
       </ul></div>
       <div class="section-title">Share and keep</div>

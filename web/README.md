@@ -20,6 +20,7 @@ iPhone the data comes from bank and card statements, and from bank messages you 
   - Card bills: paid / late / short.
   - Monthly PDF report.
   - Family & Android: the same CSV as the Android app's Share / Export, and merge.
+  - Payees: every payee in one list, to give each a proper name (for example a UPI ID as "Milk – Ravi"). The name is used on all their earlier entries and on new ones from statements, pasted SMS, cloud syncs and family files. Also from an entry: change "Paid to" and tick "Call every payment…".
   - Backup and restore, Recently deleted, import history with undo, duplicates, and reversed & refunded.
 - **Privacy:** entries are kept only in the browser's storage on the device (IndexedDB). There is no server. Only the app's code is on GitHub Pages; statements and their contents never are.
 
