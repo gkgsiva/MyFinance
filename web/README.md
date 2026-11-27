@@ -5,7 +5,7 @@ iPhone the data comes from bank and card statements instead.
 
 - **Statements:** PDF (including password-locked), Excel or CSV. There are two ways in:
   - Upload them in the app. They are read in the browser, on the phone.
-  - Keep them in your **private S3 bucket**. A GitHub Actions job reads them and saves what they say as JSON in the same bucket, and the app brings that in with a read-only key.
+  - Keep them in your **private bucket on AWS S3 or Google Cloud Storage** (your choice). A GitHub Actions job reads them and saves what they say as JSON in the same bucket, and the app brings that in with a read-only key.
 - **The same reading as Android:** the statement reader, rules, duplicate checks and month logic are ported from the Android code (`core/`). The test below checks that real statements give the same lines and the same entry IDs as on Android, so files merge both ways without doubles.
 - **Screens:**
   - Home: this month as a ledger with a running bank balance and "card due so far".
@@ -36,17 +36,25 @@ Data is kept on this phone only, so use **More › Backup and restore** now and 
    - The **Web app** workflow then publishes `web/` on each push to `main`.
    - Run it once by hand from the Actions tab after merging.
 
-## Statements in S3 (optional)
+## Statements in the cloud (optional): AWS S3 or Google Cloud Storage
+
+Pick one cloud and follow its steps: **A** for AWS, **B** for Google Cloud. Then do the GitHub settings below them.
+
+The bucket is laid out the same way on both:
 
 ```
-s3://<your-bucket>/statements/...        you put statement files here (any sub-folders)
-s3://<your-bucket>/processed/index.json  written by the workflow: one entry per file, with its status
-s3://<your-bucket>/processed/files/*.json  written by the workflow: what each statement says
+<bucket>/statements/...           you put statement files here (any sub-folders)
+<bucket>/processed/index.json     written by the workflow: one entry per file, with its status
+<bucket>/processed/files/*.json   written by the workflow: what each statement says
 ```
+
+The bucket stays private, and so does everything the workflow writes.
 
 The repository is public, so its Actions logs are public too. The workflow prints only counts ("File 3: card statement, 90 lines, totals match"). It never prints file names, amounts or payees, and uploads no artifacts.
 
-### 1. Bucket
+## A. AWS S3
+
+### A1. Bucket
 
 Keep the bucket private: Block Public Access stays on.
 
@@ -63,7 +71,7 @@ Add this CORS rule (Bucket › Permissions › CORS), so the app may read it fro
 ]
 ```
 
-### 2. A role for GitHub Actions (no stored AWS keys)
+### A2. A role for GitHub Actions (no stored AWS keys)
 
 1. In IAM › Identity providers, add an **OpenID Connect** provider:
    - Provider URL `https://token.actions.githubusercontent.com`
@@ -101,7 +109,7 @@ Add this CORS rule (Bucket › Permissions › CORS), so the app may read it fro
    }
    ```
 
-### 3. A read-only key for the phone
+### A3. A read-only key for the phone
 
 1. Create an IAM user (for example `myfinance-phone`) with this policy and nothing else. The key can only read the processed files: it can't list the bucket, read the statements themselves, or change anything.
 
@@ -113,7 +121,7 @@ Add this CORS rule (Bucket › Permissions › CORS), so the app may read it fro
    ```
 
 2. Make an access key for it (Security credentials › Create access key › "Application running outside AWS").
-3. On the iPhone, open **More › Statements from S3** and enter:
+3. On the iPhone, open **More › Statements from cloud**, choose **AWS S3**, and enter:
    - the bucket name
    - the region (for example `ap-south-1`)
    - the access key ID
@@ -121,21 +129,89 @@ Add this CORS rule (Bucket › Permissions › CORS), so the app may read it fro
 
    The key is stored only on that phone and is left out of backups. The app syncs when opened (at most every 6 hours), and from **Upload › Sync now**.
 
-### 4. GitHub settings
+## B. Google Cloud Storage
+
+In the commands below, replace:
+- `PROJECT` with your project ID,
+- `PROJECT_NUMBER` with your project number,
+- `BUCKET` with the bucket name.
+
+You can run them in Cloud Shell.
+
+### B1. Bucket
+
+Create the bucket with uniform access and public access prevention. Then allow this site to read it from the phone (CORS):
+
+```sh
+gcloud storage buckets create gs://BUCKET --project=PROJECT --location=asia-south1 \
+  --uniform-bucket-level-access --public-access-prevention
+
+cat > cors.json <<'JSON'
+[{ "origin": ["https://gkgsiva.github.io"], "method": ["GET"],
+   "responseHeader": ["Authorization", "x-amz-date", "x-amz-content-sha256", "Content-Type"],
+   "maxAgeSeconds": 3000 }]
+JSON
+gcloud storage buckets update gs://BUCKET --cors-file=cors.json
+```
+
+### B2. Sign-in for GitHub Actions (Workload Identity Federation, no stored keys)
+
+Create a service account for the workflow. It may read statements and write `processed/`. Only this repository's `main` branch may use it.
+
+```sh
+gcloud iam service-accounts create myfinance-actions --project=PROJECT
+gcloud storage buckets add-iam-policy-binding gs://BUCKET \
+  --member=serviceAccount:myfinance-actions@PROJECT.iam.gserviceaccount.com --role=roles/storage.objectAdmin
+
+gcloud iam workload-identity-pools create github --project=PROJECT --location=global
+gcloud iam workload-identity-pools providers create-oidc myfinance --project=PROJECT --location=global \
+  --workload-identity-pool=github --issuer-uri=https://token.actions.githubusercontent.com \
+  --attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
+  --attribute-condition="assertion.repository=='gkgsiva/myfinance' && assertion.ref=='refs/heads/main'"
+
+gcloud iam service-accounts add-iam-policy-binding myfinance-actions@PROJECT.iam.gserviceaccount.com --project=PROJECT \
+  --role=roles/iam.workloadIdentityUser \
+  --member=principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/gkgsiva/myfinance
+```
+
+### B3. A read-only key for the phone
+
+The phone uses an **HMAC key** (Cloud Storage's interoperability key) of a second service account. That account may only read `processed/`: it can't list the bucket, read the statements themselves, or change anything.
+
+```sh
+gcloud iam service-accounts create myfinance-phone --project=PROJECT
+gcloud storage buckets add-iam-policy-binding gs://BUCKET \
+  --member=serviceAccount:myfinance-phone@PROJECT.iam.gserviceaccount.com --role=roles/storage.objectViewer \
+  --condition='title=processed-only,expression=resource.name.startsWith("projects/_/buckets/BUCKET/objects/processed/")'
+gcloud storage hmac create myfinance-phone@PROJECT.iam.gserviceaccount.com --project=PROJECT
+```
+
+The last command prints an access ID (`GOOG…`) and a secret. On the iPhone:
+1. Open **More › Statements from cloud** and choose **Google Cloud**.
+2. Enter the bucket name, the access ID and the secret.
+
+The key is stored only on that phone and is left out of backups.
+
+## GitHub settings (for either cloud)
 
 Settings › Secrets and variables › Actions:
 
 | Kind | Name | Value |
 |---|---|---|
-| Variable | `S3_BUCKET` | the bucket name |
-| Variable | `AWS_REGION` | for example `ap-south-1` |
-| Variable | `AWS_ROLE_ARN` | the role's ARN from step 2 |
+| Variable | `STORAGE_PROVIDER` | `aws` or `gcp` |
+| Variable | `BUCKET` | the bucket name |
+| Variable (AWS) | `AWS_REGION` | for example `ap-south-1` |
+| Variable (AWS) | `AWS_ROLE_ARN` | the role's ARN from A2 |
+| Variable (Google Cloud) | `GCP_WIF_PROVIDER` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/myfinance` |
+| Variable (Google Cloud) | `GCP_SERVICE_ACCOUNT` | `myfinance-actions@PROJECT.iam.gserviceaccount.com` |
 | Variable (optional) | `STATEMENTS_PREFIX` | default `statements/` |
 | Secret | `PDF_PASSWORDS` | passwords of locked PDFs, **one per line**; each is tried in turn |
 
 The **Process statements** workflow runs every day at 7:00 AM India time, and from Actions › Process statements › Run workflow.
 - Only new or changed files are read again. Tick "Read every statement again" to redo all of them.
-- Locked files no password opened are listed in the app under More › Statements from S3, after a sync.
+- Locked files no password opened are listed in the app under More › Statements from cloud, after a sync.
+
+The app syncs when opened (at most every 6 hours), and from **Upload › Sync now**. To move from one cloud to the other, change the workflow variables, then choose the other cloud in the app. Entries already brought in stay, and nothing is counted twice.
 
 ## Working on it
 
@@ -149,8 +225,8 @@ npm run build      # into dist/
 
 `test/oracle.test.ts` compares the reader with the Android app on real statements. It runs only when `ORACLE_DIR` points at a local folder holding the PDFs and the Android dumps. Keep that folder out of the repository.
 
-The S3 job can be run by hand with AWS CLI credentials:
+The workflow's job can be run by hand when signed in with the AWS CLI or gcloud:
 
 ```sh
-S3_BUCKET=<bucket> PDF_PASSWORDS="$(cat passwords.txt)" npm run process
+STORAGE_PROVIDER=aws BUCKET=<bucket> PDF_PASSWORDS="$(cat passwords.txt)" npm run process   # or STORAGE_PROVIDER=gcp
 ```

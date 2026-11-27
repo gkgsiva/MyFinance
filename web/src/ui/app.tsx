@@ -23,7 +23,7 @@ const SUB: Record<string, [string, () => preact.JSX.Element]> = {
   'more/accounts': ['Accounts and cards', Accounts],
   'more/categories': ['Categories', Categories],
   'more/family': ['Family & Android', Family],
-  'more/cloud': ['Statements from S3', CloudSettings],
+  'more/cloud': ['Statements from cloud', CloudSettings],
   'more/report': ['Monthly report', Report],
   'more/backup': ['Backup', Backup],
   'more/trash': ['Recently deleted', Trash],

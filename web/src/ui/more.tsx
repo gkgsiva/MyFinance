@@ -33,7 +33,7 @@ export function More() {
       </ul></div>
       <div class="section-title">Share and keep</div>
       <div class="card flush"><ul class="list">
-        {item('more/cloud', 'Statements from S3', s.cloud ? `${s.cloud.bucket} · ${Object.keys(s.cloud.imported).length} files` : 'Bring in statements your GitHub workflow processed')}
+        {item('more/cloud', 'Statements from cloud', s.cloud ? `${s.cloud.provider === 'gcp' ? 'Google Cloud' : 'AWS'} · ${s.cloud.bucket} · ${Object.keys(s.cloud.imported).length} files` : 'AWS S3 or Google Cloud, processed by your GitHub workflow')}
         {item('more/family', 'Family & Android', 'Share your entries, merge a file from Android or family')}
         {item('more/report', 'Monthly PDF report')}
         {item('more/backup', 'Backup and restore', backupDays != null ? `Last backup ${backupDays === 0 ? 'today' : `${backupDays} days ago`}` : 'Never backed up')}

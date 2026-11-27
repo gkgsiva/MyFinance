@@ -1,7 +1,10 @@
-// Reading the processed statements from the user's private S3 bucket, straight from the phone: each request is
-// signed (AWS Signature Version 4) with a read-only key kept on this device. No server in between.
+// Reading the processed statements from the user's private bucket, straight from the phone: each request is signed
+// (AWS Signature Version 4) with a read-only key kept on this device. No server in between. Google Cloud Storage
+// accepts the same signature through its S3-compatible XML API with an HMAC key, so one signer serves both.
 
-export interface S3Config { bucket: string; region: string; accessKeyId: string; secretAccessKey: string; sessionToken?: string }
+export type Provider = 'aws' | 'gcp';
+
+export interface S3Config { provider?: Provider; bucket: string; region: string; accessKeyId: string; secretAccessKey: string; sessionToken?: string }
 
 const enc = new TextEncoder();
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -25,6 +28,11 @@ export function encodeKey(key: string): string {
 }
 
 export function endpoint(c: S3Config, key: string): { url: string; host: string; path: string } {
+  if (c.provider === 'gcp') {
+    const host = 'storage.googleapis.com';
+    const path = `/${c.bucket}/${encodeKey(key)}`;
+    return { url: `https://${host}${path}`, host, path };
+  }
   // Buckets with dots don't match the wildcard certificate as a subdomain, so they use path-style addresses.
   const path = c.bucket.includes('.') ? `/${c.bucket}/${encodeKey(key)}` : `/${encodeKey(key)}`;
   const host = c.bucket.includes('.') ? `s3.${c.region}.amazonaws.com` : `${c.bucket}.s3.${c.region}.amazonaws.com`;
@@ -62,14 +70,16 @@ export async function getText(c: S3Config, key: string): Promise<string> {
   try {
     res = await fetch(url, { headers: await signGet(c, host, path, new Date()), cache: 'no-store' });
   } catch {
-    throw new S3Error(0, 'Could not reach the bucket. Check the internet connection, the bucket name and region, and that the bucket allows this site (CORS).');
+    throw new S3Error(0, 'Could not reach the bucket. Check the internet connection, the bucket name' + (c.provider === 'gcp' ? '' : ' and region') + ', and that the bucket allows this site (CORS).');
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     const code = /<Code>([^<]+)<\/Code>/.exec(body)?.[1] ?? '';
     const why: Record<string, string> = {
-      AccessDenied: 'Access denied. Either nothing is processed yet (run the "Process statements" workflow on GitHub first), or the key\'s policy does not allow s3:GetObject on processed/*.',
-      InvalidAccessKeyId: 'This access key ID is not known to AWS.',
+      AccessDenied: c.provider === 'gcp'
+        ? 'Access denied. Either nothing is processed yet (run the "Process statements" workflow on GitHub first), or the HMAC key\'s service account may not read processed/.'
+        : 'Access denied. Either nothing is processed yet (run the "Process statements" workflow on GitHub first), or the key\'s policy does not allow s3:GetObject on processed/*.',
+      InvalidAccessKeyId: c.provider === 'gcp' ? 'This HMAC access ID is not known to Google Cloud.' : 'This access key ID is not known to AWS.',
       SignatureDoesNotMatch: 'The secret access key does not match the key ID.',
       NoSuchKey: 'Nothing processed yet. Run the "Process statements" workflow on GitHub first.',
       NoSuchBucket: 'No bucket with this name.',
@@ -77,7 +87,7 @@ export async function getText(c: S3Config, key: string): Promise<string> {
       AuthorizationHeaderMalformed: 'The region does not match the bucket. Check the region.',
       RequestTimeTooSkewed: "The phone's clock is off. Set the time automatically and try again.",
     };
-    throw new S3Error(res.status, why[code] ?? `S3 said ${res.status}${code ? ` (${code})` : ''}.`);
+    throw new S3Error(res.status, why[code] ?? `${c.provider === 'gcp' ? 'Google Cloud' : 'S3'} said ${res.status}${code ? ` (${code})` : ''}.`);
   }
   return res.text();
 }

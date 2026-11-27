@@ -47,6 +47,8 @@ export interface TrashItem { txn: Txn; at: number }
 
 /** The private bucket the processed statements are read from, and the read-only key. Kept on this device only (not in backups). */
 export interface CloudState {
+  /** AWS S3 or Google Cloud Storage; missing means AWS (set up before Google Cloud was offered). */
+  provider?: 'aws' | 'gcp';
   bucket: string;
   region: string;
   prefix: string;

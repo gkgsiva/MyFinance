@@ -15,3 +15,11 @@ describe('S3 signing', () => {
     expect(encodeKey('processed/files/a b(1).json')).toBe('processed/files/a%20b%281%29.json');
   });
 });
+
+describe('Google Cloud Storage', () => {
+  it('uses the XML API host with the bucket in the path', async () => {
+    const { endpoint } = await import('../src/store/s3');
+    expect(endpoint({ provider: 'gcp', bucket: 'my-bucket', region: 'auto', accessKeyId: 'GOOG1E', secretAccessKey: 'x' }, 'processed/index.json'))
+      .toEqual({ url: 'https://storage.googleapis.com/my-bucket/processed/index.json', host: 'storage.googleapis.com', path: '/my-bucket/processed/index.json' });
+  });
+});
