@@ -1,0 +1,68 @@
+name: Process statements
+
+# Reads the bank and card statements in the private bucket (AWS S3 or Google Cloud Storage, chosen by the
+# STORAGE_PROVIDER variable: "aws" or "gcp") and writes what they say as JSON back into the same bucket
+# (processed/), for the web app to load with its read-only key.
+#
+# This repository is public, so this job's logs are public too: the script prints only counts, never file names,
+# amounts or payees, and nothing is uploaded as an artifact. Setup: web/README.md.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Read every statement again, not only new or changed ones
+        type: boolean
+        default: false
+  schedule:
+    - cron: '30 1 * * *' # every day, 7:00 AM India time
+
+permissions:
+  contents: read
+  id-token: write # to sign in to AWS (OIDC role) or Google Cloud (Workload Identity Federation), no stored keys
+
+concurrency:
+  group: process-statements
+  cancel-in-progress: false
+
+jobs:
+  process:
+    # Only on this repository's own default branch (forks have no access to the role or the passwords).
+    if: github.repository == 'gkgsiva/myfinance' && (vars.BUCKET != '' || vars.S3_BUCKET != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Sign in to AWS
+        if: vars.STORAGE_PROVIDER != 'gcp'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Sign in to Google Cloud
+        if: vars.STORAGE_PROVIDER == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Set up gcloud
+        if: vars.STORAGE_PROVIDER == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Read statements
+        env:
+          STORAGE_PROVIDER: ${{ vars.STORAGE_PROVIDER || 'aws' }}
+          BUCKET: ${{ vars.BUCKET || vars.S3_BUCKET }}
+          STATEMENTS_PREFIX: ${{ vars.STATEMENTS_PREFIX || 'statements/' }}
+          OUTPUT_PREFIX: processed/
+          PDF_PASSWORDS: ${{ secrets.PDF_PASSWORDS }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+        run: npm run process
